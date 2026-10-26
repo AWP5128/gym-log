@@ -9,144 +9,193 @@
     h1 { font-size: 1.3rem; }
     h2 { font-size: 1.5rem; margin: 16px 0; }
     button, select, input { font-size: 1.2rem; padding: 14px; border-radius: 10px; border: 1px solid #444; background: #222; color: #eee; }
-    .days { display: flex; gap: 8px; }
-    .days button { flex: 1; }
-    .days button.active { background: #2563eb; border-color: #2563eb; }
-    #list button { display: block; width: 100%; text-align: left; margin-top: 8px; }
-    #more { margin-top: 12px; width: 100%; background: transparent; }
-    .back { width: 100%; background: transparent; }
-    label { display: block; margin: 12px 0 6px; color: #aaa; }
     select { width: 100%; font-size: 1.5rem; }
+    label { display: block; margin: 16px 0 6px; color: #aaa; }
+    .choices { display: flex; flex-wrap: wrap; gap: 8px; }
+    .choices button { flex: 1; }
+    button.active { background: #2563eb; border-color: #2563eb; }
+    button.primary { width: 100%; background: #16a34a; border-color: #16a34a; font-size: 1.3rem; padding: 18px; margin-top: 12px; }
+    button.ghost { width: 100%; background: transparent; margin-top: 12px; }
+    button.item { display: block; width: 100%; text-align: left; margin-top: 8px; }
     .other { display: flex; gap: 8px; margin-top: 8px; }
     .other input { flex: 1; min-width: 0; font-size: 1rem; }
     .other button { font-size: 1rem; }
     .row { display: flex; align-items: center; gap: 8px; margin-bottom: 10px; }
     .row button { width: 72px; font-size: 1.6rem; }
     .row .val { flex: 1; text-align: center; font-size: 1.6rem; }
-    button.primary { width: 100%; background: #16a34a; border-color: #16a34a; font-size: 1.3rem; padding: 18px; margin-top: 8px; }
+    .muted { color: #aaa; margin-top: 12px; }
     #undo { width: 100%; margin-top: 8px; background: transparent; font-size: 0.95rem; padding: 10px; }
-    #done { margin-top: 12px; color: #aaa; }
   </style>
 </head>
 <body>
-  <div id="listScreen">
-    <h1>Gym Log</h1>
-    <div class="days" id="days"></div>
-    <div id="list"></div>
-    <button id="more"></button>
-  </div>
-
-  <div id="exerciseScreen" hidden></div>
+  <div id="app"></div>
 
   <script type="module">
-    import { exercisesForDay } from "./exercises.js";
+    import { sessionTypes, exercises, exercisesForGroup } from "./exercises.js";
     import { makeSet, todaysSets, defaultsFor, removeLastSet, weightOptions } from "./log.js";
 
-    const dayNames = { legs: "Legs", upper: "Upper" };
-    let day = "legs";
+    const SETS_KEY = "gymlog.sets";
+    const SESSION_KEY = "gymlog.session";
+
+    function load(key, fallback) {
+      try {
+        const raw = localStorage.getItem(key);
+        return raw ? JSON.parse(raw) : fallback;
+      } catch { return fallback; }
+    }
+    function save(key, value) {
+      try { localStorage.setItem(key, JSON.stringify(value)); }
+      catch { /* storage unavailable: the app still works for this visit */ }
+    }
+
+    let sets = load(SETS_KEY, []);
+    if (!Array.isArray(sets)) sets = [];
+    let session = { type: "legs", mode: "heavy", ...load(SESSION_KEY, {}) };
+    if (!sessionTypes.some((t) => t.id === session.type)) session.type = "legs";
+    if (session.mode !== "volume") session.mode = "heavy";
+
+    let screen = "start";          // "start", "list" or "exercise"
+    let pick = { ...session };     // what is highlighted on the start screen
     let showMore = false;
-    let selected = null;
+    let current = null;            // the exercise being logged
     let weight = 0;
     let reps = 5;
 
-    function loadSets() {
-      try { return JSON.parse(localStorage.getItem("gymlog.sets")) || []; }
-      catch { return []; }
-    }
-    function saveSets() {
-      try { localStorage.setItem("gymlog.sets", JSON.stringify(sets)); }
-      catch { /* storage unavailable: the app still works for this visit */ }
-    }
-    let sets = loadSets();
+    const app = document.getElementById("app");
+    const $ = (id) => document.getElementById(id);
+    const esc = (s) => String(s).replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;");
+    const typeInfo = (id) => sessionTypes.find((t) => t.id === id);
 
-    const listScreen = document.getElementById("listScreen");
-    const exerciseScreen = document.getElementById("exerciseScreen");
-    const daysEl = document.getElementById("days");
-    const listEl = document.getElementById("list");
-    const moreEl = document.getElementById("more");
+    function sessionLabel(s) {
+      const t = typeInfo(s.type);
+      return t.weights ? t.label + " · " + (s.mode === "volume" ? "Volume" : "Heavy") : t.label;
+    }
 
-    function choose(e) {
-      selected = e;
-      const d = defaultsFor(e, sets);
-      weight = d.weight;
-      reps = d.reps;
+    function go(name) {
+      screen = name;
       render();
+      window.scrollTo(0, 0);
     }
 
     function render() {
-      window.scrollTo(0, 0);
-      if (selected) {
-        listScreen.hidden = true;
-        exerciseScreen.hidden = false;
-        renderExercise();
-      } else {
-        listScreen.hidden = false;
-        exerciseScreen.hidden = true;
-        renderList();
-      }
+      if (screen === "start") renderStart();
+      else if (screen === "list") renderList();
+      else renderExercise();
     }
 
+    function choiceButton(label, active, onclick) {
+      const b = document.createElement("button");
+      b.textContent = label;
+      if (active) b.className = "active";
+      b.onclick = onclick;
+      return b;
+    }
+
+    function beginSession(s) {
+      session = { type: s.type, mode: s.mode };
+      save(SESSION_KEY, session);
+      showMore = false;
+      go("list");
+    }
+
+    // ---------- Start screen ----------
+    function renderStart() {
+      const t = typeInfo(pick.type);
+      app.innerHTML =
+        "<h1>Gym Log</h1>" +
+        '<button class="primary" id="quick">Quick start: ' + esc(sessionLabel(session)) + "</button>" +
+        "<label>Or choose a session</label>" +
+        '<div class="choices" id="types"></div>' +
+        (t.weights ? '<label>Day type</label><div class="choices" id="modes"></div>' : "") +
+        '<button class="primary" id="start">Start ' + esc(sessionLabel(pick)) + "</button>";
+
+      for (const st of sessionTypes) {
+        $("types").appendChild(choiceButton(st.label, st.id === pick.type, () => { pick.type = st.id; renderStart(); }));
+      }
+      if (t.weights) {
+        $("modes").appendChild(choiceButton("Heavy", pick.mode === "heavy", () => { pick.mode = "heavy"; renderStart(); }));
+        $("modes").appendChild(choiceButton("Volume", pick.mode === "volume", () => { pick.mode = "volume"; renderStart(); }));
+      }
+      $("quick").onclick = () => beginSession(session);
+      $("start").onclick = () => beginSession(pick);
+    }
+
+    // ---------- Exercise list ----------
     function renderList() {
-      daysEl.innerHTML = "";
-      for (const key of Object.keys(dayNames)) {
-        const b = document.createElement("button");
-        b.textContent = dayNames[key];
-        if (key === day) b.className = "active";
-        b.onclick = () => { day = key; renderList(); };
-        daysEl.appendChild(b);
-      }
+      const common = exercisesForGroup(session.type, false, exercises);
+      const everything = exercisesForGroup(session.type, true, exercises);
+      const shown = showMore ? everything : common;
 
-      listEl.innerHTML = "";
-      for (const e of exercisesForDay(day, showMore)) {
+      app.innerHTML =
+        '<button class="ghost" id="change" style="margin-top:0">' + esc(sessionLabel(session)) + " &#9662; change</button>" +
+        '<div id="list"></div>' +
+        (everything.length === 0 ? '<div class="muted">No exercises here yet. You will be able to add some in a later step.</div>' : "") +
+        (everything.length > common.length ? '<button class="ghost" id="more">' + (showMore ? "Hide less common" : "Show less common") + "</button>" : "");
+
+      for (const e of shown) {
         const b = document.createElement("button");
+        b.className = "item";
         b.textContent = e.name;
-        b.onclick = () => choose(e);
-        listEl.appendChild(b);
+        b.onclick = () => openExercise(e);
+        $("list").appendChild(b);
       }
+      $("change").onclick = () => { pick = { ...session }; go("start"); };
+      if ($("more")) $("more").onclick = () => { showMore = !showMore; renderList(); };
+    }
 
-      moreEl.textContent = showMore ? "Hide less common" : "Show less common";
-      moreEl.onclick = () => { showMore = !showMore; renderList(); };
+    // ---------- Exercise screen ----------
+    function resetDefaults() {
+      const d = defaultsFor(current, sets, {}, session.mode);
+      weight = d.weight;
+      reps = d.reps;
+    }
+
+    function openExercise(e) {
+      current = e;
+      resetDefaults();
+      go("exercise");
     }
 
     function renderExercise() {
-      const unit = selected.unit;
-      const today = todaysSets(sets, selected.id);
+      const e = current;
+      const today = todaysSets(sets, e.id);
       const doneText = today.length === 0
         ? "No sets logged today"
-        : today.map((s, i) => "Set " + (i + 1) + ": " + s.weight + " " + unit + " x " + s.reps).join("<br>");
-      const optionHtml = weightOptions(selected, weight)
-        .map((w) => '<option value="' + w + '"' + (w === weight ? " selected" : "") + ">" + w + " " + unit + "</option>")
+        : today.map((s, i) => "Set " + (i + 1) + ": " + s.weight + " " + e.unit + " x " + s.reps).join("<br>");
+      const optionHtml = weightOptions(e, weight)
+        .map((w) => '<option value="' + w + '"' + (w === weight ? " selected" : "") + ">" + w + " " + e.unit + "</option>")
         .join("");
 
-      exerciseScreen.innerHTML =
-        '<button class="back" id="back">&larr; Pick another machine</button>' +
-        "<h2>" + selected.name + "</h2>" +
+      app.innerHTML =
+        '<button class="ghost" id="back" style="margin-top:0">&larr; Pick another machine</button>' +
+        "<h2>" + esc(e.name) + "</h2>" +
         "<label>Weight</label>" +
         '<select id="weightSel">' + optionHtml + "</select>" +
-        '<div class="other"><input id="otherW" type="number" inputmode="decimal" step="any" placeholder="Other weight (' + unit + ')"><button id="otherBtn">Set</button></div>' +
+        '<div class="other"><input id="otherW" type="number" inputmode="decimal" step="any" placeholder="Other weight (' + e.unit + ')"><button id="otherBtn">Set</button></div>' +
         "<label>Reps</label>" +
         '<div class="row"><button id="rMinus">-</button><span class="val">' + reps + '</span><button id="rPlus">+</button></div>' +
         '<button class="primary" id="logBtn">Log set</button>' +
         (today.length > 0 ? '<button id="undo">Undo last set</button>' : "") +
-        '<div id="done">' + doneText + "</div>";
+        '<div class="muted">' + doneText + "</div>";
 
-      document.getElementById("back").onclick = () => { selected = null; render(); };
-      document.getElementById("weightSel").onchange = (ev) => { weight = Number(ev.target.value); };
-      document.getElementById("otherBtn").onclick = () => {
-        const v = parseFloat(document.getElementById("otherW").value);
+      $("back").onclick = () => go("list");
+      $("weightSel").onchange = (ev) => { weight = Number(ev.target.value); };
+      $("otherBtn").onclick = () => {
+        const v = parseFloat($("otherW").value);
         if (Number.isFinite(v) && v >= 0) { weight = v; renderExercise(); }
       };
-      document.getElementById("rMinus").onclick = () => { reps = Math.max(0, reps - 1); renderExercise(); };
-      document.getElementById("rPlus").onclick = () => { reps = reps + 1; renderExercise(); };
-      document.getElementById("logBtn").onclick = () => {
-        sets.push(makeSet({ exerciseId: selected.id, weight, reps }));
-        saveSets();
+      $("rMinus").onclick = () => { reps = Math.max(0, reps - 1); renderExercise(); };
+      $("rPlus").onclick = () => { reps = reps + 1; renderExercise(); };
+      $("logBtn").onclick = () => {
+        sets.push(makeSet({ exerciseId: e.id, weight, reps, mode: session.mode }));
+        save(SETS_KEY, sets);
+        resetDefaults();
         renderExercise();
       };
-      const undo = document.getElementById("undo");
-      if (undo) undo.onclick = () => {
-        sets = removeLastSet(sets, selected.id);
-        saveSets();
+      if ($("undo")) $("undo").onclick = () => {
+        sets = removeLastSet(sets, e.id);
+        save(SETS_KEY, sets);
+        resetDefaults();
         renderExercise();
       };
     }
