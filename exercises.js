@@ -3,7 +3,7 @@
 export const sessionTypes = [
   { id: "legs", label: "Legs", weights: true },
   { id: "arms", label: "Arms", weights: true },
-  { id: "abs", label: "Abs", weights: true },
+  { id: "abs", label: "Abs", weights: false },
   { id: "cardio", label: "Cardio", weights: false },
 ];
 

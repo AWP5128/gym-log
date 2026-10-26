@@ -16,9 +16,9 @@ test("every exercise has a valid unit, a positive step and a known group", () =>
   }
 });
 
-test("there are four session types and only cardio has no heavy/volume choice", () => {
+test("there are four session types and only abs and cardio have no heavy/volume choice", () => {
   assert.deepEqual(sessionTypes.map((t) => t.id), ["legs", "arms", "abs", "cardio"]);
-  assert.deepEqual(sessionTypes.filter((t) => !t.weights).map((t) => t.id), ["cardio"]);
+  assert.deepEqual(sessionTypes.filter((t) => !t.weights).map((t) => t.id), ["abs", "cardio"]);
 });
 
 test("legs shows common exercises only by default", () => {

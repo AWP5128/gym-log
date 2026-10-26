@@ -8,15 +8,21 @@
     body { font-family: system-ui, sans-serif; max-width: 480px; margin: 0 auto; padding: 16px; background: #111; color: #eee; }
     h1 { font-size: 1.3rem; }
     h2 { font-size: 1.5rem; margin: 16px 0; }
-    button, select, input { font-size: 1.2rem; padding: 14px; border-radius: 10px; border: 1px solid #444; background: #222; color: #eee; }
+    button, select, input, textarea { font-size: 1.2rem; padding: 14px; border-radius: 10px; border: 1px solid #444; background: #222; color: #eee; font-family: inherit; }
     select { width: 100%; font-size: 1.5rem; }
+    .field { width: 100%; box-sizing: border-box; }
     label { display: block; margin: 16px 0 6px; color: #aaa; }
     .choices { display: flex; flex-wrap: wrap; gap: 8px; }
     .choices button { flex: 1; }
     button.active { background: #2563eb; border-color: #2563eb; }
     button.primary { width: 100%; background: #16a34a; border-color: #16a34a; font-size: 1.3rem; padding: 18px; margin-top: 12px; }
+    button.secondary { width: 100%; background: #2563eb; border-color: #2563eb; font-size: 1.1rem; padding: 14px; margin-top: 24px; }
     button.ghost { width: 100%; background: transparent; margin-top: 12px; }
     button.item { display: block; width: 100%; text-align: left; margin-top: 8px; }
+    button.item small { display: block; color: #aaa; font-size: 0.9rem; margin-top: 4px; }
+    .panel { border: 1px solid #444; border-radius: 10px; padding: 4px 12px 12px; margin-top: 16px; }
+    .panel strong { display: block; margin-top: 8px; }
+    .note { background: #1e293b; border-radius: 10px; padding: 10px 12px; margin-top: 12px; color: #cbd5e1; }
     .other { display: flex; gap: 8px; margin-top: 8px; }
     .other input { flex: 1; min-width: 0; font-size: 1rem; }
     .other button { font-size: 1rem; }
@@ -32,10 +38,12 @@
 
   <script type="module">
     import { sessionTypes, exercises, exercisesForGroup } from "./exercises.js";
+    import { emptySettings, allExercises, configFor, updateExercise, toNumber } from "./settings.js";
     import { makeSet, todaysSets, defaultsFor, removeLastSet, weightOptions } from "./log.js";
 
     const SETS_KEY = "gymlog.sets";
     const SESSION_KEY = "gymlog.session";
+    const SETTINGS_KEY = "gymlog.settings";
 
     function load(key, fallback) {
       try {
@@ -50,21 +58,29 @@
 
     let sets = load(SETS_KEY, []);
     if (!Array.isArray(sets)) sets = [];
+    let settings = { ...emptySettings(), ...load(SETTINGS_KEY, {}) };
+
+    // The selected session. Whatever is selected is remembered and is what Quick start uses.
     let session = { type: "legs", mode: "heavy", ...load(SESSION_KEY, {}) };
     if (!sessionTypes.some((t) => t.id === session.type)) session.type = "legs";
     if (session.mode !== "volume") session.mode = "heavy";
 
-    let screen = "start";          // "start", "list" or "exercise"
-    let pick = { ...session };     // what is highlighted on the start screen
+    let screen = "start";          // "start", "list", "exercise", "setup" or "edit"
     let showMore = false;
     let current = null;            // the exercise being logged
+    let editId = null;             // the exercise being set up
     let weight = 0;
     let reps = 5;
 
     const app = document.getElementById("app");
     const $ = (id) => document.getElementById(id);
-    const esc = (s) => String(s).replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;");
+    const esc = (s) => String(s).replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;").replace(/"/g, "&quot;");
     const typeInfo = (id) => sessionTypes.find((t) => t.id === id);
+
+    const exList = () => allExercises(exercises, settings);        // includes your renames and steps
+    const hasDayType = () => typeInfo(session.type).weights;       // Legs and Arms only
+    const dayMode = () => (hasDayType() ? session.mode : null);    // "heavy", "volume" or null
+    const modeKey = () => (dayMode() === "heavy" ? "Heavy" : "Volume");  // sessions without a day type use the Volume settings
 
     function sessionLabel(s) {
       const t = typeInfo(s.type);
@@ -80,6 +96,8 @@
     function render() {
       if (screen === "start") renderStart();
       else if (screen === "list") renderList();
+      else if (screen === "setup") renderSetup();
+      else if (screen === "edit") renderEdit();
       else renderExercise();
     }
 
@@ -91,39 +109,35 @@
       return b;
     }
 
-    function beginSession(s) {
-      session = { type: s.type, mode: s.mode };
-      save(SESSION_KEY, session);
-      showMore = false;
-      go("list");
-    }
-
     // ---------- Start screen ----------
     function renderStart() {
-      const t = typeInfo(pick.type);
+      const t = typeInfo(session.type);
       app.innerHTML =
         "<h1>Gym Log</h1>" +
         '<button class="primary" id="quick">Quick start: ' + esc(sessionLabel(session)) + "</button>" +
-        "<label>Or choose a session</label>" +
+        "<label>Session</label>" +
         '<div class="choices" id="types"></div>' +
         (t.weights ? '<label>Day type</label><div class="choices" id="modes"></div>' : "") +
-        '<button class="primary" id="start">Start ' + esc(sessionLabel(pick)) + "</button>";
+        '<button class="secondary" id="setupBtn">Set up ' + esc(sessionLabel(session)) + "</button>";
+
+      // Choosing a session or day type updates Quick start and is remembered straight away.
+      const choose = (change) => { Object.assign(session, change); save(SESSION_KEY, session); renderStart(); };
 
       for (const st of sessionTypes) {
-        $("types").appendChild(choiceButton(st.label, st.id === pick.type, () => { pick.type = st.id; renderStart(); }));
+        $("types").appendChild(choiceButton(st.label, st.id === session.type, () => choose({ type: st.id })));
       }
       if (t.weights) {
-        $("modes").appendChild(choiceButton("Heavy", pick.mode === "heavy", () => { pick.mode = "heavy"; renderStart(); }));
-        $("modes").appendChild(choiceButton("Volume", pick.mode === "volume", () => { pick.mode = "volume"; renderStart(); }));
+        $("modes").appendChild(choiceButton("Heavy", session.mode === "heavy", () => choose({ mode: "heavy" })));
+        $("modes").appendChild(choiceButton("Volume", session.mode === "volume", () => choose({ mode: "volume" })));
       }
-      $("quick").onclick = () => beginSession(session);
-      $("start").onclick = () => beginSession(pick);
+      $("quick").onclick = () => { showMore = false; go("list"); };
+      $("setupBtn").onclick = () => go("setup");
     }
 
     // ---------- Exercise list ----------
     function renderList() {
-      const common = exercisesForGroup(session.type, false, exercises);
-      const everything = exercisesForGroup(session.type, true, exercises);
+      const common = exercisesForGroup(session.type, false, exList());
+      const everything = exercisesForGroup(session.type, true, exList());
       const shown = showMore ? everything : common;
 
       app.innerHTML =
@@ -139,13 +153,13 @@
         b.onclick = () => openExercise(e);
         $("list").appendChild(b);
       }
-      $("change").onclick = () => { pick = { ...session }; go("start"); };
+      $("change").onclick = () => go("start");
       if ($("more")) $("more").onclick = () => { showMore = !showMore; renderList(); };
     }
 
     // ---------- Exercise screen ----------
     function resetDefaults() {
-      const d = defaultsFor(current, sets, {}, session.mode);
+      const d = defaultsFor(current, sets, configFor(settings, current.id), dayMode() ?? "volume");
       weight = d.weight;
       reps = d.reps;
     }
@@ -158,6 +172,7 @@
 
     function renderExercise() {
       const e = current;
+      const cfg = configFor(settings, e.id);
       const today = todaysSets(sets, e.id);
       const doneText = today.length === 0
         ? "No sets logged today"
@@ -169,6 +184,7 @@
       app.innerHTML =
         '<button class="ghost" id="back" style="margin-top:0">&larr; Pick another machine</button>' +
         "<h2>" + esc(e.name) + "</h2>" +
+        (cfg.notes ? '<div class="note">' + esc(cfg.notes).replace(/\n/g, "<br>") + "</div>" : "") +
         "<label>Weight</label>" +
         '<select id="weightSel">' + optionHtml + "</select>" +
         '<div class="other"><input id="otherW" type="number" inputmode="decimal" step="any" placeholder="Other weight (' + e.unit + ')"><button id="otherBtn">Set</button></div>' +
@@ -187,7 +203,7 @@
       $("rMinus").onclick = () => { reps = Math.max(0, reps - 1); renderExercise(); };
       $("rPlus").onclick = () => { reps = reps + 1; renderExercise(); };
       $("logBtn").onclick = () => {
-        sets.push(makeSet({ exerciseId: e.id, weight, reps, mode: session.mode }));
+        sets.push(makeSet({ exerciseId: e.id, weight, reps, mode: dayMode() || undefined }));
         save(SETS_KEY, sets);
         resetDefaults();
         renderExercise();
@@ -197,6 +213,76 @@
         save(SETS_KEY, sets);
         resetDefaults();
         renderExercise();
+      };
+    }
+
+    // ---------- Set up session: list of machines ----------
+    function summary(e, cfg, key) {
+      const parts = [];
+      if (cfg["start" + key] !== null) parts.push("Warm-up " + cfg["start" + key] + " " + e.unit);
+      if (cfg["work" + key] !== null) parts.push("Working " + cfg["work" + key] + " " + e.unit);
+      if (cfg["reps" + key] !== null) parts.push(cfg["reps" + key] + " reps");
+      return parts.length ? parts.join(" · ") : "Not set";
+    }
+
+    function renderSetup() {
+      const list = exercisesForGroup(session.type, true, exList());
+      const key = modeKey();
+      app.innerHTML =
+        '<button class="ghost" id="back" style="margin-top:0">&larr; Back</button>' +
+        "<h2>Set up " + esc(sessionLabel(session)) + "</h2>" +
+        '<div class="muted" style="margin-top:0">Tap a machine to set its weights and reps' + (hasDayType() ? " for this day type" : "") + ".</div>" +
+        '<div id="list"></div>' +
+        (list.length === 0 ? '<div class="muted">No exercises here yet. You will be able to add some in a later step.</div>' : "");
+
+      for (const e of list) {
+        const b = document.createElement("button");
+        b.className = "item";
+        b.innerHTML = esc(e.name) + "<small>" + esc(summary(e, configFor(settings, e.id), key)) + "</small>";
+        b.onclick = () => { editId = e.id; go("edit"); };
+        $("list").appendChild(b);
+      }
+      $("back").onclick = () => go("start");
+    }
+
+    // ---------- Set up session: one machine ----------
+    function renderEdit() {
+      const e = exList().find((x) => x.id === editId);
+      const cfg = configFor(settings, e.id);
+      const key = modeKey();
+      const val = (x) => (x === null ? "" : x);
+      const num = (id, label, value, placeholder) =>
+        '<label for="' + id + '">' + label + "</label>" +
+        '<input class="field" id="' + id + '" type="number" inputmode="decimal" step="any" min="0" value="' + val(value) + '" placeholder="' + placeholder + '">';
+
+      app.innerHTML =
+        '<button class="ghost" id="back" style="margin-top:0">&larr; Back without saving</button>' +
+        "<h2>" + esc(e.name) + "</h2>" +
+        '<label for="f_name">Name</label>' +
+        '<input class="field" id="f_name" type="text" value="' + esc(e.name) + '">' +
+        num("f_step", "Weight step (" + e.unit + ")", e.step, "") +
+        '<div class="panel"><strong>' + esc(sessionLabel(session)) + " defaults</strong>" +
+        num("f_start", "Warm-up weight, first set (" + e.unit + ", optional)", cfg["start" + key], "none") +
+        num("f_work", "Working weight (" + e.unit + ")", cfg["work" + key], "none") +
+        num("f_reps", "Default reps", cfg["reps" + key], key === "Heavy" ? "5" : "10") +
+        "</div>" +
+        '<label for="f_notes">Notes (seat height, pad position, etc.)</label>' +
+        '<textarea class="field" id="f_notes" rows="3">' + esc(cfg.notes) + "</textarea>" +
+        '<button class="primary" id="save">Save</button>';
+
+      $("back").onclick = () => go("setup");
+      $("save").onclick = () => {
+        const patch = {
+          name: $("f_name").value.trim() || undefined,
+          step: toNumber($("f_step").value),
+          notes: $("f_notes").value,
+        };
+        patch["start" + key] = toNumber($("f_start").value);
+        patch["work" + key] = toNumber($("f_work").value);
+        patch["reps" + key] = toNumber($("f_reps").value);
+        settings = updateExercise(settings, e.id, patch);
+        save(SETTINGS_KEY, settings);
+        go("setup");
       };
     }
 
