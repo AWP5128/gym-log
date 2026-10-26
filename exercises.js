@@ -4,10 +4,10 @@ export const exercises = [
   { id: "hip-abduction", name: "Hip Abduction Machine", group: "legs", common: true, unit: "lb", step: 10 },
   { id: "hip-adduction", name: "Hip Adduction Machine", group: "legs", common: true, unit: "lb", step: 10 },
   { id: "calf-press", name: "Calf Press Machine", group: "legs", common: true, unit: "lb", step: 10 },
-  { id: "leg-press", name: "Leg Press Machine", group: "legs", common: true, unit: "lb", step: 10 },
+    { id: "leg-press", name: "Leg Press Machine", group: "legs", common: true, unit: "lb", step: 10, defaultWeight: 130 },
   { id: "squat-machine", name: "Squat Machine", group: "legs", common: true, unit: "lb", step: 10 },
   { id: "deadlift", name: "Deadlift (barbell)", group: "legs", common: true, unit: "kg", step: 2.5 },
-  { id: "pull-up", name: "Pull-ups (neutral grip)", group: "legs", common: true, unit: "kg", step: 2.5 },
+  { id: "pull-up", name: "Pull-ups (neutral grip)", group: "legs", common: true, unit: "kg", step: 2.5, min: 0 },
   { id: "quad-extension", name: "Quad Extension Machine", group: "legs", common: false, unit: "lb", step: 10 },
   { id: "hamstring-curl", name: "Hamstring Curl Machine", group: "legs", common: false, unit: "lb", step: 10 },
 

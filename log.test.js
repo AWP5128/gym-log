@@ -1,7 +1,7 @@
 import { test } from "node:test";
 import assert from "node:assert/strict";
 import {
-  makeSet, stepWeight, todaysSets, defaultsFor, removeLastSet,
+  makeSet, stepWeight, todaysSets, defaultsFor, removeLastSet, weightOptions,
 } from "./log.js";
 
 const legPress = { id: "leg-press" };
@@ -58,4 +58,34 @@ test("removeLastSet removes only the latest set of that exercise", () => {
   ];
   const result = removeLastSet(sets, "a");
   assert.deepEqual(result.map((s) => s.time), ["t1", "t2"]);
+});
+test("weightOptions for a lb machine runs from one step to 500", () => {
+  const options = weightOptions({ unit: "lb", step: 10 });
+  assert.equal(options[0], 10);
+  assert.equal(options[options.length - 1], 500);
+  assert.equal(options.length, 50);
+  assert.ok(options.includes(100));
+});
+
+test("weightOptions includes an odd current weight, in order", () => {
+  const options = weightOptions({ unit: "lb", step: 10 }, 25);
+  assert.ok(options.includes(25));
+  assert.equal(options[options.indexOf(25) - 1], 20);
+  assert.equal(options[options.indexOf(25) + 1], 30);
+});
+
+test("weightOptions respects min of 0 and kg steps", () => {
+  const options = weightOptions({ unit: "kg", step: 2.5, min: 0 });
+  assert.deepEqual(options.slice(0, 3), [0, 2.5, 5]);
+  assert.equal(options[options.length - 1], 200);
+});
+
+test("defaultsFor uses the machine's default weight when there is no history", () => {
+  const e = { id: "leg-press", step: 10, defaultWeight: 120 };
+  assert.deepEqual(defaultsFor(e, []), { weight: 120, reps: 5 });
+});
+
+test("defaultsFor falls back to one step when there is no default", () => {
+  const e = { id: "leg-press", step: 10 };
+  assert.deepEqual(defaultsFor(e, []), { weight: 10, reps: 5 });
 });
