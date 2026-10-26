@@ -7,6 +7,7 @@
   <style>
     body { font-family: system-ui, sans-serif; max-width: 480px; margin: 0 auto; padding: 16px; background: #111; color: #eee; }
     h1 { font-size: 1.3rem; }
+    h2 { font-size: 1.1rem; margin: 0 0 12px; }
     button { font-size: 1.1rem; padding: 14px; border-radius: 10px; border: 1px solid #444; background: #222; color: #eee; }
     .days { display: flex; gap: 8px; }
     .days button { flex: 1; }
@@ -15,6 +16,12 @@
     #list button.selected { border-color: #2563eb; }
     #more { margin-top: 12px; width: 100%; background: transparent; }
     #detail { margin-top: 16px; padding: 12px; border: 1px solid #444; border-radius: 10px; }
+    .row { display: flex; align-items: center; gap: 8px; margin-bottom: 10px; }
+    .row button { width: 72px; font-size: 1.6rem; }
+    .row .val { flex: 1; text-align: center; font-size: 1.6rem; }
+    button.primary { width: 100%; background: #16a34a; border-color: #16a34a; font-size: 1.3rem; padding: 18px; }
+    #undo { width: 100%; margin-top: 8px; background: transparent; font-size: 0.95rem; padding: 10px; }
+    #done { margin-top: 12px; color: #aaa; }
   </style>
 </head>
 <body>
@@ -27,19 +34,39 @@
 
   <script type="module">
     import { exercisesForDay } from "./exercises.js";
+    import { makeSet, stepWeight, todaysSets, defaultsFor, removeLastSet } from "./log.js";
 
     const dayNames = { legs: "Legs", upper: "Upper", combined: "Combined" };
     let day = "legs";
     let showMore = false;
     let selected = null;
+    let weight = 0;
+    let reps = 5;
+
+    function loadSets() {
+      try { return JSON.parse(localStorage.getItem("gymlog.sets")) || []; }
+      catch { return []; }
+    }
+    function saveSets() {
+      try { localStorage.setItem("gymlog.sets", JSON.stringify(sets)); }
+      catch { /* storage unavailable: the app still works for this visit */ }
+    }
+    let sets = loadSets();
 
     const daysEl = document.getElementById("days");
     const listEl = document.getElementById("list");
     const moreEl = document.getElementById("more");
     const detailEl = document.getElementById("detail");
 
+    function choose(e) {
+      selected = e;
+      const d = defaultsFor(e, sets);
+      weight = d.weight;
+      reps = d.reps;
+      render();
+    }
+
     function render() {
-      // Day buttons
       daysEl.innerHTML = "";
       for (const key of Object.keys(dayNames)) {
         const b = document.createElement("button");
@@ -49,27 +76,52 @@
         daysEl.appendChild(b);
       }
 
-      // Exercise list for the chosen day
       listEl.innerHTML = "";
       for (const e of exercisesForDay(day, showMore)) {
         const b = document.createElement("button");
         b.textContent = e.name;
         if (selected && selected.id === e.id) b.className = "selected";
-        b.onclick = () => { selected = e; render(); };
+        b.onclick = () => choose(e);
         listEl.appendChild(b);
       }
 
-      // Less-common toggle
       moreEl.textContent = showMore ? "Hide less common" : "Show less common";
       moreEl.onclick = () => { showMore = !showMore; render(); };
 
-      // Placeholder for the set-logging screen (next step)
-      if (selected) {
-        detailEl.hidden = false;
-        detailEl.textContent = selected.name + " (" + selected.unit + ", steps of " + selected.step + ")";
-      } else {
-        detailEl.hidden = true;
-      }
+      renderDetail();
+    }
+
+    function renderDetail() {
+      if (!selected) { detailEl.hidden = true; return; }
+      detailEl.hidden = false;
+      const today = todaysSets(sets, selected.id);
+      const doneText = today.length === 0
+        ? "No sets logged today"
+        : today.map((s, i) => "Set " + (i + 1) + ": " + s.weight + " " + selected.unit + " x " + s.reps).join("<br>");
+
+      detailEl.innerHTML =
+        "<h2>" + selected.name + "</h2>" +
+        '<div class="row"><button id="wMinus">-</button><span class="val">' + weight + " " + selected.unit + '</span><button id="wPlus">+</button></div>' +
+        '<div class="row"><button id="rMinus">-</button><span class="val">' + reps + ' reps</span><button id="rPlus">+</button></div>' +
+        '<button class="primary" id="logBtn">Log set</button>' +
+        (today.length > 0 ? '<button id="undo">Undo last set</button>' : "") +
+        '<div id="done">' + doneText + "</div>";
+
+      document.getElementById("wMinus").onclick = () => { weight = stepWeight(weight, selected.step, -1); renderDetail(); };
+      document.getElementById("wPlus").onclick = () => { weight = stepWeight(weight, selected.step, 1); renderDetail(); };
+      document.getElementById("rMinus").onclick = () => { reps = Math.max(0, reps - 1); renderDetail(); };
+      document.getElementById("rPlus").onclick = () => { reps = reps + 1; renderDetail(); };
+      document.getElementById("logBtn").onclick = () => {
+        sets.push(makeSet({ exerciseId: selected.id, weight, reps }));
+        saveSets();
+        renderDetail();
+      };
+      const undo = document.getElementById("undo");
+      if (undo) undo.onclick = () => {
+        sets = removeLastSet(sets, selected.id);
+        saveSets();
+        renderDetail();
+      };
     }
 
     render();
