@@ -30,6 +30,9 @@
     .row button { width: 72px; font-size: 1.6rem; }
     .row .val { flex: 1; text-align: center; font-size: 1.6rem; }
     .muted { color: #aaa; margin-top: 12px; }
+    .two { display: flex; gap: 8px; }
+    .two > div { flex: 1; }
+    .progress { text-align: center; color: #cbd5e1; margin-top: 16px; }
     #undo { width: 100%; margin-top: 8px; background: transparent; font-size: 0.95rem; padding: 10px; }
   </style>
 </head>
@@ -39,6 +42,7 @@
   <script type="module">
     import { sessionTypes, exercises, exercisesForGroup } from "./exercises.js";
     import { emptySettings, allExercises, configFor, updateExercise, toNumber } from "./settings.js";
+    import { effectiveConfig, globalDefaults, updateGlobalDefaults } from "./defaults.js";
     import { makeSet, todaysSets, defaultsFor, removeLastSet, weightOptions } from "./log.js";
 
     const SETS_KEY = "gymlog.sets";
@@ -69,6 +73,7 @@
     let showMore = false;
     let current = null;            // the exercise being logged
     let editId = null;             // the exercise being set up
+    let flash = "";                // a short message shown once, e.g. "Defaults saved"
     let weight = 0;
     let reps = 5;
 
@@ -81,6 +86,18 @@
     const hasDayType = () => typeInfo(session.type).weights;       // Legs and Arms only
     const dayMode = () => (hasDayType() ? session.mode : null);    // "heavy", "volume" or null
     const modeKey = () => (dayMode() === "heavy" ? "Heavy" : "Volume");  // sessions without a day type use the Volume settings
+
+    // Text from a box to a whole number above zero, or null if blank or invalid.
+    function wholeOrNull(text) {
+      const n = toNumber(text);
+      return n !== null && Math.round(n) > 0 ? Math.round(n) : null;
+    }
+
+    function numField(id, label, value, placeholder) {
+      return '<label for="' + id + '">' + label + "</label>" +
+        '<input class="field" id="' + id + '" type="number" inputmode="decimal" step="any" min="0" value="' +
+        (value === null ? "" : value) + '" placeholder="' + placeholder + '">';
+    }
 
     function sessionLabel(s) {
       const t = typeInfo(s.type);
@@ -159,7 +176,7 @@
 
     // ---------- Exercise screen ----------
     function resetDefaults() {
-      const d = defaultsFor(current, sets, configFor(settings, current.id), dayMode() ?? "volume");
+      const d = defaultsFor(current, sets, effectiveConfig(settings, current.id), dayMode() ?? "volume");
       weight = d.weight;
       reps = d.reps;
     }
@@ -172,8 +189,14 @@
 
     function renderExercise() {
       const e = current;
-      const cfg = configFor(settings, e.id);
+      const cfg = effectiveConfig(settings, e.id);
+      const key = modeKey();
       const today = todaysSets(sets, e.id);
+      const hasWarmup = cfg["start" + key] !== null;
+      const totalSets = cfg["sets" + key] + (hasWarmup ? 1 : 0);
+      const progress = today.length >= totalSets
+        ? "All " + totalSets + " sets done"
+        : "Set " + (today.length + 1) + " of " + totalSets + (hasWarmup && today.length === 0 ? " (warm-up)" : "");
       const doneText = today.length === 0
         ? "No sets logged today"
         : today.map((s, i) => "Set " + (i + 1) + ": " + s.weight + " " + e.unit + " x " + s.reps).join("<br>");
@@ -190,7 +213,8 @@
         '<div class="other"><input id="otherW" type="number" inputmode="decimal" step="any" placeholder="Other weight (' + e.unit + ')"><button id="otherBtn">Set</button></div>' +
         "<label>Reps</label>" +
         '<div class="row"><button id="rMinus">-</button><span class="val">' + reps + '</span><button id="rPlus">+</button></div>' +
-        '<button class="primary" id="logBtn">Log set</button>' +
+        '<div class="progress">' + progress + "</div>" +
+        '<button class="primary" id="logBtn" style="margin-top:8px">Log set</button>' +
         (today.length > 0 ? '<button id="undo">Undo last set</button>' : "") +
         '<div class="muted">' + doneText + "</div>";
 
@@ -222,18 +246,28 @@
       if (cfg["start" + key] !== null) parts.push("Warm-up " + cfg["start" + key] + " " + e.unit);
       if (cfg["work" + key] !== null) parts.push("Working " + cfg["work" + key] + " " + e.unit);
       if (cfg["reps" + key] !== null) parts.push(cfg["reps" + key] + " reps");
-      return parts.length ? parts.join(" · ") : "Not set";
+      if (cfg["sets" + key] !== null) parts.push(cfg["sets" + key] + " sets");
+      return parts.length ? parts.join(" · ") : "Uses the defaults";
     }
 
     function renderSetup() {
       const list = exercisesForGroup(session.type, true, exList());
       const key = modeKey();
+      const g = globalDefaults(settings);
       app.innerHTML =
         '<button class="ghost" id="back" style="margin-top:0">&larr; Back</button>' +
         "<h2>Set up " + esc(sessionLabel(session)) + "</h2>" +
-        '<div class="muted" style="margin-top:0">Tap a machine to set its weights and reps' + (hasDayType() ? " for this day type" : "") + ".</div>" +
+        '<div class="panel"><strong>Defaults for every machine · ' + key + " day</strong>" +
+        '<div class="two"><div>' + numField("g_reps", "Reps", g["reps" + key], "") + "</div>" +
+        "<div>" + numField("g_sets", "Sets", g["sets" + key], "") + "</div></div>" +
+        '<button class="secondary" id="saveDefaults" style="margin-top:12px">Save defaults</button>' +
+        (flash ? '<div class="muted">' + flash + "</div>" : "") +
+        (hasDayType() ? "" : '<div class="muted">' + esc(typeInfo(session.type).label) + " uses the Volume day defaults.</div>") +
+        "</div>" +
+        '<div class="muted">Tap a machine to give it its own weights, reps or sets.</div>' +
         '<div id="list"></div>' +
         (list.length === 0 ? '<div class="muted">No exercises here yet. You will be able to add some in a later step.</div>' : "");
+      flash = "";
 
       for (const e of list) {
         const b = document.createElement("button");
@@ -243,6 +277,15 @@
         $("list").appendChild(b);
       }
       $("back").onclick = () => go("start");
+      $("saveDefaults").onclick = () => {
+        settings = updateGlobalDefaults(settings, {
+          ["reps" + key]: wholeOrNull($("g_reps").value),
+          ["sets" + key]: wholeOrNull($("g_sets").value),
+        });
+        save(SETTINGS_KEY, settings);
+        flash = "Defaults saved";
+        renderSetup();
+      };
     }
 
     // ---------- Set up session: one machine ----------
@@ -250,21 +293,20 @@
       const e = exList().find((x) => x.id === editId);
       const cfg = configFor(settings, e.id);
       const key = modeKey();
-      const val = (x) => (x === null ? "" : x);
-      const num = (id, label, value, placeholder) =>
-        '<label for="' + id + '">' + label + "</label>" +
-        '<input class="field" id="' + id + '" type="number" inputmode="decimal" step="any" min="0" value="' + val(value) + '" placeholder="' + placeholder + '">';
+      const eff = effectiveConfig(settings, e.id);   // what this machine uses right now
 
       app.innerHTML =
         '<button class="ghost" id="back" style="margin-top:0">&larr; Back without saving</button>' +
         "<h2>" + esc(e.name) + "</h2>" +
         '<label for="f_name">Name</label>' +
         '<input class="field" id="f_name" type="text" value="' + esc(e.name) + '">' +
-        num("f_step", "Weight step (" + e.unit + ")", e.step, "") +
-        '<div class="panel"><strong>' + esc(sessionLabel(session)) + " defaults</strong>" +
-        num("f_start", "Warm-up weight, first set (" + e.unit + ", optional)", cfg["start" + key], "none") +
-        num("f_work", "Working weight (" + e.unit + ")", cfg["work" + key], "none") +
-        num("f_reps", "Default reps", cfg["reps" + key], key === "Heavy" ? "5" : "10") +
+        numField("f_step", "Weight step (" + e.unit + ")", e.step, "") +
+        '<div class="panel"><strong>' + esc(sessionLabel(session)) + " for this machine</strong>" +
+        numField("f_start", "Warm-up weight, first set (" + e.unit + ", optional)", cfg["start" + key], "none") +
+        numField("f_work", "Working weight (" + e.unit + ")", cfg["work" + key], "none") +
+        '<div class="two"><div>' + numField("f_reps", "Reps", cfg["reps" + key], "default " + eff["reps" + key]) + "</div>" +
+        "<div>" + numField("f_sets", "Sets", cfg["sets" + key], "default " + eff["sets" + key]) + "</div></div>" +
+        '<div class="muted">Leave reps or sets blank to use the defaults for every machine.</div>' +
         "</div>" +
         '<label for="f_notes">Notes (seat height, pad position, etc.)</label>' +
         '<textarea class="field" id="f_notes" rows="3">' + esc(cfg.notes) + "</textarea>" +
@@ -279,7 +321,8 @@
         };
         patch["start" + key] = toNumber($("f_start").value);
         patch["work" + key] = toNumber($("f_work").value);
-        patch["reps" + key] = toNumber($("f_reps").value);
+        patch["reps" + key] = wholeOrNull($("f_reps").value);
+        patch["sets" + key] = wholeOrNull($("f_sets").value);
         settings = updateExercise(settings, e.id, patch);
         save(SETTINGS_KEY, settings);
         go("setup");

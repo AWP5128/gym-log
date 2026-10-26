@@ -1,13 +1,13 @@
 // Settings are stored per exercise. Blank fields are null.
 // Heavy/Volume fields: startHeavy, workHeavy, repsHeavy, startVolume, workVolume, repsVolume.
 export const CONFIG_FIELDS = [
-  "startHeavy", "workHeavy", "repsHeavy",
-  "startVolume", "workVolume", "repsVolume",
+  "startHeavy", "workHeavy", "repsHeavy", "setsHeavy",
+  "startVolume", "workVolume", "repsVolume", "setsVolume",
   "pbWeight", "pbReps",
 ];
 
 export function emptySettings() {
-  return { exercises: {}, custom: [] };
+  return { exercises: {}, custom: [], defaults: {} };
 }
 
 // Text from an input box to a number. Blank or invalid gives null.
