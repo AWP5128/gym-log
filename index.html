@@ -1,0 +1,78 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Gym Log</title>
+  <style>
+    body { font-family: system-ui, sans-serif; max-width: 480px; margin: 0 auto; padding: 16px; background: #111; color: #eee; }
+    h1 { font-size: 1.3rem; }
+    button { font-size: 1.1rem; padding: 14px; border-radius: 10px; border: 1px solid #444; background: #222; color: #eee; }
+    .days { display: flex; gap: 8px; }
+    .days button { flex: 1; }
+    .days button.active { background: #2563eb; border-color: #2563eb; }
+    #list button { display: block; width: 100%; text-align: left; margin-top: 8px; }
+    #list button.selected { border-color: #2563eb; }
+    #more { margin-top: 12px; width: 100%; background: transparent; }
+    #detail { margin-top: 16px; padding: 12px; border: 1px solid #444; border-radius: 10px; }
+  </style>
+</head>
+<body>
+  <h1>Gym Log</h1>
+
+  <div class="days" id="days"></div>
+  <div id="list"></div>
+  <button id="more"></button>
+  <div id="detail" hidden></div>
+
+  <script type="module">
+    import { exercisesForDay } from "./exercises.js";
+
+    const dayNames = { legs: "Legs", upper: "Upper", combined: "Combined" };
+    let day = "legs";
+    let showMore = false;
+    let selected = null;
+
+    const daysEl = document.getElementById("days");
+    const listEl = document.getElementById("list");
+    const moreEl = document.getElementById("more");
+    const detailEl = document.getElementById("detail");
+
+    function render() {
+      // Day buttons
+      daysEl.innerHTML = "";
+      for (const key of Object.keys(dayNames)) {
+        const b = document.createElement("button");
+        b.textContent = dayNames[key];
+        if (key === day) b.className = "active";
+        b.onclick = () => { day = key; selected = null; render(); };
+        daysEl.appendChild(b);
+      }
+
+      // Exercise list for the chosen day
+      listEl.innerHTML = "";
+      for (const e of exercisesForDay(day, showMore)) {
+        const b = document.createElement("button");
+        b.textContent = e.name;
+        if (selected && selected.id === e.id) b.className = "selected";
+        b.onclick = () => { selected = e; render(); };
+        listEl.appendChild(b);
+      }
+
+      // Less-common toggle
+      moreEl.textContent = showMore ? "Hide less common" : "Show less common";
+      moreEl.onclick = () => { showMore = !showMore; render(); };
+
+      // Placeholder for the set-logging screen (next step)
+      if (selected) {
+        detailEl.hidden = false;
+        detailEl.textContent = selected.name + " (" + selected.unit + ", steps of " + selected.step + ")";
+      } else {
+        detailEl.hidden = true;
+      }
+    }
+
+    render();
+  </script>
+</body>
+</html>
