@@ -26,16 +26,12 @@
     .other { display: flex; gap: 8px; margin-top: 8px; }
     .other input { flex: 1; min-width: 0; font-size: 1rem; }
     .other button { font-size: 1rem; }
-    .row { display: flex; align-items: center; gap: 8px; margin-bottom: 10px; }
-    .row button { width: 72px; font-size: 1.6rem; }
-    .row .val { flex: 1; text-align: center; font-size: 1.6rem; }
     .muted { color: #aaa; margin-top: 12px; }
     button.outline { width: 100%; background: transparent; border-color: #16a34a; color: #4ade80; font-size: 1.3rem; padding: 18px; margin-top: 8px; }
     .finished { text-align: center; color: #4ade80; margin-top: 24px; }
     .two { display: flex; gap: 8px; }
     .two > div { flex: 1; }
     .progress { text-align: center; color: #cbd5e1; margin-top: 16px; }
-    button.undo { width: 100%; margin-top: 8px; background: transparent; font-size: 0.95rem; padding: 10px; }
     .topbar { display: flex; gap: 8px; }
     .topbar button { margin-top: 0; width: auto; flex: 1; }
     .topbar #back { flex: 2; }
@@ -56,6 +52,10 @@
     .card .logrow button { flex: 1.2; width: auto; margin: 0; padding: 14px; }
     .card .finished { margin-top: 10px; }
     .small { font-size: 0.9rem; }
+    .tm { font-variant-numeric: tabular-nums; }
+    .timebar { display: flex; align-items: center; justify-content: space-between; background: #1e293b; border-radius: 10px; padding: 10px 14px; margin: 12px 0; color: #cbd5e1; }
+    .timebar .tm { font-size: 1.4rem; color: #eee; }
+    .cardhead .cardtime { color: #93c5fd; font-size: 1.2rem; padding: 0 8px; }
   </style>
 </head>
 <body>
@@ -69,11 +69,16 @@
       makeSet, todaysSets, defaultsFor, removeLastSet, weightOptions,
       isDoneToday, markDone, unmarkDone,
     } from "./log.js";
+    import {
+      formatTime, startWorkout, isRunning, workoutElapsed, machineElapsed,
+      runMachines, endWorkout, cleanWorkout,
+    } from "./timer.js";
 
     const SETS_KEY = "gymlog.sets";
     const SESSION_KEY = "gymlog.session";
     const SETTINGS_KEY = "gymlog.settings";
     const DONE_KEY = "gymlog.done";
+    const WORKOUT_KEY = "gymlog.workout";
 
     function load(key, fallback) {
       try {
@@ -91,6 +96,9 @@
     let settings = { ...emptySettings(), ...load(SETTINGS_KEY, {}) };
     let done = load(DONE_KEY, []);           // exercises finished today: { exerciseId, date }
     if (!Array.isArray(done)) done = [];
+    // The workout timer: started by opening the first exercise, stopped by End workout. A workout
+    // left over from an earlier day is dropped.
+    let workout = cleanWorkout(load(WORKOUT_KEY, null), Date.now());
 
     // The selected session. Whatever is selected is remembered and is what Quick start uses.
     let session = { type: "legs", mode: "heavy", ...load(SESSION_KEY, {}) };
@@ -132,6 +140,40 @@
       return t.weights ? t.label + " · " + (s.mode === "volume" ? "Volume" : "Heavy") : t.label;
     }
 
+    // ---------- Timers ----------
+    // The workout starts by itself when you open an exercise and stops when you tap End workout.
+    // A machine's clock runs while it is on the logging page (or the superset picker) and is not
+    // finished. Times come from the clock, so they stay right when the phone sleeps.
+    function syncTimers() {
+      const want = (screen === "exercise" || screen === "pick")
+        ? panels.filter((p) => !isDoneToday(done, p.ex.id)).map((p) => p.ex.id)
+        : [];
+      if (want.length > 0 && !isRunning(workout)) workout = startWorkout(Date.now());
+      if (!isRunning(workout)) return;
+      workout = runMachines(workout, want, Date.now());
+      save(WORKOUT_KEY, workout);
+    }
+
+    // The total workout time, shown on every screen except the machine page while a workout is on.
+    // After End workout it stays visible on the exercise list only.
+    function timeBar() {
+      if (!workout) return "";
+      if (!isRunning(workout) && screen !== "list") return "";
+      return '<div class="timebar"><span>' + (isRunning(workout) ? "Workout" : "Workout finished") + "</span>" +
+        '<span class="tm" data-t="workout">' + formatTime(workoutElapsed(workout, Date.now())) + "</span></div>";
+    }
+
+    // Updates the clocks on screen once a second without redrawing the page.
+    function tick() {
+      const now = Date.now();
+      document.querySelectorAll("[data-t]").forEach((el) => {
+        const t = el.dataset.t;
+        el.textContent = formatTime(t === "workout" ? workoutElapsed(workout, now) : machineElapsed(workout, t.slice(2), now));
+      });
+    }
+    setInterval(tick, 1000);
+    document.addEventListener("visibilitychange", tick);
+
     function go(name) {
       screen = name;
       render();
@@ -139,6 +181,7 @@
     }
 
     function render() {
+      syncTimers();
       if (screen === "start") renderStart();
       else if (screen === "list") renderList();
       else if (screen === "setup") renderSetup();
@@ -159,7 +202,7 @@
     function renderStart() {
       const t = typeInfo(session.type);
       app.innerHTML =
-        "<h1>Gym Log</h1>" +
+        "<h1>Gym Log</h1>" + timeBar() +
         '<button class="primary" id="quick">Quick start: ' + esc(sessionLabel(session)) + "</button>" +
         "<label>Session</label>" +
         '<div class="choices" id="types"></div>' +
@@ -183,7 +226,8 @@
     // ---------- Exercise list ----------
     function renderList() {
       const all = exercisesForGroup(session.type, true, exList());
-      const finished = all.filter((e) => isDoneToday(done, e.id));
+      // Finished exercises include any pull-ups done as a superset on an arms day.
+      const finished = sessionPool().filter((e) => isDoneToday(done, e.id));
       const open = all.filter((e) => !isDoneToday(done, e.id));
       const openCommon = open.filter((e) => e.common);
       const shown = showMore ? open : openCommon;
@@ -193,12 +237,13 @@
       else if (shown.length === 0 && finished.length > 0) message = open.length === 0 ? "All done for today. Nice work." : "All the main exercises are done.";
 
       app.innerHTML =
-        '<button class="ghost" id="change" style="margin-top:0">' + esc(sessionLabel(session)) + " &#9662; change</button>" +
+        timeBar() + '<button class="ghost" id="change" style="margin-top:0">' + esc(sessionLabel(session)) + " &#9662; change</button>" +
         '<div id="list"></div>' +
         (message ? '<div class="muted">' + message + "</div>" : "") +
         (open.length > openCommon.length ? '<button class="ghost" id="more">' + (showMore ? "Hide less common" : "Show less common") + "</button>" : "") +
         (finished.length > 0 ? '<button class="ghost" id="doneToggle">' + (showDone ? "Hide" : "Show") + " done today (" + finished.length + ")</button>" : "") +
-        '<div id="doneList"></div>';
+        '<div id="doneList"></div>' +
+        (isRunning(workout) ? '<button class="secondary" id="endWorkout">End workout</button>' : "");
 
       for (const e of shown) {
         const b = document.createElement("button");
@@ -220,11 +265,18 @@
       $("change").onclick = () => go("start");
       if ($("more")) $("more").onclick = () => { showMore = !showMore; renderList(); };
       if ($("doneToggle")) $("doneToggle").onclick = () => { showDone = !showDone; renderList(); };
+      if ($("endWorkout")) $("endWorkout").onclick = () => {
+        if (confirm("End the workout and stop the timer?")) {
+          workout = endWorkout(workout, Date.now());
+          save(WORKOUT_KEY, workout);
+          renderList();
+        }
+      };
     }
 
     // ---------- Exercise screen ----------
-    // The logging page shows one exercise, or two when supersetting. Each exercise has its own
-    // weight, reps, Log set, Undo and Finish buttons.
+    // The logging page shows one exercise, or two when supersetting. Every exercise uses the same
+    // compact card with its own weight, reps, Log set, Undo and Finish buttons.
     function resetPanel(p) {
       const d = defaultsFor(p.ex, sets, effectiveConfig(settings, p.ex.id), dayMode() ?? "volume");
       p.weight = d.weight;
@@ -242,7 +294,7 @@
       go("exercise");
     }
 
-    function panelHtml(p, i, compact) {
+    function panelHtml(p, i) {
       const e = p.ex;
       const cfg = effectiveConfig(settings, e.id);
       const key = modeKey();
@@ -263,32 +315,16 @@
       const finishHtml = finished
         ? '<div class="finished">&#10003; Finished for today</div><button class="outline" id="reopen' + i + '">Reopen exercise</button>'
         : today.length > 0
-          ? '<button class="' + (complete ? "primary" : "secondary") + '" id="finish' + i + '" style="margin-top:' + (compact ? 12 : 28) + 'px">Finish exercise</button>'
+          ? '<button class="' + (complete ? "primary" : "secondary") + '" id="finish' + i + '" style="margin-top:12px">Finish exercise</button>'
           : "";
-
-      if (!compact) {
-        const doneText = today.length === 0
-          ? "No sets logged today"
-          : today.map((s, n) => "Set " + (n + 1) + ": " + s.weight + " " + e.unit + " x " + s.reps).join("<br>");
-        return "<h2>" + esc(e.name) + "</h2>" + notes +
-          "<label>Weight</label>" +
-          '<select id="weightSel' + i + '">' + optionHtml + "</select>" +
-          '<div class="other"><input id="otherW' + i + '" type="number" inputmode="decimal" step="any" placeholder="Other weight (' + e.unit + ')"><button id="otherBtn' + i + '">Set</button></div>' +
-          "<label>Reps</label>" +
-          '<div class="row"><button id="rMinus' + i + '">-</button><span class="val">' + p.reps + '</span><button id="rPlus' + i + '">+</button></div>' +
-          '<div class="progress">' + progress + "</div>" +
-          '<button class="' + logClass + '" id="logBtn' + i + '" style="margin-top:8px">Log set</button>' +
-          (today.length > 0 ? '<button class="undo" id="undo' + i + '">Undo last set</button>' : "") +
-          '<div class="muted">' + doneText + "</div>" +
-          finishHtml;
-      }
-
-      // Compact card, used for each exercise when supersetting so both fit on one screen.
       const setsText = today.length === 0
         ? "No sets yet"
         : today.map((s) => s.weight + " " + e.unit + " x " + s.reps).join(" &middot; ");
+
       return '<div class="card">' +
-        '<div class="cardhead"><strong>' + esc(e.name) + '</strong><button class="link" id="remove' + i + '">Remove</button></div>' +
+        '<div class="cardhead"><strong>' + esc(e.name) + "</strong>" +
+        '<span class="tm cardtime" data-t="m:' + esc(e.id) + '">' + formatTime(machineElapsed(workout, e.id, Date.now())) + "</span>" +
+        (panels.length > 1 ? '<button class="link" id="remove' + i + '">Remove</button>' : "") + "</div>" +
         notes +
         '<div class="wr"><select id="weightSel' + i + '">' + optionHtml + "</select>" +
         '<button id="rMinus' + i + '">-</button><span class="val">' + p.reps + " <small>reps</small></span>" +
@@ -345,11 +381,12 @@
     }
 
     function renderExercise() {
-      const compact = panels.length > 1;
+      syncTimers();
+      const two = panels.length > 1;
       app.innerHTML =
-        '<div class="topbar"><button class="ghost" id="back">&larr; ' + (compact ? "Back to list" : "Pick another machine") + "</button>" +
-        (compact ? "" : '<button class="ghost" id="superset">+ Superset</button>') + "</div>" +
-        panels.map((p, i) => panelHtml(p, i, compact)).join("");
+        '<div class="topbar"><button class="ghost" id="back">&larr; ' + (two ? "Back to list" : "Pick another machine") + "</button>" +
+        (two ? "" : '<button class="ghost" id="superset">+ Superset</button>') + "</div>" +
+        panels.map((p, i) => panelHtml(p, i)).join("");
 
       $("back").onclick = () => { panels = []; go("list"); };
       if ($("superset")) $("superset").onclick = () => { pickMore = false; go("pick"); };
@@ -357,34 +394,38 @@
     }
 
     // ---------- Pick a superset exercise ----------
+    // Only this session's exercises (legs on a legs day, arms on an arms day). Pull-ups are the
+    // exception: they can also be paired on an arms day.
+    const ANY_DAY_SUPERSET = ["pull-up"];
+
+    // This session's exercises, plus the any-day ones when the session is legs or arms.
+    function sessionPool() {
+      const own = exercisesForGroup(session.type, true, exList());
+      const extra = hasDayType()
+        ? exList().filter((e) => ANY_DAY_SUPERSET.includes(e.id) && !own.some((o) => o.id === e.id))
+        : [];
+      return [...own, ...extra];
+    }
+
     function renderPick() {
       const onPage = new Set(panels.map((p) => p.ex.id));
-      // Your own session's exercises first, then the others (pull-ups are under Legs, for example).
-      const order = [session.type, ...sessionTypes.map((t) => t.id).filter((id) => id !== session.type)];
-      const free = (g) => exercisesForGroup(g, true, exList()).filter((e) => !onPage.has(e.id) && !isDoneToday(done, e.id));
-      const uncommon = order.reduce((n, g) => n + free(g).filter((e) => !e.common).length, 0);
-      const groups = order
-        .map((g) => ({ g, list: free(g).filter((e) => pickMore || e.common) }))
-        .filter((x) => x.list.length > 0);
+      const choices = sessionPool().filter((e) => !onPage.has(e.id) && !isDoneToday(done, e.id));
+      const common = choices.filter((e) => e.common);
+      const shown = pickMore ? choices : common;
 
       app.innerHTML =
         '<button class="ghost" id="back" style="margin-top:0">&larr; Back</button>' +
-        "<h2>Add a superset exercise</h2>" +
+        timeBar() + "<h2>Add a superset exercise</h2>" +
         '<div id="pickList"></div>' +
-        (groups.length === 0 ? '<div class="muted">No other exercises left to add.</div>' : "") +
-        (uncommon > 0 ? '<button class="ghost" id="pickMore">' + (pickMore ? "Hide less common" : "Show less common") + "</button>" : "");
+        (shown.length === 0 ? '<div class="muted">No other exercises left to add.</div>' : "") +
+        (choices.length > common.length ? '<button class="ghost" id="pickMore">' + (pickMore ? "Hide less common" : "Show less common") + "</button>" : "");
 
-      for (const { g, list } of groups) {
-        const heading = document.createElement("label");
-        heading.textContent = typeInfo(g).label;
-        $("pickList").appendChild(heading);
-        for (const e of list) {
-          const b = document.createElement("button");
-          b.className = "item";
-          b.textContent = e.name;
-          b.onclick = () => { panels.push(newPanel(e)); go("exercise"); };
-          $("pickList").appendChild(b);
-        }
+      for (const e of shown) {
+        const b = document.createElement("button");
+        b.className = "item";
+        b.textContent = e.name;
+        b.onclick = () => { panels.push(newPanel(e)); go("exercise"); };
+        $("pickList").appendChild(b);
       }
       $("back").onclick = () => go("exercise");
       if ($("pickMore")) $("pickMore").onclick = () => { pickMore = !pickMore; renderPick(); };
@@ -406,7 +447,7 @@
       const g = globalDefaults(settings);
       app.innerHTML =
         '<button class="ghost" id="back" style="margin-top:0">&larr; Back</button>' +
-        "<h2>Set up " + esc(sessionLabel(session)) + "</h2>" +
+        timeBar() + "<h2>Set up " + esc(sessionLabel(session)) + "</h2>" +
         '<div class="panel"><strong>Defaults for every machine · ' + key + " day</strong>" +
         '<div class="two"><div>' + numField("g_reps", "Reps", g["reps" + key], "") + "</div>" +
         "<div>" + numField("g_sets", "Sets", g["sets" + key], "") + "</div></div>" +
@@ -447,7 +488,7 @@
 
       app.innerHTML =
         '<button class="ghost" id="back" style="margin-top:0">&larr; Back without saving</button>' +
-        "<h2>" + esc(e.name) + "</h2>" +
+        timeBar() + "<h2>" + esc(e.name) + "</h2>" +
         '<label for="f_name">Name</label>' +
         '<input class="field" id="f_name" type="text" value="' + esc(e.name) + '">' +
         numField("f_step", "Weight step (" + e.unit + ")", e.step, "") +

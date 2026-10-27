@@ -1,0 +1,8 @@
+we need to migrate to a fresh chat window to save token usage. Please provide a concise summary that I can copy and paste into the new chat.
+
+Include Only:
+1. A brief overview of what this application/script does
+2. The current tech stack and configuration details.
+3. The absolute latest, complete version of our working code (compiled into clean code blocks or a single artifact).
+
+Do not include any previous conversational history, debugged errors or outdated code variations.
