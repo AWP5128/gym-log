@@ -35,7 +35,27 @@
     .two { display: flex; gap: 8px; }
     .two > div { flex: 1; }
     .progress { text-align: center; color: #cbd5e1; margin-top: 16px; }
-    #undo { width: 100%; margin-top: 8px; background: transparent; font-size: 0.95rem; padding: 10px; }
+    button.undo { width: 100%; margin-top: 8px; background: transparent; font-size: 0.95rem; padding: 10px; }
+    .topbar { display: flex; gap: 8px; }
+    .topbar button { margin-top: 0; width: auto; flex: 1; }
+    .topbar #back { flex: 2; }
+    .card { border: 1px solid #444; border-radius: 12px; padding: 10px 12px 12px; margin-top: 14px; }
+    .cardhead { display: flex; justify-content: space-between; align-items: center; }
+    .cardhead strong { font-size: 1.2rem; }
+    button.link { background: transparent; border: none; color: #93c5fd; padding: 6px 4px; font-size: 0.9rem; text-decoration: underline; width: auto; margin: 0; }
+    .card .note { margin-top: 8px; padding: 6px 10px; font-size: 0.9rem; }
+    .wr { display: flex; align-items: center; gap: 6px; margin-top: 10px; }
+    .wr select { flex: 1; width: auto; min-width: 0; font-size: 1.2rem; padding: 12px 8px; }
+    .wr button { width: 48px; padding: 12px 0; font-size: 1.4rem; }
+    .wr .val { min-width: 52px; text-align: center; font-size: 1.3rem; }
+    .wr .val small { display: block; font-size: 0.7rem; color: #aaa; }
+    details { margin-top: 8px; color: #aaa; }
+    summary { padding: 4px 0; }
+    .card .logrow { display: flex; align-items: center; gap: 10px; margin-top: 8px; }
+    .card .logrow .progress { margin: 0; flex: 1; text-align: left; }
+    .card .logrow button { flex: 1.2; width: auto; margin: 0; padding: 14px; }
+    .card .finished { margin-top: 10px; }
+    .small { font-size: 0.9rem; }
   </style>
 </head>
 <body>
@@ -77,14 +97,13 @@
     if (!sessionTypes.some((t) => t.id === session.type)) session.type = "legs";
     if (session.mode !== "volume") session.mode = "heavy";
 
-    let screen = "start";          // "start", "list", "exercise", "setup" or "edit"
+    let screen = "start";          // "start", "list", "exercise", "pick", "setup" or "edit"
     let showMore = false;
     let showDone = false;          // is the "done today" list open on the exercise list?
-    let current = null;            // the exercise being logged
+    let panels = [];               // exercises on the logging page: one, or two when supersetting
+    let pickMore = false;          // show less common exercises when picking a superset partner
     let editId = null;             // the exercise being set up
     let flash = "";                // a short message shown once, e.g. "Defaults saved"
-    let weight = 0;
-    let reps = 5;
 
     const app = document.getElementById("app");
     const $ = (id) => document.getElementById(id);
@@ -124,6 +143,7 @@
       else if (screen === "list") renderList();
       else if (screen === "setup") renderSetup();
       else if (screen === "edit") renderEdit();
+      else if (screen === "pick") renderPick();
       else renderExercise();
     }
 
@@ -203,20 +223,27 @@
     }
 
     // ---------- Exercise screen ----------
-    function resetDefaults() {
-      const d = defaultsFor(current, sets, effectiveConfig(settings, current.id), dayMode() ?? "volume");
-      weight = d.weight;
-      reps = d.reps;
+    // The logging page shows one exercise, or two when supersetting. Each exercise has its own
+    // weight, reps, Log set, Undo and Finish buttons.
+    function resetPanel(p) {
+      const d = defaultsFor(p.ex, sets, effectiveConfig(settings, p.ex.id), dayMode() ?? "volume");
+      p.weight = d.weight;
+      p.reps = d.reps;
+    }
+
+    function newPanel(e) {
+      const p = { ex: e, weight: 0, reps: 5 };
+      resetPanel(p);
+      return p;
     }
 
     function openExercise(e) {
-      current = e;
-      resetDefaults();
+      panels = [newPanel(e)];
       go("exercise");
     }
 
-    function renderExercise() {
-      const e = current;
+    function panelHtml(p, i, compact) {
+      const e = p.ex;
       const cfg = effectiveConfig(settings, e.id);
       const key = modeKey();
       const today = todaysSets(sets, e.id);
@@ -227,66 +254,140 @@
       const progress = complete
         ? "All " + totalSets + " sets done"
         : "Set " + (today.length + 1) + " of " + totalSets + (hasWarmup && today.length === 0 ? " (warm-up)" : "");
+      const optionHtml = weightOptions(e, p.weight)
+        .map((w) => '<option value="' + w + '"' + (w === p.weight ? " selected" : "") + ">" + w + " " + e.unit + "</option>")
+        .join("");
+      const notes = cfg.notes ? '<div class="note">' + esc(cfg.notes).replace(/\n/g, "<br>") + "</div>" : "";
+      const logClass = complete ? "outline" : "primary";
       // Finish appears once there is a set to save. It turns green when all target sets are done.
       const finishHtml = finished
-        ? '<div class="finished">&#10003; Finished for today</div><button class="outline" id="reopen">Reopen exercise</button>'
+        ? '<div class="finished">&#10003; Finished for today</div><button class="outline" id="reopen' + i + '">Reopen exercise</button>'
         : today.length > 0
-          ? '<button class="' + (complete ? "primary" : "secondary") + '" id="finish" style="margin-top:28px">Finish exercise</button>'
+          ? '<button class="' + (complete ? "primary" : "secondary") + '" id="finish' + i + '" style="margin-top:' + (compact ? 12 : 28) + 'px">Finish exercise</button>'
           : "";
-      const doneText = today.length === 0
-        ? "No sets logged today"
-        : today.map((s, i) => "Set " + (i + 1) + ": " + s.weight + " " + e.unit + " x " + s.reps).join("<br>");
-      const optionHtml = weightOptions(e, weight)
-        .map((w) => '<option value="' + w + '"' + (w === weight ? " selected" : "") + ">" + w + " " + e.unit + "</option>")
-        .join("");
 
-      app.innerHTML =
-        '<button class="ghost" id="back" style="margin-top:0">&larr; Pick another machine</button>' +
-        "<h2>" + esc(e.name) + "</h2>" +
-        (cfg.notes ? '<div class="note">' + esc(cfg.notes).replace(/\n/g, "<br>") + "</div>" : "") +
-        "<label>Weight</label>" +
-        '<select id="weightSel">' + optionHtml + "</select>" +
-        '<div class="other"><input id="otherW" type="number" inputmode="decimal" step="any" placeholder="Other weight (' + e.unit + ')"><button id="otherBtn">Set</button></div>' +
-        "<label>Reps</label>" +
-        '<div class="row"><button id="rMinus">-</button><span class="val">' + reps + '</span><button id="rPlus">+</button></div>' +
-        '<div class="progress">' + progress + "</div>" +
-        '<button class="' + (complete ? "outline" : "primary") + '" id="logBtn" style="margin-top:8px">Log set</button>' +
-        (today.length > 0 ? '<button id="undo">Undo last set</button>' : "") +
-        '<div class="muted">' + doneText + "</div>" +
-        finishHtml;
+      if (!compact) {
+        const doneText = today.length === 0
+          ? "No sets logged today"
+          : today.map((s, n) => "Set " + (n + 1) + ": " + s.weight + " " + e.unit + " x " + s.reps).join("<br>");
+        return "<h2>" + esc(e.name) + "</h2>" + notes +
+          "<label>Weight</label>" +
+          '<select id="weightSel' + i + '">' + optionHtml + "</select>" +
+          '<div class="other"><input id="otherW' + i + '" type="number" inputmode="decimal" step="any" placeholder="Other weight (' + e.unit + ')"><button id="otherBtn' + i + '">Set</button></div>' +
+          "<label>Reps</label>" +
+          '<div class="row"><button id="rMinus' + i + '">-</button><span class="val">' + p.reps + '</span><button id="rPlus' + i + '">+</button></div>' +
+          '<div class="progress">' + progress + "</div>" +
+          '<button class="' + logClass + '" id="logBtn' + i + '" style="margin-top:8px">Log set</button>' +
+          (today.length > 0 ? '<button class="undo" id="undo' + i + '">Undo last set</button>' : "") +
+          '<div class="muted">' + doneText + "</div>" +
+          finishHtml;
+      }
 
-      $("back").onclick = () => go("list");
-      $("weightSel").onchange = (ev) => { weight = Number(ev.target.value); };
-      $("otherBtn").onclick = () => {
-        const v = parseFloat($("otherW").value);
-        if (Number.isFinite(v) && v >= 0) { weight = v; renderExercise(); }
-      };
-      $("rMinus").onclick = () => { reps = Math.max(0, reps - 1); renderExercise(); };
-      $("rPlus").onclick = () => { reps = reps + 1; renderExercise(); };
-      $("logBtn").onclick = () => {
-        sets.push(makeSet({ exerciseId: e.id, weight, reps, mode: dayMode() || undefined }));
+      // Compact card, used for each exercise when supersetting so both fit on one screen.
+      const setsText = today.length === 0
+        ? "No sets yet"
+        : today.map((s) => s.weight + " " + e.unit + " x " + s.reps).join(" &middot; ");
+      return '<div class="card">' +
+        '<div class="cardhead"><strong>' + esc(e.name) + '</strong><button class="link" id="remove' + i + '">Remove</button></div>' +
+        notes +
+        '<div class="wr"><select id="weightSel' + i + '">' + optionHtml + "</select>" +
+        '<button id="rMinus' + i + '">-</button><span class="val">' + p.reps + " <small>reps</small></span>" +
+        '<button id="rPlus' + i + '">+</button></div>' +
+        "<details><summary>Other weight (" + e.unit + ")</summary>" +
+        '<div class="other"><input id="otherW' + i + '" type="number" inputmode="decimal" step="any" placeholder="e.g. 12.5"><button id="otherBtn' + i + '">Set</button></div></details>' +
+        '<div class="logrow"><span class="progress">' + progress + '</span><button class="' + logClass + '" id="logBtn' + i + '">Log set</button></div>' +
+        '<div class="muted small">' + setsText + (today.length > 0 ? ' <button class="link" id="undo' + i + '">Undo last set</button>' : "") + "</div>" +
+        finishHtml + "</div>";
+    }
+
+    function bindPanel(p, i) {
+      const e = p.ex;
+      const on = (name, fn) => { const el = $(name + i); if (el) el.onclick = fn; };
+
+      $("weightSel" + i).onchange = (ev) => { p.weight = Number(ev.target.value); };
+      on("otherBtn", () => {
+        const v = parseFloat($("otherW" + i).value);
+        if (Number.isFinite(v) && v >= 0) { p.weight = v; renderExercise(); }
+      });
+      on("rMinus", () => { p.reps = Math.max(0, p.reps - 1); renderExercise(); });
+      on("rPlus", () => { p.reps = p.reps + 1; renderExercise(); });
+      on("logBtn", () => {
+        sets.push(makeSet({ exerciseId: e.id, weight: p.weight, reps: p.reps, mode: dayMode() || undefined }));
         save(SETS_KEY, sets);
-        resetDefaults();
+        resetPanel(p);
         renderExercise();
-      };
-      if ($("undo")) $("undo").onclick = () => {
+      });
+      on("undo", () => {
         sets = removeLastSet(sets, e.id);
         save(SETS_KEY, sets);
-        resetDefaults();
+        resetPanel(p);
         renderExercise();
-      };
-      // Sets are saved as you log them. Finish marks the exercise as done for today and takes it off the list.
-      if ($("finish")) $("finish").onclick = () => {
+      });
+      // Sets are saved as you log them. Finish marks only this exercise as done for today and takes it
+      // off the list. If it was one of a superset, the other exercise stays on the page.
+      on("finish", () => {
         done = markDone(done, e.id);
         save(DONE_KEY, done);
         showDone = false;
-        go("list");
-      };
-      if ($("reopen")) $("reopen").onclick = () => {
+        panels.splice(i, 1);
+        go(panels.length === 0 ? "list" : "exercise");
+      });
+      on("reopen", () => {
         done = unmarkDone(done, e.id);
         save(DONE_KEY, done);
         renderExercise();
-      };
+      });
+      // Take this exercise off the page without finishing it. Its sets are kept.
+      on("remove", () => {
+        panels.splice(i, 1);
+        go("exercise");
+      });
+    }
+
+    function renderExercise() {
+      const compact = panels.length > 1;
+      app.innerHTML =
+        '<div class="topbar"><button class="ghost" id="back">&larr; ' + (compact ? "Back to list" : "Pick another machine") + "</button>" +
+        (compact ? "" : '<button class="ghost" id="superset">+ Superset</button>') + "</div>" +
+        panels.map((p, i) => panelHtml(p, i, compact)).join("");
+
+      $("back").onclick = () => { panels = []; go("list"); };
+      if ($("superset")) $("superset").onclick = () => { pickMore = false; go("pick"); };
+      panels.forEach(bindPanel);
+    }
+
+    // ---------- Pick a superset exercise ----------
+    function renderPick() {
+      const onPage = new Set(panels.map((p) => p.ex.id));
+      // Your own session's exercises first, then the others (pull-ups are under Legs, for example).
+      const order = [session.type, ...sessionTypes.map((t) => t.id).filter((id) => id !== session.type)];
+      const free = (g) => exercisesForGroup(g, true, exList()).filter((e) => !onPage.has(e.id) && !isDoneToday(done, e.id));
+      const uncommon = order.reduce((n, g) => n + free(g).filter((e) => !e.common).length, 0);
+      const groups = order
+        .map((g) => ({ g, list: free(g).filter((e) => pickMore || e.common) }))
+        .filter((x) => x.list.length > 0);
+
+      app.innerHTML =
+        '<button class="ghost" id="back" style="margin-top:0">&larr; Back</button>' +
+        "<h2>Add a superset exercise</h2>" +
+        '<div id="pickList"></div>' +
+        (groups.length === 0 ? '<div class="muted">No other exercises left to add.</div>' : "") +
+        (uncommon > 0 ? '<button class="ghost" id="pickMore">' + (pickMore ? "Hide less common" : "Show less common") + "</button>" : "");
+
+      for (const { g, list } of groups) {
+        const heading = document.createElement("label");
+        heading.textContent = typeInfo(g).label;
+        $("pickList").appendChild(heading);
+        for (const e of list) {
+          const b = document.createElement("button");
+          b.className = "item";
+          b.textContent = e.name;
+          b.onclick = () => { panels.push(newPanel(e)); go("exercise"); };
+          $("pickList").appendChild(b);
+        }
+      }
+      $("back").onclick = () => go("exercise");
+      if ($("pickMore")) $("pickMore").onclick = () => { pickMore = !pickMore; renderPick(); };
     }
 
     // ---------- Set up session: list of machines ----------
