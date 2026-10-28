@@ -1,2 +1,10 @@
 .venv/
 __pycache__/
+node_modules/
+*.zip
+*.mp4
+*.mov
+*.exe
+*.msi
+.venv/
+path/to/your-big-file.ext

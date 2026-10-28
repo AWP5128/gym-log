@@ -1,8 +1,7 @@
 # Gym Log ideas
 
 ## Planned
-- 1. fix the screen to be based on superset screen and reduce selection list for supersetting.
-- 2. Workout timer: total time, plus approximate time per machine
+- 2. Show machine timer against each machine in the completed workouts.
 - 3. get Claude to review and compact code
 - 4. get working on iPhone
 - 5. get working on Android
