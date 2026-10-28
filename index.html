@@ -16,6 +16,13 @@
     h1 { font-size: 1.3rem; }
     h2 { font-size: 1.5rem; margin: 16px 0; }
     button, select, input, textarea { font-size: 1.2rem; padding: 14px; border-radius: 10px; border: 1px solid #444; background: #222; color: #eee; font-family: inherit; }
+    .pe { display: flex; gap: 8px; margin-top: 10px; }
+    .pe > div { flex: 1; min-width: 0; }
+    .pe select { width: 100%; font-size: 1.2rem; padding: 12px 8px; }
+    .cap { display: block; color: #aaa; font-size: 0.75rem; margin-bottom: 2px; }
+    .wr .total { flex: 1; font-size: 1.1rem; color: #cbd5e1; }
+    .wr .total b { color: #eee; font-size: 1.3rem; }
+    .two select { font-size: 1.2rem; padding: 14px 10px; }
     select { width: 100%; font-size: 1.5rem; }
     .field { width: 100%; box-sizing: border-box; }
     label { display: block; margin: 16px 0 6px; color: #aaa; }
@@ -82,6 +89,7 @@
       formatTime, startWorkout, isRunning, workoutElapsed, machineElapsed,
       runMachines, endWorkout, cleanWorkout,
     } from "./timer.js";
+    import { hasExtras, extraOptions, totalWeight, splitFor } from "./extras.js";
 
     const SETS_KEY = "gymlog.sets";
     const SESSION_KEY = "gymlog.session";
@@ -317,10 +325,18 @@
     // ---------- Exercise screen ----------
     // The logging page shows one exercise, or two when supersetting. Every exercise uses the same
     // compact card with its own weight, reps, Log set, Undo and Finish buttons.
-    function resetPanel(p) {
-      const d = defaultsFor(p.ex, sets, effectiveConfig(settings, p.ex.id), dayMode() ?? "volume");
-      p.weight = d.weight;
+     function resetPanel(p) {
+      const cfg = effectiveConfig(settings, p.ex.id);
+      const d = defaultsFor(p.ex, sets, cfg, dayMode() ?? "volume");
       p.reps = d.reps;
+      p.weight = d.weight;
+      if (!hasExtras(p.ex)) return;
+      // Machines with extras: keep the pin and extra already chosen when the total is unchanged
+      // (the next set at the same weight), otherwise work them out from the total.
+      if (p.pin !== undefined && totalWeight(p.pin, p.extra) === d.weight) return;
+      const s = splitFor(settings, p.ex, d.weight, cfg, modeKey());
+      p.pin = s.pin;
+      p.extra = s.extra;
     }
 
     function newPanel(e) {
@@ -332,6 +348,15 @@
     function openExercise(e) {
       panels = [newPanel(e)];
       go("exercise");
+    }
+
+        // The list of extra weights a machine offers, with "None" first.
+    function extraSelectHtml(id, e, chosen) {
+      return '<select id="' + id + '"><option value="0">None</option>' +
+        extraOptions(e)
+          .map((x) => '<option value="' + x + '"' + (x === chosen ? " selected" : "") + ">+" + x + " " + e.unit + "</option>")
+          .join("") +
+        "</select>";
     }
 
     function panelHtml(p, i) {
@@ -346,8 +371,10 @@
       const progress = complete
         ? "All " + totalSets + " sets done"
         : "Set " + (today.length + 1) + " of " + totalSets + (hasWarmup && today.length === 0 ? " (warm-up)" : "");
-      const optionHtml = weightOptions(e, p.weight)
-        .map((w) => '<option value="' + w + '"' + (w === p.weight ? " selected" : "") + ">" + w + " " + e.unit + "</option>")
+      const withExtras = hasExtras(e);
+      const shown = withExtras ? p.pin : p.weight;     // the pin position, or the whole weight when there is no pin
+      const optionHtml = weightOptions(e, shown)
+        .map((w) => '<option value="' + w + '"' + (w === shown ? " selected" : "") + ">" + w + " " + e.unit + "</option>")
         .join("");
       const notes = cfg.notes ? '<div class="note">' + esc(cfg.notes).replace(/\n/g, "<br>") + "</div>" : "";
       const logClass = complete ? "outline" : "primary";
@@ -361,26 +388,50 @@
         ? "No sets yet"
         : today.map((s) => s.weight + " " + e.unit + " x " + s.reps).join(" &middot; ");
 
+      const repsHtml = '<button id="rMinus' + i + '">-</button><span class="val">' + p.reps + " <small>reps</small></span>" +
+        '<button id="rPlus' + i + '">+</button>';
+      // Machines with extras: a pin list and an extra list, then the total beside the reps.
+      // Other exercises: one weight list and an "Other weight" box.
+      const weightHtml = withExtras
+        ? '<div class="pe"><div><span class="cap">Pin</span><select id="weightSel' + i + '">' + optionHtml + "</select></div>" +
+          '<div><span class="cap">Extra</span>' + extraSelectHtml("extraSel" + i, e, p.extra) + "</div></div>" +
+          '<div class="wr"><span class="total">Total <b>' + p.weight + " " + e.unit + "</b></span>" + repsHtml + "</div>"
+        : '<div class="wr"><select id="weightSel' + i + '">' + optionHtml + "</select>" + repsHtml + "</div>" +
+          "<details><summary>Other weight (" + e.unit + ")</summary>" +
+          '<div class="other"><input id="otherW' + i + '" type="number" inputmode="decimal" step="any" placeholder="e.g. 12.5"><button id="otherBtn' + i + '">Set</button></div></details>';
+
       return '<div class="card">' +
         '<div class="cardhead"><strong>' + esc(e.name) + "</strong>" +
         '<span class="tm cardtime" data-t="m:' + esc(e.id) + '">' + formatTime(machineElapsed(workout, e.id, Date.now())) + "</span>" +
         (panels.length > 1 ? '<button class="link" id="remove' + i + '">Remove</button>' : "") + "</div>" +
         notes +
-        '<div class="wr"><select id="weightSel' + i + '">' + optionHtml + "</select>" +
-        '<button id="rMinus' + i + '">-</button><span class="val">' + p.reps + " <small>reps</small></span>" +
-        '<button id="rPlus' + i + '">+</button></div>' +
-        "<details><summary>Other weight (" + e.unit + ")</summary>" +
-        '<div class="other"><input id="otherW' + i + '" type="number" inputmode="decimal" step="any" placeholder="e.g. 12.5"><button id="otherBtn' + i + '">Set</button></div></details>' +
+        weightHtml +
         '<div class="logrow"><span class="progress">' + progress + '</span><button class="' + logClass + '" id="logBtn' + i + '">Log set</button></div>' +
         '<div class="muted small">' + setsText + (today.length > 0 ? ' <button class="link" id="undo' + i + '">Undo last set</button>' : "") + "</div>" +
         finishHtml + "</div>";
     }
 
-    function bindPanel(p, i) {
+        function bindPanel(p, i) {
       const e = p.ex;
       const on = (name, fn) => { const el = $(name + i); if (el) el.onclick = fn; };
 
-      $("weightSel" + i).onchange = (ev) => { p.weight = Number(ev.target.value); };
+      $("weightSel" + i).onchange = (ev) => {
+        const v = Number(ev.target.value);
+        if (hasExtras(e)) {
+          p.pin = v;
+          p.weight = totalWeight(p.pin, p.extra);
+          renderExercise();
+        } else {
+          p.weight = v;
+        }
+      };
+      if ($("extraSel" + i)) {
+        $("extraSel" + i).onchange = (ev) => {
+          p.extra = Number(ev.target.value);
+          p.weight = totalWeight(p.pin, p.extra);
+          renderExercise();
+        };
+      }
       on("otherBtn", () => {
         const v = parseFloat($("otherW" + i).value);
         if (Number.isFinite(v) && v >= 0) { p.weight = v; renderExercise(); }
@@ -520,11 +571,28 @@
     }
 
     // ---------- Set up session: one machine ----------
+        // ---------- Set up session: one machine ----------
     function renderEdit() {
       const e = exList().find((x) => x.id === editId);
       const cfg = configFor(settings, e.id);
       const key = modeKey();
       const eff = effectiveConfig(settings, e.id);   // what this machine uses right now
+      const withExtras = hasExtras(e);
+      const savedExtra = (kind) => {
+        const x = ((settings.exercises || {})[e.id] || {})[kind + "Extra" + key];
+        return Number.isFinite(x) ? x : 0;
+      };
+
+      // A warm-up or working weight. Machines with extras get a pin box and an extra list (the total is the sum).
+      const weightField = (kind, label, pinLabel, optional) => {
+        const total = cfg[kind + key];
+        const unit = e.unit + (optional ? ", optional" : "");
+        if (!withExtras) return numField("f_" + kind, label + " (" + unit + ")", total, "none");
+        const extra = total === null ? 0 : savedExtra(kind);
+        const pin = total === null ? null : totalWeight(total, -extra);
+        return '<div class="two"><div>' + numField("f_" + kind, pinLabel + " (" + e.unit + ")", pin, "none") + "</div>" +
+          '<div><label for="f_' + kind + 'Extra">Extra</label>' + extraSelectHtml("f_" + kind + "Extra", e, extra) + "</div></div>";
+      };
 
       app.innerHTML =
         '<button class="ghost" id="back" style="margin-top:0">&larr; Back without saving</button>' +
@@ -533,8 +601,9 @@
         '<input class="field" id="f_name" type="text" value="' + esc(e.name) + '">' +
         numField("f_step", "Weight step (" + e.unit + ")", e.step, "") +
         '<div class="panel"><strong>' + esc(sessionLabel(session)) + " for this machine</strong>" +
-        numField("f_start", "Warm-up weight, first set (" + e.unit + ", optional)", cfg["start" + key], "none") +
-        numField("f_work", "Working weight (" + e.unit + ")", cfg["work" + key], "none") +
+        weightField("start", "Warm-up weight, first set", "Warm-up pin", true) +
+        weightField("work", "Working weight", "Working pin", false) +
+        (withExtras ? '<div class="muted">The warm-up is optional and is the first set. The weight used is the pin plus the extra.</div>' : "") +
         '<div class="two"><div>' + numField("f_reps", "Reps", cfg["reps" + key], "default " + eff["reps" + key]) + "</div>" +
         "<div>" + numField("f_sets", "Sets", cfg["sets" + key], "default " + eff["sets" + key]) + "</div></div>" +
         '<div class="muted">Leave reps or sets blank to use the defaults for every machine.</div>' +
@@ -550,8 +619,16 @@
           step: toNumber($("f_step").value),
           notes: $("f_notes").value,
         };
-        patch["start" + key] = toNumber($("f_start").value);
-        patch["work" + key] = toNumber($("f_work").value);
+        for (const kind of ["start", "work"]) {
+          const typed = toNumber($("f_" + kind).value);
+          if (!withExtras) {
+            patch[kind + key] = typed;
+            continue;
+          }
+          const extra = typed === null ? 0 : Number($("f_" + kind + "Extra").value);
+          patch[kind + key] = typed === null ? null : totalWeight(typed, extra);     // the total is what is used
+          patch[kind + "Extra" + key] = typed === null || extra === 0 ? null : extra; // remembered so the pin shows again
+        }
         patch["reps" + key] = wholeOrNull($("f_reps").value);
         patch["sets" + key] = wholeOrNull($("f_sets").value);
         settings = updateExercise(settings, e.id, patch);
