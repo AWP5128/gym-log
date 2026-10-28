@@ -172,6 +172,23 @@
         '<span class="tm" data-t="workout">' + formatTime(workoutElapsed(workout, Date.now())) + "</span></div>";
     }
 
+        // Keeps the screen on while a workout is running and the app is on screen (where the phone supports it).
+    let wakeLock = null, waking = false;
+    async function keepAwake() {
+      if (waking || !("wakeLock" in navigator)) return;
+      waking = true;
+      try {
+        const want = isRunning(workout) && document.visibilityState === "visible";
+        if (want && !wakeLock) {
+          wakeLock = await navigator.wakeLock.request("screen");
+          wakeLock.addEventListener("release", () => { wakeLock = null; });
+        } else if (!want && wakeLock) {
+          await wakeLock.release();
+          wakeLock = null;
+        }
+      } catch { wakeLock = null; }
+      waking = false;
+    }
     // Updates the clocks on screen once a second without redrawing the page.
     function tick() {
       const now = Date.now();
@@ -183,11 +200,25 @@
     setInterval(tick, 1000);
     document.addEventListener("visibilitychange", tick);
 
-    function go(name) {
+        function go(name) {
       screen = name;
+      armBack();
       render();
       window.scrollTo(0, 0);
     }
+
+    // The phone's back button or gesture steps back one screen instead of closing the app.
+    const BACK = { list: "start", setup: "start", edit: "setup", pick: "exercise" };
+
+    function armBack() {
+      if (!history.state || !history.state.armed) history.pushState({ armed: true }, "");
+    }
+
+    window.addEventListener("popstate", () => {
+      if (screen === "start") return;                  // on the start screen, back leaves the app as usual
+      if (screen === "exercise") panels = [];          // same as the Back button on the machine page
+      go(screen === "exercise" ? "list" : BACK[screen]);
+    });
 
     function render() {
       syncTimers();
@@ -529,7 +560,8 @@
       };
     }
 
-        render();
+    armBack();
+    render();
 
     // Lets the app open with no signal once it has been loaded once (needs https, so not on a plain LAN address).
     if ("serviceWorker" in navigator) navigator.serviceWorker.register("sw.js").catch(() => {});
