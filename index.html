@@ -3,6 +3,13 @@
 <head>
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width, initial-scale=1">
+    <meta name="theme-color" content="#111111">
+  <meta name="apple-mobile-web-app-capable" content="yes">
+  <meta name="mobile-web-app-capable" content="yes">
+  <meta name="apple-mobile-web-app-status-bar-style" content="black">
+  <meta name="apple-mobile-web-app-title" content="Gym Log">
+  <link rel="manifest" href="manifest.webmanifest">
+  <link rel="apple-touch-icon" href="apple-touch-icon.png">
   <title>Gym Log</title>
   <style>
     body { font-family: system-ui, sans-serif; max-width: 480px; margin: 0 auto; padding: 16px; background: #111; color: #eee; }
@@ -56,6 +63,8 @@
     .timebar { display: flex; align-items: center; justify-content: space-between; background: #1e293b; border-radius: 10px; padding: 10px 14px; margin: 12px 0; color: #cbd5e1; }
     .timebar .tm { font-size: 1.4rem; color: #eee; }
     .cardhead .cardtime { color: #93c5fd; font-size: 1.2rem; padding: 0 8px; }
+        html { -webkit-text-size-adjust: 100%; }
+    button, select, input, textarea, summary { touch-action: manipulation; }
   </style>
 </head>
 <body>
@@ -520,7 +529,10 @@
       };
     }
 
-    render();
+        render();
+
+    // Lets the app open with no signal once it has been loaded once (needs https, so not on a plain LAN address).
+    if ("serviceWorker" in navigator) navigator.serviceWorker.register("sw.js").catch(() => {});
   </script>
 </body>
 </html>
