@@ -3,6 +3,7 @@
 const CACHE = "gymlog-v1";
 const FILES = [
   "./", "./index.html", "./exercises.js", "./settings.js", "./defaults.js", "./log.js", "./timer.js",
+  "./extras.js", "./stacks.js",
   "./manifest.webmanifest", "./icon-192.png", "./icon-512.png", "./apple-touch-icon.png",
 ];
 const WAIT_MS = 2000;   // on a weak signal, use the saved copy after this long

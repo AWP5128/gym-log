@@ -23,6 +23,7 @@
     .wr .total { flex: 1; font-size: 1.1rem; color: #cbd5e1; }
     .wr .total b { color: #eee; font-size: 1.3rem; }
     .two select { font-size: 1.2rem; padding: 14px 10px; }
+    button.chip { padding: 8px 12px; font-size: 1rem; margin: 6px 6px 0 0; border-radius: 8px; }
     select { width: 100%; font-size: 1.5rem; }
     .field { width: 100%; box-sizing: border-box; }
     label { display: block; margin: 16px 0 6px; color: #aaa; }
@@ -90,6 +91,7 @@
       runMachines, endWorkout, cleanWorkout,
     } from "./timer.js";
     import { hasExtras, extraOptions, totalWeight, splitFor } from "./extras.js";
+    import { STEP_CHOICES, buildPins, addPin, removePin, describePins, hasPins } from "./stacks.js";
 
     const SETS_KEY = "gymlog.sets";
     const SESSION_KEY = "gymlog.session";
@@ -129,6 +131,9 @@
     let pickMore = false;          // show less common exercises when picking a superset partner
     let editId = null;             // the exercise being set up
     let flash = "";                // a short message shown once, e.g. "Defaults saved"
+    let stackFilter = "all";       // Machine setup list: "all", "legs" or "arms"
+    let stackId = null;            // the machine being set up on the Machine setup screen
+    let stackPins = [];            // the pin list being built for that machine
 
     const app = document.getElementById("app");
     const $ = (id) => document.getElementById(id);
@@ -208,7 +213,7 @@
     setInterval(tick, 1000);
     document.addEventListener("visibilitychange", tick);
 
-        function go(name) {
+    function go(name) {
       screen = name;
       armBack();
       render();
@@ -216,7 +221,7 @@
     }
 
     // The phone's back button or gesture steps back one screen instead of closing the app.
-    const BACK = { list: "start", setup: "start", edit: "setup", pick: "exercise" };
+    const BACK = { list: "start", setup: "start", edit: "setup", pick: "exercise", stacks: "start", stackEdit: "stacks" };
 
     function armBack() {
       if (!history.state || !history.state.armed) history.pushState({ armed: true }, "");
@@ -228,13 +233,15 @@
       go(screen === "exercise" ? "list" : BACK[screen]);
     });
 
-    function render() {
+        function render() {
       syncTimers();
       if (screen === "start") renderStart();
       else if (screen === "list") renderList();
       else if (screen === "setup") renderSetup();
       else if (screen === "edit") renderEdit();
       else if (screen === "pick") renderPick();
+      else if (screen === "stacks") renderStacks();
+      else if (screen === "stackEdit") renderStackEdit();
       else renderExercise();
     }
 
@@ -255,7 +262,8 @@
         "<label>Session</label>" +
         '<div class="choices" id="types"></div>' +
         (t.weights ? '<label>Day type</label><div class="choices" id="modes"></div>' : "") +
-        '<button class="secondary" id="setupBtn">Set up ' + esc(sessionLabel(session)) + "</button>";
+        '<button class="secondary" id="setupBtn">Set up ' + esc(sessionLabel(session)) + "</button>" +
+        '<button class="link" id="stacksBtn" style="display:block;margin:32px auto 0;opacity:0.6">Machine setup</button>';
 
       // Choosing a session or day type updates Quick start and is remembered straight away.
       const choose = (change) => { Object.assign(session, change); save(SESSION_KEY, session); renderStart(); };
@@ -269,6 +277,7 @@
       }
       $("quick").onclick = () => { showMore = false; go("list"); };
       $("setupBtn").onclick = () => go("setup");
+      $("stacksBtn").onclick = () => go("stacks");
     }
 
     // ---------- Exercise list ----------
@@ -637,6 +646,123 @@
       };
     }
 
+        // ---------- Machine setup: the pin weights on each machine ----------
+    // A one-off job done at the gym (it can be repeated for any machine). The saved pin list
+    // replaces the step-based weight list for that machine.
+    function stackMachines() {
+      return exList().filter((e) => e.unit === "lb" && e.kind !== "time" && (e.group === "legs" || e.group === "arms"));
+    }
+
+    function renderStacks() {
+      const all = stackMachines();
+      const shown = stackFilter === "all" ? all : all.filter((e) => e.group === stackFilter);
+      const ready = all.filter(hasPins).length;
+      app.innerHTML =
+        '<button class="ghost" id="back" style="margin-top:0">&larr; Back</button>' +
+        "<h2>Machine setup</h2>" +
+        '<div class="muted">' + ready + " of " + all.length + " machines done. Tap a machine to enter its weights. You can redo any machine later.</div>" +
+        '<div class="choices" id="filters" style="margin-top:12px"></div>' +
+        '<div id="list"></div>';
+
+      for (const [id, label] of [["all", "All"], ["legs", "Legs"], ["arms", "Arms"]]) {
+        $("filters").appendChild(choiceButton(label, stackFilter === id, () => { stackFilter = id; renderStacks(); }));
+      }
+      for (const e of shown) {
+        const b = document.createElement("button");
+        b.className = "item";
+        b.innerHTML = (hasPins(e) ? "&#10003; " : "") + esc(e.name) + "<small>" + esc(hasPins(e) ? describePins(e.pins) : "Not set up") + "</small>";
+        b.onclick = () => { stackId = e.id; stackPins = hasPins(e) ? [...e.pins] : []; go("stackEdit"); };
+        $("list").appendChild(b);
+      }
+      $("back").onclick = () => go("start");
+    }
+
+    function renderStackEdit() {
+      const e = exList().find((x) => x.id === stackId);
+      const saved = ((settings.exercises || {})[e.id] || {}).stackSpec || {};
+      const ch = Array.isArray(saved.changes) ? saved.changes : [];
+
+      const stepSelect = (id, chosen, optional) =>
+        '<select id="' + id + '">' + (optional ? '<option value="">None</option>' : "") +
+        STEP_CHOICES.map((s) => '<option value="' + s + '"' + (s === chosen ? " selected" : "") + ">" + s + " lb</option>").join("") +
+        "</select>";
+      const changeRow = (n) => {
+        const c = ch[n - 1] || {};
+        return '<div class="two"><div>' + numField("s_at" + n, "From weight (lb)", c.at ?? null, "e.g. 100") + "</div>" +
+          '<div><label for="s_cs' + n + '">New step</label>' + stepSelect("s_cs" + n, c.step, true) + "</div></div>";
+      };
+
+      app.innerHTML =
+        '<button class="ghost" id="back" style="margin-top:0">&larr; Back without saving</button>' +
+        "<h2>" + esc(e.name) + "</h2>" +
+        numField("s_low", "Lowest pin (lb)", saved.low ?? null, "e.g. 10") +
+        '<label for="s_step">Step</label>' + stepSelect("s_step", saved.step ?? 10, false) +
+        '<div class="panel"><strong>Step changes (optional)</strong>' +
+        '<div class="muted">Use these if the step changes part way up the stack, e.g. from 100 lb the step becomes 15 lb.</div>' +
+        changeRow(1) + changeRow(2) + "</div>" +
+        numField("s_top", "Top pin (lb)", saved.top ?? null, "e.g. 150") +
+        '<div class="panel"><strong>Weights on this machine</strong><div id="preview"></div>' +
+        '<div class="other"><input id="s_add" type="number" inputmode="decimal" step="any" placeholder="Add a pin, e.g. 125"><button id="addBtn">Add pin</button></div></div>' +
+        '<button class="primary" id="save">Save</button>' +
+        (hasPins(e) ? '<button class="ghost" id="clear">Clear this machine</button>' : "");
+
+      const readSpec = () => {
+        const spec = { low: toNumber($("s_low").value), step: Number($("s_step").value), top: toNumber($("s_top").value), changes: [] };
+        for (const n of [1, 2]) {
+          const at = toNumber($("s_at" + n).value);
+          const st = Number($("s_cs" + n).value);
+          spec.changes.push({ at, step: st > 0 ? st : null });
+        }
+        return spec;
+      };
+
+      const drawPreview = (message) => {
+        $("preview").innerHTML =
+          '<div class="muted">' + esc(message) + "</div>" +
+          (stackPins.length ? '<div class="muted small">' + stackPins.length + " weights. Tap one to remove it.</div>" : "") +
+          stackPins.map((w) => '<button class="chip" data-w="' + w + '">' + w + "</button>").join("");
+        $("preview").querySelectorAll(".chip").forEach((b) => {
+          b.onclick = () => { stackPins = removePin(stackPins, Number(b.dataset.w)); drawPreview("Removed " + b.dataset.w + " lb."); };
+        });
+      };
+
+      // Typing in the boxes rebuilds the list (this replaces any pins added or removed by hand).
+      const rebuild = () => {
+        const r = buildPins(readSpec());
+        if (r.error) { drawPreview(r.error); return; }
+        stackPins = r.pins;
+        drawPreview(r.note || "Built from the boxes. Check it against the machine.");
+      };
+      for (const id of ["s_low", "s_step", "s_at1", "s_cs1", "s_at2", "s_cs2", "s_top"]) {
+        $(id).addEventListener("input", rebuild);
+        $(id).addEventListener("change", rebuild);
+      }
+
+      drawPreview(stackPins.length ? "Saved weights shown below." : "Fill in the boxes to see the weights.");
+
+      $("addBtn").onclick = () => {
+        const w = toNumber($("s_add").value);
+        if (w !== null) { stackPins = addPin(stackPins, w); $("s_add").value = ""; drawPreview("Added " + w + " lb."); }
+      };
+      $("back").onclick = () => go("stacks");
+      $("save").onclick = () => {
+        if (stackPins.length === 0) { alert("Fill in the boxes first so there are weights to save."); return; }
+        const spec = readSpec();
+        settings = updateExercise(settings, e.id, {
+          pins: stackPins,
+          stackSpec: { low: spec.low, step: spec.step, top: spec.top, changes: spec.changes.filter((c) => c.at !== null && c.step !== null) },
+        });
+        save(SETTINGS_KEY, settings);
+        go("stacks");
+      };
+      if ($("clear")) $("clear").onclick = () => {
+        if (confirm("Remove the saved weights for this machine?")) {
+          settings = updateExercise(settings, e.id, { pins: null, stackSpec: null });
+          save(SETTINGS_KEY, settings);
+          go("stacks");
+        }
+      };
+    }
     armBack();
     render();
 

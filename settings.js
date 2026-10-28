@@ -19,15 +19,18 @@ export function toNumber(text) {
 }
 
 // Built-in exercises plus ones you added, with any name or step you changed.
+// Built-in exercises plus ones you added, with any name, step or pin list you changed.
 export function allExercises(builtIn, settings) {
   const overrides = settings.exercises || {};
   return [...builtIn, ...(settings.custom || [])].map((e) => {
     const o = overrides[e.id] || {};
-    return {
+    const out = {
       ...e,
       name: o.name || e.name,
       step: o.step > 0 ? o.step : e.step,
     };
+    if (Array.isArray(o.pins) && o.pins.length > 0) out.pins = o.pins;
+    return out;
   });
 }
 

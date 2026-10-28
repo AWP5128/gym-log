@@ -57,12 +57,18 @@ export function minutesDefault(exercise, allSets) {
 }
 
 // The list of weights offered for an exercise, always including the current one.
+// The list of weights offered for an exercise, always including the current one.
+// A machine with a saved pin list (Machine setup) offers exactly those pins.
 export function weightOptions(exercise, current) {
-  const min = exercise.min ?? exercise.step;
-  const max = exercise.max ?? (exercise.unit === "kg" ? 200 : 500);
-  const options = [];
-  for (let w = min; w <= max; w = Math.round((w + exercise.step) * 100) / 100) {
-    options.push(w);
+  let options = [];
+  if (Array.isArray(exercise.pins) && exercise.pins.length > 0) {
+    options = [...exercise.pins];
+  } else {
+    const min = exercise.min ?? exercise.step;
+    const max = exercise.max ?? (exercise.unit === "kg" ? 200 : 500);
+    for (let w = min; w <= max; w = Math.round((w + exercise.step) * 100) / 100) {
+      options.push(w);
+    }
   }
   if (current !== undefined && !options.includes(current)) {
     options.push(current);
