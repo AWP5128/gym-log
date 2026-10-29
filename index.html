@@ -92,12 +92,14 @@
     } from "./timer.js";
     import { hasExtras, extraOptions, totalWeight, splitFor } from "./extras.js";
     import { STEP_CHOICES, buildPins, addPin, removePin, describePins, hasPins } from "./stacks.js";
+    import { cleanStore, migrateLegacy, toLegacySettings, applyLegacySettings } from "./store.js";
 
     const SETS_KEY = "gymlog.sets";
     const SESSION_KEY = "gymlog.session";
     const SETTINGS_KEY = "gymlog.settings";
     const DONE_KEY = "gymlog.done";
     const WORKOUT_KEY = "gymlog.workout";
+    const STORE_KEY = "gymlog.store";
 
     function load(key, fallback) {
       try {
@@ -112,7 +114,19 @@
 
     let sets = load(SETS_KEY, []);
     if (!Array.isArray(sets)) sets = [];
-    let settings = { ...emptySettings(), ...load(SETTINGS_KEY, {}) };
+    // The permanent store. The first time, it is built from the old gymlog.settings data, which is left
+// untouched as a backup. The rest of the app keeps working with the settings shape below.
+let store = cleanStore(load(STORE_KEY, null));
+if (!store) {
+  store = migrateLegacy(load(SETTINGS_KEY, {}));
+  save(STORE_KEY, store);
+}
+let settings = { ...emptySettings(), ...toLegacySettings(store, store.currentPerson, store.currentGym) };
+
+function saveSettings() {
+  store = applyLegacySettings(store, store.currentPerson, store.currentGym, settings);
+  save(STORE_KEY, store);
+}
     let done = load(DONE_KEY, []);           // exercises finished today: { exerciseId, date }
     if (!Array.isArray(done)) done = [];
     // The workout timer: started by opening the first exercise, stopped by End workout. A workout
