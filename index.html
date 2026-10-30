@@ -73,6 +73,7 @@
     .cardhead .cardtime { color: #93c5fd; font-size: 1.2rem; padding: 0 8px; }
         html { -webkit-text-size-adjust: 100%; }
     button, select, input, textarea, summary { touch-action: manipulation; }
+    button.faintlink { display: block; width: 100%; background: transparent; border: none; color: #777; font-size: 0.9rem; margin-top: 12px; text-decoration: underline; }
   </style>
 </head>
 <body>
@@ -81,7 +82,7 @@
   <script type="module">
     import { sessionTypes, exercises, exercisesForGroup } from "./exercises.js";
     import { emptySettings, allExercises, configFor, updateExercise, toNumber } from "./settings.js";
-import { effectiveConfig, globalDefaults, updateGlobalDefaults, warmupReps, ownWarmupReps } from "./defaults.js";
+    import { effectiveConfig, globalDefaults, updateGlobalDefaults, warmupReps, ownWarmupReps } from "./defaults.js";
     import {
       makeSet, todaysSets, defaultsFor, removeLastSet, weightOptions,
       isDoneToday, markDone, unmarkDone,
@@ -92,13 +93,16 @@ import { effectiveConfig, globalDefaults, updateGlobalDefaults, warmupReps, ownW
     } from "./timer.js";
     import { hasExtras, extraOptions, totalWeight, splitFor } from "./extras.js";
     import { STEP_CHOICES, buildPins, addPin, removePin, describePins, hasPins } from "./stacks.js";
-    import { cleanStore, migrateLegacy, toLegacySettings, applyLegacySettings, supportsWarmup } from "./store.js";
+    import { cleanStore, migrateLegacy, toLegacySettings, applyLegacySettings, supportsWarmup, exportMachines, importMachines } from "./store.js";
+    import { makeBackup, backupFileName, parseBackup, fileKind, dataSummary, describeData, backupAge } from "./backup.js";
     const SETS_KEY = "gymlog.sets";
     const SESSION_KEY = "gymlog.session";
     const SETTINGS_KEY = "gymlog.settings";
     const DONE_KEY = "gymlog.done";
     const WORKOUT_KEY = "gymlog.workout";
     const STORE_KEY = "gymlog.store";
+    const LAST_BACKUP_KEY = "gymlog.lastBackup";
+    const BEFORE_RESTORE_KEY = "gymlog.beforeRestore";
 
     function load(key, fallback) {
       try {
@@ -228,13 +232,118 @@ function saveSettings() {
 
     function go(name) {
       screen = name;
+          // ---------- Backup and restore ----------
+    let backupMsg = "";
+
+    // Hands a file to the phone's share sheet (Save to Files, Drive, email...) or downloads it
+    // where sharing is not possible. Returns "shared", "downloaded" or "cancelled".
+    async function sendFile(name, text) {
+      for (const type of ["application/json", "text/plain"]) {
+        const file = new File([text], name, { type });
+        try {
+          if (navigator.canShare && navigator.canShare({ files: [file] })) {
+            await navigator.share({ files: [file], title: name });
+            return "shared";
+          }
+        } catch (err) {
+          if (err && err.name === "AbortError") return "cancelled";
+        }
+      }
+      const url = URL.createObjectURL(new Blob([text], { type: "application/json" }));
+      const a = document.createElement("a");
+      a.href = url;
+      a.download = name;
+      document.body.appendChild(a);
+      a.click();
+      a.remove();
+      setTimeout(() => URL.revokeObjectURL(url), 2000);
+      return "downloaded";
+    }
+
+    function renderBackup() {
+      const age = backupAge(load(LAST_BACKUP_KEY, null));
+      app.innerHTML =
+        '<button class="ghost" id="back" style="margin-top:0">&larr; Back</button>' +
+        "<h2>Backup &amp; restore</h2>" +
+        (backupMsg ? '<div class="note">' + esc(backupMsg) + "</div>" : "") +
+        '<div class="panel"><strong>Back up everything</strong>' +
+        '<div class="muted">On this phone now: ' + esc(describeData(dataSummary(store, sets))) + ".</div>" +
+        '<div class="muted">Last backup: ' + age.text + (age.stale ? " (a new backup is due)" : "") + "</div>" +
+        '<div class="muted small">Saves your machines, settings and logged sets to one file. Keep it somewhere safe, such as Files, iCloud Drive or an email to yourself.</div>' +
+        '<button class="primary" id="backupNow">Back up now</button></div>' +
+        '<div class="panel"><strong>Share machines</strong>' +
+        '<div class="muted small">Machine names and stacks only, with no weights or notes. Family can import this file and then set their own weights.</div>' +
+        '<button class="secondary" id="shareMachines">Share machines file</button></div>' +
+        '<div class="panel"><strong>Import a file</strong>' +
+        '<div class="muted small">A machines file adds machines and leaves your own settings alone. A full backup replaces what is on this phone.</div>' +
+        '<button class="secondary" id="importBtn">Choose a file</button>' +
+        '<input type="file" id="importFile" accept=".json,application/json" style="display:none"></div>';
+      backupMsg = "";
+
+      $("back").onclick = () => go("start");
+
+      $("backupNow").onclick = async () => {
+        const text = JSON.stringify(makeBackup({ store, sets }), null, 2);
+        const result = await sendFile(backupFileName("backup"), text);
+        if (result !== "cancelled") {
+          save(LAST_BACKUP_KEY, new Date().toISOString());
+          backupMsg = result === "shared" ? "Backup sent. Check that you saved it somewhere safe." : "Backup downloaded.";
+        }
+        renderBackup();
+      };
+
+      $("shareMachines").onclick = async () => {
+        const result = await sendFile(backupFileName("machines"), exportMachines(store, store.currentGym));
+        if (result !== "cancelled") backupMsg = result === "shared" ? "Machines file sent." : "Machines file downloaded.";
+        renderBackup();
+      };
+
+      $("importBtn").onclick = () => $("importFile").click();
+      $("importFile").onchange = async (ev) => {
+        const file = ev.target.files && ev.target.files[0];
+        ev.target.value = "";
+        if (!file) return;
+        let text = "";
+        try { text = await file.text(); }
+        catch { backupMsg = "That file could not be read."; return renderBackup(); }
+
+        const kind = fileKind(text);
+        if (kind === "machines") {
+          const r = importMachines(store, store.currentGym, text);
+          if (r.error) { backupMsg = r.error; return renderBackup(); }
+          store = r.store;
+          settings = { ...emptySettings(), ...toLegacySettings(store, store.currentPerson, store.currentGym) };
+          save(STORE_KEY, store);
+          backupMsg = "Added " + r.count + (r.count === 1 ? " machine" : " machines") + " from the file. Your own weights and notes were not changed.";
+        } else if (kind === "backup") {
+          const r = parseBackup(text);
+          if (r.error) { backupMsg = r.error; return renderBackup(); }
+          const ok = confirm(
+            "Restore this backup?\n\nIn the file: " + describeData(dataSummary(r.backup.store, r.backup.sets)) +
+            "\nOn this phone now: " + describeData(dataSummary(store, sets)) +
+            "\n\nThis replaces what is on this phone."
+          );
+          if (!ok) { backupMsg = "Restore cancelled."; return renderBackup(); }
+          save(BEFORE_RESTORE_KEY, { at: new Date().toISOString(), store, sets });   // a safety copy, in case of a mistake
+          save(STORE_KEY, r.backup.store);
+          save(SETS_KEY, r.backup.sets);
+          alert("Backup restored. The app will now reload.");
+          location.reload();
+          return;
+        } else {
+          backupMsg = "That is not a Gym Log file.";
+        }
+        renderBackup();
+      };
+    }
       armBack();
       render();
       window.scrollTo(0, 0);
     }
 
     // The phone's back button or gesture steps back one screen instead of closing the app.
-    const BACK = { list: "start", setup: "start", edit: "setup", pick: "exercise", stacks: "start", stackEdit: "stacks" };
+    const BACK = { list: "start", setup: "start", edit: "setup", pick: "exercise", stacks: "start", stackEdit: "stacks", backup: "start" };
+    
 
     function armBack() {
       if (!history.state || !history.state.armed) history.pushState({ armed: true }, "");
@@ -255,6 +364,7 @@ function saveSettings() {
       else if (screen === "pick") renderPick();
       else if (screen === "stacks") renderStacks();
       else if (screen === "stackEdit") renderStackEdit();
+      else if (screen === "backup") renderBackup();
       else renderExercise();
     }
 
@@ -277,6 +387,10 @@ function saveSettings() {
         (t.weights ? '<label>Day type</label><div class="choices" id="modes"></div>' : "") +
         '<button class="secondary" id="setupBtn">Set up ' + esc(sessionLabel(session)) + "</button>" +
         '<button class="link" id="stacksBtn" style="display:block;margin:32px auto 0;opacity:0.6">Machine setup</button>';
+      const age = backupAge(load(LAST_BACKUP_KEY, null));
+      app.insertAdjacentHTML("beforeend", '<button class="faintlink" id="backupBtn">Backup &amp; restore' +
+        (age.stale ? " (last backup: " + age.text + ")" : "") + "</button>");
+      $("backupBtn").onclick = () => go("backup");
 
       // Choosing a session or day type updates Quick start and is remembered straight away.
       const choose = (change) => { Object.assign(session, change); save(SESSION_KEY, session); renderStart(); };
