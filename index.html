@@ -428,7 +428,7 @@ function resetPanel(p) {
       // Machines with extras: a pin list and an extra list, then the total beside the reps.
       // Other exercises: one weight list and an "Other weight" box.
       const weightHtml = withExtras
-        ? '<div class="pe"><div><span class="cap">Pin</span><select id="weightSel' + i + '">' + optionHtml + "</select></div>" +
+        ? '<div class="pe"><div><span class="cap">Stack</span><select id="weightSel' + i + '">' + optionHtml + "</select></div>" +
           '<div><span class="cap">Extra</span>' + extraSelectHtml("extraSel" + i, e, p.extra) + "</div></div>" +
           '<div class="wr"><span class="total">Total <b>' + p.weight + " " + e.unit + "</b></span>" + repsHtml + "</div>"
         : '<div class="wr"><select id="weightSel' + i + '">' + optionHtml + "</select>" + repsHtml + "</div>" +
@@ -633,22 +633,21 @@ function renderEdit() {
       '<option value="">None</option>' + options + "</select>";
   };
 
-  // A warm-up or working weight. Machines with extras get a pin and an extra list (the total is the sum).
+  // A warm-up or working weight. Machines with extras get a stack weight and an extra list (the total is the sum).
   const weightField = (kind, label) => {
     const total = cfg[kind + key];
     const id = "f_" + kind;
     if (!withExtras) return pinField(id, label + " weight", total);
     const extra = total === null ? 0 : savedExtra(kind);
     const pin = total === null ? null : totalWeight(total, -extra);
-    return '<div class="two"><div>' + pinField(id, label + " pin", pin) + "</div>" +
+    return '<div class="two"><div>' + pinField(id, label + " weight", pin) + "</div>" +
       '<div><label for="' + id + 'Extra">Extra</label>' + extraSelectHtml(id + "Extra", e, extra) + "</div></div>";
   };
 
   app.innerHTML =
     '<button class="ghost" id="back" style="margin-top:0">&larr; Back without saving</button>' +
     timeBar() + "<h2>" + esc(e.name) + "</h2>" +
-    '<div class="muted">' + (hasStack ? "Pins come from this machine's weight stack." : "No weight stack yet. Add one on Machine setup to get a pin list.") + "</div>" +
-    '<div class="panel"><strong>' + esc(sessionLabel(session)) + " for you</strong>" +
+    '<div class="muted">' + (hasStack ? "Weights come from this machine's stack." : "No stack set up yet. Add one on Machine setup to get a list of weights.") + "</div>" +    '<div class="panel"><strong>' + esc(sessionLabel(session)) + " for you</strong>" +
     (withWarmup
       ? weightField("start", "Warm-up") +
         numField("f_warmReps", "Warm-up reps", ownWarmupReps(settings, e.id, key), "default " + warmupReps(settings, e.id, key))
