@@ -3,7 +3,7 @@
 <head>
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width, initial-scale=1">
-    <meta name="theme-color" content="#111111">
+  <meta name="theme-color" content="#111111">
   <meta name="apple-mobile-web-app-capable" content="yes">
   <meta name="mobile-web-app-capable" content="yes">
   <meta name="apple-mobile-web-app-status-bar-style" content="black">
@@ -71,7 +71,7 @@
     .timebar { display: flex; align-items: center; justify-content: space-between; background: #1e293b; border-radius: 10px; padding: 10px 14px; margin: 12px 0; color: #cbd5e1; }
     .timebar .tm { font-size: 1.4rem; color: #eee; }
     .cardhead .cardtime { color: #93c5fd; font-size: 1.2rem; padding: 0 8px; }
-        html { -webkit-text-size-adjust: 100%; }
+    html { -webkit-text-size-adjust: 100%; }
     button, select, input, textarea, summary { touch-action: manipulation; }
     button.faintlink { display: block; width: 100%; background: transparent; border: none; color: #777; font-size: 0.9rem; margin-top: 12px; text-decoration: underline; }
   </style>
@@ -95,6 +95,7 @@
     import { STEP_CHOICES, buildPins, addPin, removePin, describePins, hasPins } from "./stacks.js";
     import { cleanStore, migrateLegacy, toLegacySettings, applyLegacySettings, supportsWarmup, exportMachines, importMachines } from "./store.js";
     import { makeBackup, backupFileName, parseBackup, fileKind, dataSummary, describeData, backupAge } from "./backup.js";
+
     const SETS_KEY = "gymlog.sets";
     const SESSION_KEY = "gymlog.session";
     const SETTINGS_KEY = "gymlog.settings";
@@ -117,19 +118,21 @@
 
     let sets = load(SETS_KEY, []);
     if (!Array.isArray(sets)) sets = [];
-    // The permanent store. The first time, it is built from the old gymlog.settings data, which is left
-// untouched as a backup. The rest of the app keeps working with the settings shape below.
-let store = cleanStore(load(STORE_KEY, null));
-if (!store) {
-  store = migrateLegacy(load(SETTINGS_KEY, {}));
-  save(STORE_KEY, store);
-}
-let settings = { ...emptySettings(), ...toLegacySettings(store, store.currentPerson, store.currentGym) };
 
-function saveSettings() {
-  store = applyLegacySettings(store, store.currentPerson, store.currentGym, settings);
-  save(STORE_KEY, store);
-}
+    // The permanent store. The first time, it is built from the old gymlog.settings data, which is left
+    // untouched as a backup. The rest of the app keeps working with the settings shape below.
+    let store = cleanStore(load(STORE_KEY, null));
+    if (!store) {
+      store = migrateLegacy(load(SETTINGS_KEY, {}));
+      save(STORE_KEY, store);
+    }
+    let settings = { ...emptySettings(), ...toLegacySettings(store, store.currentPerson, store.currentGym) };
+
+    function saveSettings() {
+      store = applyLegacySettings(store, store.currentPerson, store.currentGym, settings);
+      save(STORE_KEY, store);
+    }
+
     let done = load(DONE_KEY, []);           // exercises finished today: { exerciseId, date }
     if (!Array.isArray(done)) done = [];
     // The workout timer: started by opening the first exercise, stopped by End workout. A workout
@@ -141,7 +144,7 @@ function saveSettings() {
     if (!sessionTypes.some((t) => t.id === session.type)) session.type = "legs";
     if (session.mode !== "volume") session.mode = "heavy";
 
-    let screen = "start";          // "start", "list", "exercise", "pick", "setup" or "edit"
+    let screen = "start";          // "start", "list", "exercise", "pick", "setup", "edit", "stacks", "stackEdit" or "backup"
     let showMore = false;
     let showDone = false;          // is the "done today" list open on the exercise list?
     let panels = [];               // exercises on the logging page: one, or two when supersetting
@@ -150,7 +153,8 @@ function saveSettings() {
     let flash = "";                // a short message shown once, e.g. "Defaults saved"
     let stackFilter = "all";       // Machine setup list: "all", "legs" or "arms"
     let stackId = null;            // the machine being set up on the Machine setup screen
-    let stackPins = [];            // the pin list being built for that machine
+    let stackPins = [];            // the list of weights being built for that machine
+    let backupMsg = "";            // a short message shown once on the Backup screen
 
     const app = document.getElementById("app");
     const $ = (id) => document.getElementById(id);
@@ -202,7 +206,7 @@ function saveSettings() {
         '<span class="tm" data-t="workout">' + formatTime(workoutElapsed(workout, Date.now())) + "</span></div>";
     }
 
-        // Keeps the screen on while a workout is running and the app is on screen (where the phone supports it).
+    // Keeps the screen on while a workout is running and the app is on screen (where the phone supports it).
     let wakeLock = null, waking = false;
     async function keepAwake() {
       if (waking || !("wakeLock" in navigator)) return;
@@ -219,8 +223,10 @@ function saveSettings() {
       } catch { wakeLock = null; }
       waking = false;
     }
+
     // Updates the clocks on screen once a second without redrawing the page.
     function tick() {
+      keepAwake();
       const now = Date.now();
       document.querySelectorAll("[data-t]").forEach((el) => {
         const t = el.dataset.t;
@@ -232,110 +238,6 @@ function saveSettings() {
 
     function go(name) {
       screen = name;
-          // ---------- Backup and restore ----------
-    let backupMsg = "";
-
-    // Hands a file to the phone's share sheet (Save to Files, Drive, email...) or downloads it
-    // where sharing is not possible. Returns "shared", "downloaded" or "cancelled".
-    async function sendFile(name, text) {
-      for (const type of ["application/json", "text/plain"]) {
-        const file = new File([text], name, { type });
-        try {
-          if (navigator.canShare && navigator.canShare({ files: [file] })) {
-            await navigator.share({ files: [file], title: name });
-            return "shared";
-          }
-        } catch (err) {
-          if (err && err.name === "AbortError") return "cancelled";
-        }
-      }
-      const url = URL.createObjectURL(new Blob([text], { type: "application/json" }));
-      const a = document.createElement("a");
-      a.href = url;
-      a.download = name;
-      document.body.appendChild(a);
-      a.click();
-      a.remove();
-      setTimeout(() => URL.revokeObjectURL(url), 2000);
-      return "downloaded";
-    }
-
-    function renderBackup() {
-      const age = backupAge(load(LAST_BACKUP_KEY, null));
-      app.innerHTML =
-        '<button class="ghost" id="back" style="margin-top:0">&larr; Back</button>' +
-        "<h2>Backup &amp; restore</h2>" +
-        (backupMsg ? '<div class="note">' + esc(backupMsg) + "</div>" : "") +
-        '<div class="panel"><strong>Back up everything</strong>' +
-        '<div class="muted">On this phone now: ' + esc(describeData(dataSummary(store, sets))) + ".</div>" +
-        '<div class="muted">Last backup: ' + age.text + (age.stale ? " (a new backup is due)" : "") + "</div>" +
-        '<div class="muted small">Saves your machines, settings and logged sets to one file. Keep it somewhere safe, such as Files, iCloud Drive or an email to yourself.</div>' +
-        '<button class="primary" id="backupNow">Back up now</button></div>' +
-        '<div class="panel"><strong>Share machines</strong>' +
-        '<div class="muted small">Machine names and stacks only, with no weights or notes. Family can import this file and then set their own weights.</div>' +
-        '<button class="secondary" id="shareMachines">Share machines file</button></div>' +
-        '<div class="panel"><strong>Import a file</strong>' +
-        '<div class="muted small">A machines file adds machines and leaves your own settings alone. A full backup replaces what is on this phone.</div>' +
-        '<button class="secondary" id="importBtn">Choose a file</button>' +
-        '<input type="file" id="importFile" accept=".json,application/json" style="display:none"></div>';
-      backupMsg = "";
-
-      $("back").onclick = () => go("start");
-
-      $("backupNow").onclick = async () => {
-        const text = JSON.stringify(makeBackup({ store, sets }), null, 2);
-        const result = await sendFile(backupFileName("backup"), text);
-        if (result !== "cancelled") {
-          save(LAST_BACKUP_KEY, new Date().toISOString());
-          backupMsg = result === "shared" ? "Backup sent. Check that you saved it somewhere safe." : "Backup downloaded.";
-        }
-        renderBackup();
-      };
-
-      $("shareMachines").onclick = async () => {
-        const result = await sendFile(backupFileName("machines"), exportMachines(store, store.currentGym));
-        if (result !== "cancelled") backupMsg = result === "shared" ? "Machines file sent." : "Machines file downloaded.";
-        renderBackup();
-      };
-
-      $("importBtn").onclick = () => $("importFile").click();
-      $("importFile").onchange = async (ev) => {
-        const file = ev.target.files && ev.target.files[0];
-        ev.target.value = "";
-        if (!file) return;
-        let text = "";
-        try { text = await file.text(); }
-        catch { backupMsg = "That file could not be read."; return renderBackup(); }
-
-        const kind = fileKind(text);
-        if (kind === "machines") {
-          const r = importMachines(store, store.currentGym, text);
-          if (r.error) { backupMsg = r.error; return renderBackup(); }
-          store = r.store;
-          settings = { ...emptySettings(), ...toLegacySettings(store, store.currentPerson, store.currentGym) };
-          save(STORE_KEY, store);
-          backupMsg = "Added " + r.count + (r.count === 1 ? " machine" : " machines") + " from the file. Your own weights and notes were not changed.";
-        } else if (kind === "backup") {
-          const r = parseBackup(text);
-          if (r.error) { backupMsg = r.error; return renderBackup(); }
-          const ok = confirm(
-            "Restore this backup?\n\nIn the file: " + describeData(dataSummary(r.backup.store, r.backup.sets)) +
-            "\nOn this phone now: " + describeData(dataSummary(store, sets)) +
-            "\n\nThis replaces what is on this phone."
-          );
-          if (!ok) { backupMsg = "Restore cancelled."; return renderBackup(); }
-          save(BEFORE_RESTORE_KEY, { at: new Date().toISOString(), store, sets });   // a safety copy, in case of a mistake
-          save(STORE_KEY, r.backup.store);
-          save(SETS_KEY, r.backup.sets);
-          alert("Backup restored. The app will now reload.");
-          location.reload();
-          return;
-        } else {
-          backupMsg = "That is not a Gym Log file.";
-        }
-        renderBackup();
-      };
-    }
       armBack();
       render();
       window.scrollTo(0, 0);
@@ -343,7 +245,6 @@ function saveSettings() {
 
     // The phone's back button or gesture steps back one screen instead of closing the app.
     const BACK = { list: "start", setup: "start", edit: "setup", pick: "exercise", stacks: "start", stackEdit: "stacks", backup: "start" };
-    
 
     function armBack() {
       if (!history.state || !history.state.armed) history.pushState({ armed: true }, "");
@@ -355,7 +256,7 @@ function saveSettings() {
       go(screen === "exercise" ? "list" : BACK[screen]);
     });
 
-        function render() {
+    function render() {
       syncTimers();
       if (screen === "start") renderStart();
       else if (screen === "list") renderList();
@@ -461,32 +362,32 @@ function saveSettings() {
     // ---------- Exercise screen ----------
     // The logging page shows one exercise, or two when supersetting. Every exercise uses the same
     // compact card with its own weight, reps, Log set, Undo and Finish buttons.
-// A machine's settings as the logging page uses them. Exercises with no warm-up set have no warm-up weight.
 
-function cfgFor(e) {
-  const cfg = effectiveConfig(settings, e.id);
-  if (!supportsWarmup(e)) { cfg.startHeavy = null; cfg.startVolume = null; }
-  return cfg;
-}
+    // A machine's settings as the logging page uses them. Exercises with no warm-up set have no warm-up weight.
+    function cfgFor(e) {
+      const cfg = effectiveConfig(settings, e.id);
+      if (!supportsWarmup(e)) { cfg.startHeavy = null; cfg.startVolume = null; }
+      return cfg;
+    }
 
-function resetPanel(p) {
-  const cfg = cfgFor(p.ex);
-  const key = modeKey();
-  const d = defaultsFor(p.ex, sets, cfg, dayMode() ?? "volume");
-  p.reps = d.reps;
-  p.weight = d.weight;
-  // The warm-up set (the first set of the day, when a warm-up weight is set) uses the warm-up reps.
-  if (cfg["start" + key] !== null && todaysSets(sets, p.ex.id).length === 0) {
-    p.reps = warmupReps(settings, p.ex.id, key);
-  }
-  if (!hasExtras(p.ex)) return;
-  // Machines with extras: keep the pin and extra already chosen when the total is unchanged
-  // (the next set at the same weight), otherwise work them out from the total.
-  if (p.pin !== undefined && totalWeight(p.pin, p.extra) === d.weight) return;
-  const s = splitFor(settings, p.ex, d.weight, cfg, modeKey());
-  p.pin = s.pin;
-  p.extra = s.extra;
-}
+    function resetPanel(p) {
+      const cfg = cfgFor(p.ex);
+      const key = modeKey();
+      const d = defaultsFor(p.ex, sets, cfg, dayMode() ?? "volume");
+      p.reps = d.reps;
+      p.weight = d.weight;
+      // The warm-up set (the first set of the day, when a warm-up weight is set) uses the warm-up reps.
+      if (cfg["start" + key] !== null && todaysSets(sets, p.ex.id).length === 0) {
+        p.reps = warmupReps(settings, p.ex.id, key);
+      }
+      if (!hasExtras(p.ex)) return;
+      // Machines with extras: keep the pin and extra already chosen when the total is unchanged
+      // (the next set at the same weight), otherwise work them out from the total.
+      if (p.pin !== undefined && totalWeight(p.pin, p.extra) === d.weight) return;
+      const s = splitFor(settings, p.ex, d.weight, cfg, modeKey());
+      p.pin = s.pin;
+      p.extra = s.extra;
+    }
 
     function newPanel(e) {
       const p = { ex: e, weight: 0, reps: 5 };
@@ -499,7 +400,7 @@ function resetPanel(p) {
       go("exercise");
     }
 
-        // The list of extra weights a machine offers, with "None" first.
+    // The list of extra weights a machine offers, with "None" first.
     function extraSelectHtml(id, e, chosen) {
       return '<select id="' + id + '"><option value="0">None</option>' +
         extraOptions(e)
@@ -521,7 +422,7 @@ function resetPanel(p) {
         ? "All " + totalSets + " sets done"
         : "Set " + (today.length + 1) + " of " + totalSets + (hasWarmup && today.length === 0 ? " (warm-up)" : "");
       const withExtras = hasExtras(e);
-      const shown = withExtras ? p.pin : p.weight;     // the pin position, or the whole weight when there is no pin
+      const shown = withExtras ? p.pin : p.weight;     // the stack position, or the whole weight when there is no stack
       const optionHtml = weightOptions(e, shown)
         .map((w) => '<option value="' + w + '"' + (w === shown ? " selected" : "") + ">" + w + " " + e.unit + "</option>")
         .join("");
@@ -539,7 +440,7 @@ function resetPanel(p) {
 
       const repsHtml = '<button id="rMinus' + i + '">-</button><span class="val">' + p.reps + " <small>reps</small></span>" +
         '<button id="rPlus' + i + '">+</button>';
-      // Machines with extras: a pin list and an extra list, then the total beside the reps.
+      // Machines with extras: a stack list and an extra list, then the total beside the reps.
       // Other exercises: one weight list and an "Other weight" box.
       const weightHtml = withExtras
         ? '<div class="pe"><div><span class="cap">Stack</span><select id="weightSel' + i + '">' + optionHtml + "</select></div>" +
@@ -560,7 +461,7 @@ function resetPanel(p) {
         finishHtml + "</div>";
     }
 
-        function bindPanel(p, i) {
+    function bindPanel(p, i) {
       const e = p.ex;
       const on = (name, fn) => { const el = $(name + i); if (el) el.onclick = fn; };
 
@@ -719,87 +620,86 @@ function resetPanel(p) {
       };
     }
 
-    // ---------- Set up session: one machine ----------
-        // ---------- Set up session: one machine ----------
-// ---------- Set up session: one machine (personal settings) ----------
-// Name and weight stack are set on Machine setup. This screen is just for you: warm-up and
-// working weights and reps, and notes (the same notes for Heavy and Volume days).
-function renderEdit() {
-  const e = exList().find((x) => x.id === editId);
-  const cfg = configFor(settings, e.id);
-  const key = modeKey();
-  const eff = effectiveConfig(settings, e.id);   // what this machine uses right now
-  const withExtras = hasExtras(e);
-  const withWarmup = supportsWarmup(e);
-  const hasStack = Array.isArray(e.pins) && e.pins.length > 0;
-  const savedExtra = (kind) => {
-    const x = ((settings.exercises || {})[e.id] || {})[kind + "Extra" + key];
-    return Number.isFinite(x) ? x : 0;
-  };
+    // ---------- Set up session: one machine (personal settings) ----------
+    // Name and weight stack are set on Machine setup. This screen is just for you: warm-up and
+    // working weights and reps, and notes (the same notes for Heavy and Volume days).
+    function renderEdit() {
+      const e = exList().find((x) => x.id === editId);
+      const cfg = configFor(settings, e.id);
+      const key = modeKey();
+      const eff = effectiveConfig(settings, e.id);   // what this machine uses right now
+      const withExtras = hasExtras(e);
+      const withWarmup = supportsWarmup(e);
+      const hasStack = Array.isArray(e.pins) && e.pins.length > 0;
+      const savedExtra = (kind) => {
+        const x = ((settings.exercises || {})[e.id] || {})[kind + "Extra" + key];
+        return Number.isFinite(x) ? x : 0;
+      };
 
-  // A pin: chosen from the machine's weight stack when it has one, otherwise typed.
-  const pinField = (id, label, value) => {
-    if (!hasStack) return numField(id, label + " (" + e.unit + ")", value, "none");
-    const options = weightOptions(e, value === null ? undefined : value)
-      .map((w) => '<option value="' + w + '"' + (w === value ? " selected" : "") + ">" + w + " " + e.unit + "</option>")
-      .join("");
-    return '<label for="' + id + '">' + label + '</label><select class="field" id="' + id + '">' +
-      '<option value="">None</option>' + options + "</select>";
-  };
+      // A stack weight: chosen from the machine's stack when it has one, otherwise typed.
+      const pinField = (id, label, value) => {
+        if (!hasStack) return numField(id, label + " (" + e.unit + ")", value, "none");
+        const options = weightOptions(e, value === null ? undefined : value)
+          .map((w) => '<option value="' + w + '"' + (w === value ? " selected" : "") + ">" + w + " " + e.unit + "</option>")
+          .join("");
+        return '<label for="' + id + '">' + label + '</label><select class="field" id="' + id + '">' +
+          '<option value="">None</option>' + options + "</select>";
+      };
 
-  // A warm-up or working weight. Machines with extras get a stack weight and an extra list (the total is the sum).
-  const weightField = (kind, label) => {
-    const total = cfg[kind + key];
-    const id = "f_" + kind;
-    if (!withExtras) return pinField(id, label + " weight", total);
-    const extra = total === null ? 0 : savedExtra(kind);
-    const pin = total === null ? null : totalWeight(total, -extra);
-    return '<div class="two"><div>' + pinField(id, label + " weight", pin) + "</div>" +
-      '<div><label for="' + id + 'Extra">Extra</label>' + extraSelectHtml(id + "Extra", e, extra) + "</div></div>";
-  };
+      // A warm-up or working weight. Machines with extras get a stack weight and an extra list (the total is the sum).
+      const weightField = (kind, label) => {
+        const total = cfg[kind + key];
+        const id = "f_" + kind;
+        if (!withExtras) return pinField(id, label + " weight", total);
+        const extra = total === null ? 0 : savedExtra(kind);
+        const pin = total === null ? null : totalWeight(total, -extra);
+        return '<div class="two"><div>' + pinField(id, label + " weight", pin) + "</div>" +
+          '<div><label for="' + id + 'Extra">Extra</label>' + extraSelectHtml(id + "Extra", e, extra) + "</div></div>";
+      };
 
-  app.innerHTML =
-    '<button class="ghost" id="back" style="margin-top:0">&larr; Back without saving</button>' +
-    timeBar() + "<h2>" + esc(e.name) + "</h2>" +
-    '<div class="muted">' + (hasStack ? "Weights come from this machine's stack." : "No stack set up yet. Add one on Machine setup to get a list of weights.") + "</div>" +    '<div class="panel"><strong>' + esc(sessionLabel(session)) + " for you</strong>" +
-    (withWarmup
-      ? weightField("start", "Warm-up") +
-        numField("f_warmReps", "Warm-up reps", ownWarmupReps(settings, e.id, key), "default " + warmupReps(settings, e.id, key))
-      : '<div class="muted">No warm-up set for this exercise.</div>') +
-    weightField("work", "Working") +
-    '<div class="two"><div>' + numField("f_reps", "Working reps", cfg["reps" + key], "default " + eff["reps" + key]) + "</div>" +
-    "<div>" + numField("f_sets", "Working sets", cfg["sets" + key], "default " + eff["sets" + key]) + "</div></div>" +
-    '<div class="muted">The warm-up is optional. Leave reps or sets blank to use the defaults.</div>' +
-    "</div>" +
-    '<label for="f_notes">Notes (seat height, pad position, etc.)</label>' +
-    '<textarea class="field" id="f_notes" rows="3">' + esc(cfg.notes) + "</textarea>" +
-    '<div class="muted">Notes are the same for Heavy and Volume days.</div>' +
-    '<button class="primary" id="save">Save</button>';
+      app.innerHTML =
+        '<button class="ghost" id="back" style="margin-top:0">&larr; Back without saving</button>' +
+        timeBar() + "<h2>" + esc(e.name) + "</h2>" +
+        '<div class="muted">' + (hasStack ? "Weights come from this machine's stack." : "No stack set up yet. Add one on Machine setup to get a list of weights.") + "</div>" +
+        '<div class="panel"><strong>' + esc(sessionLabel(session)) + " for you</strong>" +
+        (withWarmup
+          ? weightField("start", "Warm-up") +
+            numField("f_warmReps", "Warm-up reps", ownWarmupReps(settings, e.id, key), "default " + warmupReps(settings, e.id, key))
+          : '<div class="muted">No warm-up set for this exercise.</div>') +
+        weightField("work", "Working") +
+        '<div class="two"><div>' + numField("f_reps", "Working reps", cfg["reps" + key], "default " + eff["reps" + key]) + "</div>" +
+        "<div>" + numField("f_sets", "Working sets", cfg["sets" + key], "default " + eff["sets" + key]) + "</div></div>" +
+        '<div class="muted">The warm-up is optional. Leave reps or sets blank to use the defaults.</div>' +
+        "</div>" +
+        '<label for="f_notes">Notes (seat height, pad position, etc.)</label>' +
+        '<textarea class="field" id="f_notes" rows="3">' + esc(cfg.notes) + "</textarea>" +
+        '<div class="muted">Notes are the same for Heavy and Volume days.</div>' +
+        '<button class="primary" id="save">Save</button>';
 
-  $("back").onclick = () => go("setup");
-  $("save").onclick = () => {
-    const patch = { notes: $("f_notes").value };
-    for (const kind of withWarmup ? ["start", "work"] : ["work"]) {
-      const typed = toNumber($("f_" + kind).value);
-      if (!withExtras) {
-        patch[kind + key] = typed;
-        continue;
-      }
-      const extra = typed === null ? 0 : Number($("f_" + kind + "Extra").value);
-      patch[kind + key] = typed === null ? null : totalWeight(typed, extra);     // the total is what is used
-      patch[kind + "Extra" + key] = typed === null || extra === 0 ? null : extra; // remembered so the pin shows again
+      $("back").onclick = () => go("setup");
+      $("save").onclick = () => {
+        const patch = { notes: $("f_notes").value };
+        for (const kind of withWarmup ? ["start", "work"] : ["work"]) {
+          const typed = toNumber($("f_" + kind).value);
+          if (!withExtras) {
+            patch[kind + key] = typed;
+            continue;
+          }
+          const extra = typed === null ? 0 : Number($("f_" + kind + "Extra").value);
+          patch[kind + key] = typed === null ? null : totalWeight(typed, extra);     // the total is what is used
+          patch[kind + "Extra" + key] = typed === null || extra === 0 ? null : extra; // remembered so the split shows again
+        }
+        if (withWarmup) patch["warmReps" + key] = wholeOrNull($("f_warmReps").value);
+        patch["reps" + key] = wholeOrNull($("f_reps").value);
+        patch["sets" + key] = wholeOrNull($("f_sets").value);
+        settings = updateExercise(settings, e.id, patch);
+        saveSettings();
+        go("setup");
+      };
     }
-    if (withWarmup) patch["warmReps" + key] = wholeOrNull($("f_warmReps").value);
-    patch["reps" + key] = wholeOrNull($("f_reps").value);
-    patch["sets" + key] = wholeOrNull($("f_sets").value);
-    settings = updateExercise(settings, e.id, patch);
-    saveSettings();
-    go("setup");
-  };
-}
 
-        // ---------- Machine setup: the pin weights on each machine ----------
-    // A one-off job done at the gym (it can be repeated for any machine). The saved pin list
+    // ---------- Machine setup: the weights on each machine's stack ----------
+    // A one-off job done at the gym (it can be repeated for any machine). The saved list of weights
     // replaces the step-based weight list for that machine.
     function stackMachines() {
       return exList().filter((e) => e.unit === "lb" && e.kind !== "time" && (e.group === "legs" || e.group === "arms"));
@@ -847,14 +747,14 @@ function renderEdit() {
       app.innerHTML =
         '<button class="ghost" id="back" style="margin-top:0">&larr; Back without saving</button>' +
         "<h2>" + esc(e.name) + "</h2>" +
-        numField("s_low", "Lowest pin (lb)", saved.low ?? null, "e.g. 10") +
+        numField("s_low", "Lowest weight (lb)", saved.low ?? null, "e.g. 10") +
         '<label for="s_step">Step</label>' + stepSelect("s_step", saved.step ?? 10, false) +
         '<div class="panel"><strong>Step changes (optional)</strong>' +
         '<div class="muted">Use these if the step changes part way up the stack, e.g. from 100 lb the step becomes 15 lb.</div>' +
         changeRow(1) + changeRow(2) + "</div>" +
-        numField("s_top", "Top pin (lb)", saved.top ?? null, "e.g. 150") +
+        numField("s_top", "Top weight (lb)", saved.top ?? null, "e.g. 150") +
         '<div class="panel"><strong>Weights on this machine</strong><div id="preview"></div>' +
-        '<div class="other"><input id="s_add" type="number" inputmode="decimal" step="any" placeholder="Add a pin, e.g. 125"><button id="addBtn">Add pin</button></div></div>' +
+        '<div class="other"><input id="s_add" type="number" inputmode="decimal" step="any" placeholder="Add a weight, e.g. 125"><button id="addBtn">Add weight</button></div></div>' +
         '<button class="primary" id="save">Save</button>' +
         (hasPins(e) ? '<button class="ghost" id="clear">Clear this machine</button>' : "");
 
@@ -878,7 +778,7 @@ function renderEdit() {
         });
       };
 
-      // Typing in the boxes rebuilds the list (this replaces any pins added or removed by hand).
+      // Typing in the boxes rebuilds the list (this replaces any weights added or removed by hand).
       const rebuild = () => {
         const r = buildPins(readSpec());
         if (r.error) { drawPreview(r.error); return; }
@@ -915,6 +815,110 @@ function renderEdit() {
         }
       };
     }
+
+    // ---------- Backup and restore ----------
+    // Hands a file to the phone's share sheet (Save to Files, Drive, email...) or downloads it
+    // where sharing is not possible. Returns "shared", "downloaded" or "cancelled".
+    async function sendFile(name, text) {
+      for (const type of ["application/json", "text/plain"]) {
+        const file = new File([text], name, { type });
+        try {
+          if (navigator.canShare && navigator.canShare({ files: [file] })) {
+            await navigator.share({ files: [file], title: name });
+            return "shared";
+          }
+        } catch (err) {
+          if (err && err.name === "AbortError") return "cancelled";
+        }
+      }
+      const url = URL.createObjectURL(new Blob([text], { type: "application/json" }));
+      const a = document.createElement("a");
+      a.href = url;
+      a.download = name;
+      document.body.appendChild(a);
+      a.click();
+      a.remove();
+      setTimeout(() => URL.revokeObjectURL(url), 2000);
+      return "downloaded";
+    }
+
+    function renderBackup() {
+      const age = backupAge(load(LAST_BACKUP_KEY, null));
+      app.innerHTML =
+        '<button class="ghost" id="back" style="margin-top:0">&larr; Back</button>' +
+        "<h2>Backup &amp; restore</h2>" +
+        (backupMsg ? '<div class="note">' + esc(backupMsg) + "</div>" : "") +
+        '<div class="panel"><strong>Back up everything</strong>' +
+        '<div class="muted">On this phone now: ' + esc(describeData(dataSummary(store, sets))) + ".</div>" +
+        '<div class="muted">Last backup: ' + age.text + (age.stale ? " (a new backup is due)" : "") + "</div>" +
+        '<div class="muted small">Saves your machines, settings and logged sets to one file. Keep it somewhere safe, such as Files, iCloud Drive or an email to yourself.</div>' +
+        '<button class="primary" id="backupNow">Back up now</button></div>' +
+        '<div class="panel"><strong>Share machines</strong>' +
+        '<div class="muted small">Machine names and stacks only, with no weights or notes. Family can import this file and then set their own weights.</div>' +
+        '<button class="secondary" id="shareMachines">Share machines file</button></div>' +
+        '<div class="panel"><strong>Import a file</strong>' +
+        '<div class="muted small">A machines file adds machines and leaves your own settings alone. A full backup replaces what is on this phone.</div>' +
+        '<button class="secondary" id="importBtn">Choose a file</button>' +
+        '<input type="file" id="importFile" accept=".json,application/json" style="display:none"></div>';
+      backupMsg = "";
+
+      $("back").onclick = () => go("start");
+
+      $("backupNow").onclick = async () => {
+        const text = JSON.stringify(makeBackup({ store, sets }), null, 2);
+        const result = await sendFile(backupFileName("backup"), text);
+        if (result !== "cancelled") {
+          save(LAST_BACKUP_KEY, new Date().toISOString());
+          backupMsg = result === "shared" ? "Backup sent. Check that you saved it somewhere safe." : "Backup downloaded.";
+        }
+        renderBackup();
+      };
+
+      $("shareMachines").onclick = async () => {
+        const result = await sendFile(backupFileName("machines"), exportMachines(store, store.currentGym));
+        if (result !== "cancelled") backupMsg = result === "shared" ? "Machines file sent." : "Machines file downloaded.";
+        renderBackup();
+      };
+
+      $("importBtn").onclick = () => $("importFile").click();
+      $("importFile").onchange = async (ev) => {
+        const file = ev.target.files && ev.target.files[0];
+        ev.target.value = "";
+        if (!file) return;
+        let text = "";
+        try { text = await file.text(); }
+        catch { backupMsg = "That file could not be read."; return renderBackup(); }
+
+        const kind = fileKind(text);
+        if (kind === "machines") {
+          const r = importMachines(store, store.currentGym, text);
+          if (r.error) { backupMsg = r.error; return renderBackup(); }
+          store = r.store;
+          settings = { ...emptySettings(), ...toLegacySettings(store, store.currentPerson, store.currentGym) };
+          save(STORE_KEY, store);
+          backupMsg = "Added " + r.count + (r.count === 1 ? " machine" : " machines") + " from the file. Your own weights and notes were not changed.";
+        } else if (kind === "backup") {
+          const r = parseBackup(text);
+          if (r.error) { backupMsg = r.error; return renderBackup(); }
+          const ok = confirm(
+            "Restore this backup?\n\nIn the file: " + describeData(dataSummary(r.backup.store, r.backup.sets)) +
+            "\nOn this phone now: " + describeData(dataSummary(store, sets)) +
+            "\n\nThis replaces what is on this phone."
+          );
+          if (!ok) { backupMsg = "Restore cancelled."; return renderBackup(); }
+          save(BEFORE_RESTORE_KEY, { at: new Date().toISOString(), store, sets });   // a safety copy, in case of a mistake
+          save(STORE_KEY, r.backup.store);
+          save(SETS_KEY, r.backup.sets);
+          alert("Backup restored. The app will now reload.");
+          location.reload();
+          return;
+        } else {
+          backupMsg = "That is not a Gym Log file.";
+        }
+        renderBackup();
+      };
+    }
+
     armBack();
     render();
 
