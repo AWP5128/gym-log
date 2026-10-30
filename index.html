@@ -81,7 +81,7 @@
   <script type="module">
     import { sessionTypes, exercises, exercisesForGroup } from "./exercises.js";
     import { emptySettings, allExercises, configFor, updateExercise, toNumber } from "./settings.js";
-    import { effectiveConfig, globalDefaults, updateGlobalDefaults } from "./defaults.js";
+import { effectiveConfig, globalDefaults, updateGlobalDefaults, warmupReps, ownWarmupReps } from "./defaults.js";
     import {
       makeSet, todaysSets, defaultsFor, removeLastSet, weightOptions,
       isDoneToday, markDone, unmarkDone,
@@ -92,8 +92,7 @@
     } from "./timer.js";
     import { hasExtras, extraOptions, totalWeight, splitFor } from "./extras.js";
     import { STEP_CHOICES, buildPins, addPin, removePin, describePins, hasPins } from "./stacks.js";
-    import { cleanStore, migrateLegacy, toLegacySettings, applyLegacySettings } from "./store.js";
-
+    import { cleanStore, migrateLegacy, toLegacySettings, applyLegacySettings, supportsWarmup } from "./store.js";
     const SETS_KEY = "gymlog.sets";
     const SESSION_KEY = "gymlog.session";
     const SETTINGS_KEY = "gymlog.settings";
@@ -348,19 +347,32 @@ function saveSettings() {
     // ---------- Exercise screen ----------
     // The logging page shows one exercise, or two when supersetting. Every exercise uses the same
     // compact card with its own weight, reps, Log set, Undo and Finish buttons.
-     function resetPanel(p) {
-      const cfg = effectiveConfig(settings, p.ex.id);
-      const d = defaultsFor(p.ex, sets, cfg, dayMode() ?? "volume");
-      p.reps = d.reps;
-      p.weight = d.weight;
-      if (!hasExtras(p.ex)) return;
-      // Machines with extras: keep the pin and extra already chosen when the total is unchanged
-      // (the next set at the same weight), otherwise work them out from the total.
-      if (p.pin !== undefined && totalWeight(p.pin, p.extra) === d.weight) return;
-      const s = splitFor(settings, p.ex, d.weight, cfg, modeKey());
-      p.pin = s.pin;
-      p.extra = s.extra;
-    }
+// A machine's settings as the logging page uses them. Exercises with no warm-up set have no warm-up weight.
+
+function cfgFor(e) {
+  const cfg = effectiveConfig(settings, e.id);
+  if (!supportsWarmup(e)) { cfg.startHeavy = null; cfg.startVolume = null; }
+  return cfg;
+}
+
+function resetPanel(p) {
+  const cfg = cfgFor(p.ex);
+  const key = modeKey();
+  const d = defaultsFor(p.ex, sets, cfg, dayMode() ?? "volume");
+  p.reps = d.reps;
+  p.weight = d.weight;
+  // The warm-up set (the first set of the day, when a warm-up weight is set) uses the warm-up reps.
+  if (cfg["start" + key] !== null && todaysSets(sets, p.ex.id).length === 0) {
+    p.reps = warmupReps(settings, p.ex.id, key);
+  }
+  if (!hasExtras(p.ex)) return;
+  // Machines with extras: keep the pin and extra already chosen when the total is unchanged
+  // (the next set at the same weight), otherwise work them out from the total.
+  if (p.pin !== undefined && totalWeight(p.pin, p.extra) === d.weight) return;
+  const s = splitFor(settings, p.ex, d.weight, cfg, modeKey());
+  p.pin = s.pin;
+  p.extra = s.extra;
+}
 
     function newPanel(e) {
       const p = { ex: e, weight: 0, reps: 5 };
@@ -384,7 +396,7 @@ function saveSettings() {
 
     function panelHtml(p, i) {
       const e = p.ex;
-      const cfg = effectiveConfig(settings, e.id);
+      const cfg = cfgFor(e);
       const key = modeKey();
       const today = todaysSets(sets, e.id);
       const hasWarmup = cfg["start" + key] !== null;
@@ -587,7 +599,7 @@ function saveSettings() {
           ["reps" + key]: wholeOrNull($("g_reps").value),
           ["sets" + key]: wholeOrNull($("g_sets").value),
         });
-        save(SETTINGS_KEY, settings);
+        saveSettings();
         flash = "Defaults saved";
         renderSetup();
       };
@@ -595,70 +607,83 @@ function saveSettings() {
 
     // ---------- Set up session: one machine ----------
         // ---------- Set up session: one machine ----------
-    function renderEdit() {
-      const e = exList().find((x) => x.id === editId);
-      const cfg = configFor(settings, e.id);
-      const key = modeKey();
-      const eff = effectiveConfig(settings, e.id);   // what this machine uses right now
-      const withExtras = hasExtras(e);
-      const savedExtra = (kind) => {
-        const x = ((settings.exercises || {})[e.id] || {})[kind + "Extra" + key];
-        return Number.isFinite(x) ? x : 0;
-      };
+// ---------- Set up session: one machine (personal settings) ----------
+// Name and weight stack are set on Machine setup. This screen is just for you: warm-up and
+// working weights and reps, and notes (the same notes for Heavy and Volume days).
+function renderEdit() {
+  const e = exList().find((x) => x.id === editId);
+  const cfg = configFor(settings, e.id);
+  const key = modeKey();
+  const eff = effectiveConfig(settings, e.id);   // what this machine uses right now
+  const withExtras = hasExtras(e);
+  const withWarmup = supportsWarmup(e);
+  const hasStack = Array.isArray(e.pins) && e.pins.length > 0;
+  const savedExtra = (kind) => {
+    const x = ((settings.exercises || {})[e.id] || {})[kind + "Extra" + key];
+    return Number.isFinite(x) ? x : 0;
+  };
 
-      // A warm-up or working weight. Machines with extras get a pin box and an extra list (the total is the sum).
-      const weightField = (kind, label, pinLabel, optional) => {
-        const total = cfg[kind + key];
-        const unit = e.unit + (optional ? ", optional" : "");
-        if (!withExtras) return numField("f_" + kind, label + " (" + unit + ")", total, "none");
-        const extra = total === null ? 0 : savedExtra(kind);
-        const pin = total === null ? null : totalWeight(total, -extra);
-        return '<div class="two"><div>' + numField("f_" + kind, pinLabel + " (" + e.unit + ")", pin, "none") + "</div>" +
-          '<div><label for="f_' + kind + 'Extra">Extra</label>' + extraSelectHtml("f_" + kind + "Extra", e, extra) + "</div></div>";
-      };
+  // A pin: chosen from the machine's weight stack when it has one, otherwise typed.
+  const pinField = (id, label, value) => {
+    if (!hasStack) return numField(id, label + " (" + e.unit + ")", value, "none");
+    const options = weightOptions(e, value === null ? undefined : value)
+      .map((w) => '<option value="' + w + '"' + (w === value ? " selected" : "") + ">" + w + " " + e.unit + "</option>")
+      .join("");
+    return '<label for="' + id + '">' + label + '</label><select class="field" id="' + id + '">' +
+      '<option value="">None</option>' + options + "</select>";
+  };
 
-      app.innerHTML =
-        '<button class="ghost" id="back" style="margin-top:0">&larr; Back without saving</button>' +
-        timeBar() + "<h2>" + esc(e.name) + "</h2>" +
-        '<label for="f_name">Name</label>' +
-        '<input class="field" id="f_name" type="text" value="' + esc(e.name) + '">' +
-        numField("f_step", "Weight step (" + e.unit + ")", e.step, "") +
-        '<div class="panel"><strong>' + esc(sessionLabel(session)) + " for this machine</strong>" +
-        weightField("start", "Warm-up weight, first set", "Warm-up pin", true) +
-        weightField("work", "Working weight", "Working pin", false) +
-        (withExtras ? '<div class="muted">The warm-up is optional and is the first set. The weight used is the pin plus the extra.</div>' : "") +
-        '<div class="two"><div>' + numField("f_reps", "Reps", cfg["reps" + key], "default " + eff["reps" + key]) + "</div>" +
-        "<div>" + numField("f_sets", "Sets", cfg["sets" + key], "default " + eff["sets" + key]) + "</div></div>" +
-        '<div class="muted">Leave reps or sets blank to use the defaults for every machine.</div>' +
-        "</div>" +
-        '<label for="f_notes">Notes (seat height, pad position, etc.)</label>' +
-        '<textarea class="field" id="f_notes" rows="3">' + esc(cfg.notes) + "</textarea>" +
-        '<button class="primary" id="save">Save</button>';
+  // A warm-up or working weight. Machines with extras get a pin and an extra list (the total is the sum).
+  const weightField = (kind, label) => {
+    const total = cfg[kind + key];
+    const id = "f_" + kind;
+    if (!withExtras) return pinField(id, label + " weight", total);
+    const extra = total === null ? 0 : savedExtra(kind);
+    const pin = total === null ? null : totalWeight(total, -extra);
+    return '<div class="two"><div>' + pinField(id, label + " pin", pin) + "</div>" +
+      '<div><label for="' + id + 'Extra">Extra</label>' + extraSelectHtml(id + "Extra", e, extra) + "</div></div>";
+  };
 
-      $("back").onclick = () => go("setup");
-      $("save").onclick = () => {
-        const patch = {
-          name: $("f_name").value.trim() || undefined,
-          step: toNumber($("f_step").value),
-          notes: $("f_notes").value,
-        };
-        for (const kind of ["start", "work"]) {
-          const typed = toNumber($("f_" + kind).value);
-          if (!withExtras) {
-            patch[kind + key] = typed;
-            continue;
-          }
-          const extra = typed === null ? 0 : Number($("f_" + kind + "Extra").value);
-          patch[kind + key] = typed === null ? null : totalWeight(typed, extra);     // the total is what is used
-          patch[kind + "Extra" + key] = typed === null || extra === 0 ? null : extra; // remembered so the pin shows again
-        }
-        patch["reps" + key] = wholeOrNull($("f_reps").value);
-        patch["sets" + key] = wholeOrNull($("f_sets").value);
-        settings = updateExercise(settings, e.id, patch);
-        save(SETTINGS_KEY, settings);
-        go("setup");
-      };
+  app.innerHTML =
+    '<button class="ghost" id="back" style="margin-top:0">&larr; Back without saving</button>' +
+    timeBar() + "<h2>" + esc(e.name) + "</h2>" +
+    '<div class="muted">' + (hasStack ? "Pins come from this machine's weight stack." : "No weight stack yet. Add one on Machine setup to get a pin list.") + "</div>" +
+    '<div class="panel"><strong>' + esc(sessionLabel(session)) + " for you</strong>" +
+    (withWarmup
+      ? weightField("start", "Warm-up") +
+        numField("f_warmReps", "Warm-up reps", ownWarmupReps(settings, e.id, key), "default " + warmupReps(settings, e.id, key))
+      : '<div class="muted">No warm-up set for this exercise.</div>') +
+    weightField("work", "Working") +
+    '<div class="two"><div>' + numField("f_reps", "Working reps", cfg["reps" + key], "default " + eff["reps" + key]) + "</div>" +
+    "<div>" + numField("f_sets", "Working sets", cfg["sets" + key], "default " + eff["sets" + key]) + "</div></div>" +
+    '<div class="muted">The warm-up is optional. Leave reps or sets blank to use the defaults.</div>' +
+    "</div>" +
+    '<label for="f_notes">Notes (seat height, pad position, etc.)</label>' +
+    '<textarea class="field" id="f_notes" rows="3">' + esc(cfg.notes) + "</textarea>" +
+    '<div class="muted">Notes are the same for Heavy and Volume days.</div>' +
+    '<button class="primary" id="save">Save</button>';
+
+  $("back").onclick = () => go("setup");
+  $("save").onclick = () => {
+    const patch = { notes: $("f_notes").value };
+    for (const kind of withWarmup ? ["start", "work"] : ["work"]) {
+      const typed = toNumber($("f_" + kind).value);
+      if (!withExtras) {
+        patch[kind + key] = typed;
+        continue;
+      }
+      const extra = typed === null ? 0 : Number($("f_" + kind + "Extra").value);
+      patch[kind + key] = typed === null ? null : totalWeight(typed, extra);     // the total is what is used
+      patch[kind + "Extra" + key] = typed === null || extra === 0 ? null : extra; // remembered so the pin shows again
     }
+    if (withWarmup) patch["warmReps" + key] = wholeOrNull($("f_warmReps").value);
+    patch["reps" + key] = wholeOrNull($("f_reps").value);
+    patch["sets" + key] = wholeOrNull($("f_sets").value);
+    settings = updateExercise(settings, e.id, patch);
+    saveSettings();
+    go("setup");
+  };
+}
 
         // ---------- Machine setup: the pin weights on each machine ----------
     // A one-off job done at the gym (it can be repeated for any machine). The saved pin list
@@ -766,13 +791,13 @@ function saveSettings() {
           pins: stackPins,
           stackSpec: { low: spec.low, step: spec.step, top: spec.top, changes: spec.changes.filter((c) => c.at !== null && c.step !== null) },
         });
-        save(SETTINGS_KEY, settings);
+        saveSettings();
         go("stacks");
       };
       if ($("clear")) $("clear").onclick = () => {
         if (confirm("Remove the saved weights for this machine?")) {
           settings = updateExercise(settings, e.id, { pins: null, stackSpec: null });
-          save(SETTINGS_KEY, settings);
+          saveSettings();
           go("stacks");
         }
       };

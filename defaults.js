@@ -27,3 +27,18 @@ export function effectiveConfig(settings, id) {
   for (const f of FIELDS) cfg[f] = cfg[f] ?? g[f];
   return cfg;
 }
+// Reps for the warm-up set: the machine's own value, else the every-machine value, else 10.
+export const DEFAULT_WARMUP_REPS = 10;
+
+// The machine's own warm-up reps for a day type (key is "Heavy" or "Volume"), or null when none is set.
+export function ownWarmupReps(settings, id, key) {
+  const v = ((settings.exercises || {})[id] || {})["warmReps" + key];
+  return Number.isFinite(v) && v > 0 ? v : null;
+}
+
+export function warmupReps(settings, id, key) {
+  const own = ownWarmupReps(settings, id, key);
+  if (own !== null) return own;
+  const g = (settings.defaults || {})["warmReps" + key];
+  return Number.isFinite(g) && g > 0 ? g : DEFAULT_WARMUP_REPS;
+}
