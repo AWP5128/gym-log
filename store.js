@@ -9,16 +9,28 @@
 //               heavy|volume: { warmup: { weight, extra, reps }, working: { weight, extra, reps, sets } } } } } } } }
 // }
 // weight is always the TOTAL; extra is the part of it that came from the extra list.
+//
+// The screens still use an older flat shape (startHeavy, workVolume, repsHeavy ...). The tables below
+// say how each flat name maps to the store, and every conversion in this file is driven by them.
 
 export const STORE_VERSION = 2;
 export const DEFAULT_GYM = "main";
 export const DEFAULT_PERSON = "awp";
-export const DEFAULT_WARMUP_REPS = 10;
 export const MACHINES_FILE_TYPE = "gymlog-machines";
 
-const SHARED_FIELDS = ["name", "step", "pins", "stackSpec"];
+const SHARED = ["name", "step", "pins", "stackSpec"];
 const MODES = [["Heavy", "heavy"], ["Volume", "volume"]];
-const n = (v) => (Number.isFinite(v) ? v : null);
+// [flat name before Heavy/Volume, group in a day type's block, field in that group]
+const FIELDS = [
+  ["start", "warmup", "weight"], ["startExtra", "warmup", "extra"], ["warmReps", "warmup", "reps"],
+  ["work", "working", "weight"], ["workExtra", "working", "extra"], ["reps", "working", "reps"], ["sets", "working", "sets"],
+];
+// [flat name before Heavy/Volume, field in the person's defaults]
+const DEFAULTS = [["reps", "reps"], ["sets", "sets"], ["warmReps", "warmupReps"]];
+
+const isObj = (v) => !!v && typeof v === "object";
+const has = (o) => Object.keys(o).length > 0;
+const num = (v) => (Number.isFinite(v) ? v : null);
 const put = (obj, key, v) => { if (Number.isFinite(v)) obj[key] = v; };
 
 export function emptyStore() {
@@ -28,21 +40,18 @@ export function emptyStore() {
     currentPerson: DEFAULT_PERSON,
     custom: [],
     gyms: { [DEFAULT_GYM]: { name: "My gym", machines: {} } },
-    people: {
-      [DEFAULT_PERSON]: { name: "Awp", defaults: {}, gyms: { [DEFAULT_GYM]: { machines: {} } } },
-    },
+    people: { [DEFAULT_PERSON]: { name: "Awp", defaults: {}, gyms: { [DEFAULT_GYM]: { machines: {} } } } },
   };
 }
 
 // A store read back from storage: tidied up, or null if it is missing or not this version.
 export function cleanStore(raw) {
-  if (!raw || typeof raw !== "object" || raw.version !== STORE_VERSION) return null;
-  const base = emptyStore();
+  if (!isObj(raw) || raw.version !== STORE_VERSION) return null;
   return {
-    ...base,
+    ...emptyStore(),
     ...raw,
-    gyms: raw.gyms && typeof raw.gyms === "object" ? raw.gyms : {},
-    people: raw.people && typeof raw.people === "object" ? raw.people : {},
+    gyms: isObj(raw.gyms) ? raw.gyms : {},
+    people: isObj(raw.people) ? raw.people : {},
     custom: Array.isArray(raw.custom) ? raw.custom : [],
     currentGym: typeof raw.currentGym === "string" ? raw.currentGym : DEFAULT_GYM,
     currentPerson: typeof raw.currentPerson === "string" ? raw.currentPerson : DEFAULT_PERSON,
@@ -56,59 +65,62 @@ export function supportsWarmup(exercise) {
   return exercise.unit === "lb" && exercise.kind !== "time";
 }
 
-// ---------- Shared (machine) part ----------
+// ---------- Flat settings <-> store ----------
+// The shared (machine) part of one flat machine entry.
 function sharedFrom(c) {
   const out = {};
   if (typeof c.name === "string" && c.name.trim()) out.name = c.name.trim();
   if (Number.isFinite(c.step) && c.step > 0) out.step = c.step;
   if (Array.isArray(c.pins) && c.pins.length > 0) out.pins = c.pins.filter(Number.isFinite);
-  if (c.stackSpec && typeof c.stackSpec === "object") out.stackSpec = c.stackSpec;
+  if (isObj(c.stackSpec)) out.stackSpec = c.stackSpec;
   return out;
 }
 
-// ---------- Personal part ----------
+// The personal part of one flat machine entry.
 function personalFrom(c) {
   const out = {};
   if (typeof c.notes === "string" && c.notes !== "") out.notes = c.notes;
-  if (Number.isFinite(c.pbWeight)) out.pbWeight = c.pbWeight;
-  if (Number.isFinite(c.pbReps)) out.pbReps = c.pbReps;
+  put(out, "pbWeight", c.pbWeight);
+  put(out, "pbReps", c.pbReps);
   for (const [Cap, mode] of MODES) {
-    const warmup = { weight: n(c["start" + Cap]), extra: n(c["startExtra" + Cap]), reps: n(c["warmReps" + Cap]) };
-    const working = {
-      weight: n(c["work" + Cap]), extra: n(c["workExtra" + Cap]),
-      reps: n(c["reps" + Cap]), sets: n(c["sets" + Cap]),
-    };
-    const any = [...Object.values(warmup), ...Object.values(working)].some((v) => v !== null);
-    if (any) out[mode] = { warmup, working };
+    const block = { warmup: {}, working: {} };
+    let any = false;
+    for (const [prefix, group, key] of FIELDS) {
+      const v = num(c[prefix + Cap]);
+      block[group][key] = v;
+      any ||= v !== null;
+    }
+    if (any) out[mode] = block;
   }
   return out;
 }
 
-// Splits the settings shape the app uses today into its shared and personal parts.
-function splitLegacy(legacy) {
-  const l = legacy && typeof legacy === "object" ? legacy : {};
+// Splits flat settings into the shared machines, the personal settings and the person's defaults.
+function splitFlat(flat) {
+  const f = isObj(flat) ? flat : {};
   const shared = {};
   const personal = {};
-  for (const [id, c] of Object.entries(l.exercises || {})) {
-    if (!c || typeof c !== "object") continue;
+  for (const [id, c] of Object.entries(f.exercises || {})) {
+    if (!isObj(c)) continue;
     const s = sharedFrom(c);
     const p = personalFrom(c);
-    if (Object.keys(s).length) shared[id] = s;
-    if (Object.keys(p).length) personal[id] = p;
+    if (has(s)) shared[id] = s;
+    if (has(p)) personal[id] = p;
   }
-  const d = l.defaults || {};
+  const d = f.defaults || {};
   const defaults = {};
   for (const [Cap, mode] of MODES) {
-    const o = { reps: n(d["reps" + Cap]), sets: n(d["sets" + Cap]), warmupReps: n(d["warmReps" + Cap]) };
+    const o = {};
+    for (const [prefix, key] of DEFAULTS) o[key] = num(d[prefix + Cap]);
     if (Object.values(o).some((v) => v !== null)) defaults[mode] = o;
   }
-  return { shared, personal, defaults, custom: Array.isArray(l.custom) ? l.custom : [] };
+  return { shared, personal, defaults, custom: Array.isArray(f.custom) ? f.custom : [] };
 }
 
 // Builds a first store from the old gymlog.settings data.
 export function migrateLegacy(legacy, opts = {}) {
   const { gymId = DEFAULT_GYM, personId = DEFAULT_PERSON, gymName = "My gym", personName = "Awp" } = opts;
-  const s = splitLegacy(legacy);
+  const s = splitFlat(legacy);
   return {
     ...emptyStore(),
     currentGym: gymId,
@@ -119,55 +131,39 @@ export function migrateLegacy(legacy, opts = {}) {
   };
 }
 
-// The settings shape the app uses today, for one person at one gym.
+// The flat settings the screens use, for one person at one gym.
 export function toLegacySettings(store, personId, gymId) {
-  const gym = (store.gyms || {})[gymId] || {};
-  const person = (store.people || {})[personId] || {};
-  const mine = ((person.gyms || {})[gymId] || {}).machines || {};
+  const person = store.people?.[personId] || {};
   const exercises = {};
-  const entry = (id) => (exercises[id] = exercises[id] || {});
+  const entry = (id) => (exercises[id] ??= {});
 
-  for (const [id, m] of Object.entries(gym.machines || {})) {
+  for (const [id, m] of Object.entries(store.gyms?.[gymId]?.machines || {})) {
     const out = entry(id);
-    for (const f of SHARED_FIELDS) if (m[f] !== undefined && m[f] !== null) out[f] = m[f];
+    for (const f of SHARED) if (m[f] != null) out[f] = m[f];
   }
-  for (const [id, p] of Object.entries(mine)) {
+  for (const [id, p] of Object.entries(person.gyms?.[gymId]?.machines || {})) {
     const out = entry(id);
     if (p.notes) out.notes = p.notes;
     put(out, "pbWeight", p.pbWeight);
     put(out, "pbReps", p.pbReps);
     for (const [Cap, mode] of MODES) {
-      const b = p[mode];
-      if (!b) continue;
-      const w = b.warmup || {};
-      const k = b.working || {};
-      put(out, "start" + Cap, w.weight);
-      put(out, "startExtra" + Cap, w.extra);
-      put(out, "warmReps" + Cap, w.reps);
-      put(out, "work" + Cap, k.weight);
-      put(out, "workExtra" + Cap, k.extra);
-      put(out, "reps" + Cap, k.reps);
-      put(out, "sets" + Cap, k.sets);
+      if (!p[mode]) continue;
+      for (const [prefix, group, key] of FIELDS) put(out, prefix + Cap, p[mode][group]?.[key]);
     }
   }
   const defaults = {};
-  const d = person.defaults || {};
   for (const [Cap, mode] of MODES) {
-    const o = d[mode] || {};
-    put(defaults, "reps" + Cap, o.reps);
-    put(defaults, "sets" + Cap, o.sets);
-    put(defaults, "warmReps" + Cap, o.warmupReps);
+    for (const [prefix, key] of DEFAULTS) put(defaults, prefix + Cap, person.defaults?.[mode]?.[key]);
   }
   return { exercises, custom: store.custom || [], defaults };
 }
 
-// Returns a new store with the app's settings saved back into it for one person at one gym.
+// Returns a new store with the flat settings saved back into it for one person at one gym.
 // Other gyms and other people are left exactly as they were.
-export function applyLegacySettings(store, personId, gymId, legacy) {
-  const s = splitLegacy(legacy);
-  const gym = (store.gyms || {})[gymId] || { name: "My gym" };
-  const person = (store.people || {})[personId] || { name: personId, gyms: {} };
-  const personGym = (person.gyms || {})[gymId] || {};
+export function applyLegacySettings(store, personId, gymId, flat) {
+  const s = splitFlat(flat);
+  const gym = store.gyms?.[gymId] || { name: "My gym" };
+  const person = store.people?.[personId] || { name: personId, gyms: {} };
   return {
     ...store,
     custom: s.custom,
@@ -177,7 +173,7 @@ export function applyLegacySettings(store, personId, gymId, legacy) {
       [personId]: {
         ...person,
         defaults: s.defaults,
-        gyms: { ...(person.gyms || {}), [gymId]: { ...personGym, machines: s.personal } },
+        gyms: { ...person.gyms, [gymId]: { ...person.gyms?.[gymId], machines: s.personal } },
       },
     },
   };
@@ -186,12 +182,8 @@ export function applyLegacySettings(store, personId, gymId, legacy) {
 // ---------- Sharing the machine list ----------
 // Only the shared fields: no weights, reps or notes.
 export function exportMachines(store, gymId) {
-  const gym = (store.gyms || {})[gymId] || { name: "", machines: {} };
-  return JSON.stringify(
-    { type: MACHINES_FILE_TYPE, version: 1, gymName: gym.name, machines: gym.machines || {} },
-    null,
-    2
-  );
+  const gym = store.gyms?.[gymId] || { name: "", machines: {} };
+  return JSON.stringify({ type: MACHINES_FILE_TYPE, version: 1, gymName: gym.name, machines: gym.machines || {} }, null, 2);
 }
 
 // Adds the machines from an exported file to a gym. Personal settings are not touched.
@@ -200,19 +192,15 @@ export function importMachines(store, gymId, text) {
   let data;
   try { data = JSON.parse(text); }
   catch { return { store, count: 0, error: "That is not a valid file." }; }
-  if (!data || data.type !== MACHINES_FILE_TYPE || !data.machines || typeof data.machines !== "object") {
+  if (data?.type !== MACHINES_FILE_TYPE || !isObj(data.machines)) {
     return { store, count: 0, error: "That is not a Gym Log machines file." };
   }
   const incoming = {};
-  let count = 0;
   for (const [id, c] of Object.entries(data.machines)) {
     const s = sharedFrom(c || {});
-    if (Object.keys(s).length) { incoming[id] = s; count++; }
+    if (has(s)) incoming[id] = s;
   }
-  const gym = (store.gyms || {})[gymId] || { name: data.gymName || "My gym", machines: {} };
-  const next = {
-    ...store,
-    gyms: { ...store.gyms, [gymId]: { ...gym, machines: { ...(gym.machines || {}), ...incoming } } },
-  };
-  return { store: next, count, error: "" };
+  const gym = store.gyms?.[gymId] || { name: data.gymName || "My gym", machines: {} };
+  const machines = { ...gym.machines, ...incoming };
+  return { store: { ...store, gyms: { ...store.gyms, [gymId]: { ...gym, machines } } }, count: Object.keys(incoming).length, error: "" };
 }
