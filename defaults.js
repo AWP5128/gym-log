@@ -3,16 +3,17 @@ import { configFor } from "./settings.js";
 // Reps and sets used for every machine that has none of its own.
 // Used until you change them on the Set up screen.
 export const BUILT_IN_DEFAULTS = { repsHeavy: 5, setsHeavy: 4, repsVolume: 10, setsVolume: 4 };
-const FIELDS = Object.keys(BUILT_IN_DEFAULTS);
+export const DEFAULT_WARMUP_REPS = 10;
+
+// A saved number that is above zero, otherwise null.
+const positive = (v) => (Number.isFinite(v) && v > 0 ? v : null);
 
 // The reps and sets in force for every machine, from your saved choices or the built-in ones.
 export function globalDefaults(settings) {
   const g = settings.defaults || {};
-  const out = {};
-  for (const f of FIELDS) {
-    out[f] = Number.isFinite(g[f]) && g[f] > 0 ? g[f] : BUILT_IN_DEFAULTS[f];
-  }
-  return out;
+  return Object.fromEntries(
+    Object.entries(BUILT_IN_DEFAULTS).map(([f, builtIn]) => [f, positive(g[f]) ?? builtIn])
+  );
 }
 
 export function updateGlobalDefaults(settings, patch) {
@@ -24,21 +25,16 @@ export function updateGlobalDefaults(settings, patch) {
 export function effectiveConfig(settings, id) {
   const cfg = configFor(settings, id);
   const g = globalDefaults(settings);
-  for (const f of FIELDS) cfg[f] = cfg[f] ?? g[f];
+  for (const f in g) cfg[f] ??= g[f];
   return cfg;
 }
-// Reps for the warm-up set: the machine's own value, else the every-machine value, else 10.
-export const DEFAULT_WARMUP_REPS = 10;
 
 // The machine's own warm-up reps for a day type (key is "Heavy" or "Volume"), or null when none is set.
-export function ownWarmupReps(settings, id, key) {
-  const v = ((settings.exercises || {})[id] || {})["warmReps" + key];
-  return Number.isFinite(v) && v > 0 ? v : null;
-}
+export const ownWarmupReps = (settings, id, key) =>
+  positive(((settings.exercises || {})[id] || {})["warmReps" + key]);
 
-export function warmupReps(settings, id, key) {
-  const own = ownWarmupReps(settings, id, key);
-  if (own !== null) return own;
-  const g = (settings.defaults || {})["warmReps" + key];
-  return Number.isFinite(g) && g > 0 ? g : DEFAULT_WARMUP_REPS;
-}
+// Reps for the warm-up set: the machine's own value, else the every-machine value, else 10.
+export const warmupReps = (settings, id, key) =>
+  ownWarmupReps(settings, id, key) ??
+  positive((settings.defaults || {})["warmReps" + key]) ??
+  DEFAULT_WARMUP_REPS;

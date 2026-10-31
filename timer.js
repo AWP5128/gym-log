@@ -6,31 +6,24 @@
 // machine's clock was last started (null when it is paused).
 // Elapsed times are worked out from the clock, so they stay right when the phone sleeps.
 
+const isNum = Number.isFinite;
+
 // 75 seconds gives "1:15". Minutes keep counting past 59, so 75 minutes gives "75:00".
 export function formatTime(ms) {
   const total = Math.max(0, Math.floor(ms / 1000));
-  const m = Math.floor(total / 60);
-  const s = total % 60;
-  return m + ":" + String(s).padStart(2, "0");
+  return Math.floor(total / 60) + ":" + String(total % 60).padStart(2, "0");
 }
 
-export function startWorkout(now = Date.now()) {
-  return { start: now, end: null, machines: {} };
-}
+export const startWorkout = (now = Date.now()) => ({ start: now, end: null, machines: {} });
 
-export function isRunning(workout) {
-  return !!workout && workout.end === null;
-}
+export const isRunning = (workout) => !!workout && workout.end === null;
 
-export function workoutElapsed(workout, now = Date.now()) {
-  if (!workout) return 0;
-  return (workout.end ?? now) - workout.start;
-}
+export const workoutElapsed = (workout, now = Date.now()) =>
+  workout ? (workout.end ?? now) - workout.start : 0;
 
 export function machineElapsed(workout, exerciseId, now = Date.now()) {
   const m = workout && workout.machines[exerciseId];
-  if (!m) return 0;
-  return m.ms + (m.since !== null ? now - m.since : 0);
+  return m ? m.ms + (m.since !== null ? now - m.since : 0) : 0;
 }
 
 // Returns a new workout in which exactly the machines in ids are running.
@@ -38,9 +31,7 @@ export function machineElapsed(workout, exerciseId, now = Date.now()) {
 export function runMachines(workout, ids, now = Date.now()) {
   const machines = {};
   for (const [id, m] of Object.entries(workout.machines)) {
-    machines[id] = m.since !== null && !ids.includes(id)
-      ? { ms: m.ms + (now - m.since), since: null }
-      : { ...m };
+    machines[id] = m.since !== null && !ids.includes(id) ? { ms: m.ms + (now - m.since), since: null } : { ...m };
   }
   for (const id of ids) {
     const m = machines[id] || { ms: 0, since: null };
@@ -50,22 +41,19 @@ export function runMachines(workout, ids, now = Date.now()) {
 }
 
 // Stops every machine and marks the workout as finished.
-export function endWorkout(workout, now = Date.now()) {
-  return { ...runMachines(workout, [], now), end: now };
-}
+export const endWorkout = (workout, now = Date.now()) => ({ ...runMachines(workout, [], now), end: now });
 
 // A workout read back from storage: tidied up, or null if it is missing, damaged,
 // or from an earlier day (so a forgotten workout does not carry over).
 export function cleanWorkout(raw, now = Date.now()) {
-  if (!raw || typeof raw !== "object" || !Number.isFinite(raw.start)) return null;
+  if (!raw || typeof raw !== "object" || !isNum(raw.start)) return null;
   if (new Date(raw.start).toDateString() !== new Date(now).toDateString()) return null;
-  const machines = {};
   const stored = raw.machines && typeof raw.machines === "object" ? raw.machines : {};
-  for (const [id, m] of Object.entries(stored)) {
-    machines[id] = {
-      ms: Number.isFinite(m?.ms) && m.ms > 0 ? m.ms : 0,
-      since: Number.isFinite(m?.since) ? m.since : null,
-    };
-  }
-  return { start: raw.start, end: Number.isFinite(raw.end) ? raw.end : null, machines };
+  const machines = Object.fromEntries(
+    Object.entries(stored).map(([id, m]) => [
+      id,
+      { ms: isNum(m?.ms) && m.ms > 0 ? m.ms : 0, since: isNum(m?.since) ? m.since : null },
+    ])
+  );
+  return { start: raw.start, end: isNum(raw.end) ? raw.end : null, machines };
 }

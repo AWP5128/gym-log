@@ -1,10 +1,13 @@
 // Settings are stored per exercise. Blank fields are null.
-// Heavy/Volume fields: startHeavy, workHeavy, repsHeavy, startVolume, workVolume, repsVolume.
+// Each day type (Heavy, Volume) has start, work, reps and sets fields, e.g. startHeavy, workVolume.
+const DAY_TYPES = ["Heavy", "Volume"];
 export const CONFIG_FIELDS = [
-  "startHeavy", "workHeavy", "repsHeavy", "setsHeavy",
-  "startVolume", "workVolume", "repsVolume", "setsVolume",
+  ...DAY_TYPES.flatMap((d) => ["start", "work", "reps", "sets"].map((f) => f + d)),
   "pbWeight", "pbReps",
 ];
+
+// What is saved for one exercise (nothing yet gives an empty object).
+const saved = (settings, id) => (settings.exercises || {})[id] || {};
 
 export function emptySettings() {
   return { exercises: {}, custom: [], defaults: {} };
@@ -18,41 +21,37 @@ export function toNumber(text) {
   return Number.isFinite(n) && n >= 0 ? n : null;
 }
 
-// Built-in exercises plus ones you added, with any name or step you changed.
-// Built-in exercises plus ones you added, with any name, step or pin list you changed.
+// Built-in exercises plus ones you added, with any name, step or stack you changed.
 export function allExercises(builtIn, settings) {
-  const overrides = settings.exercises || {};
   return [...builtIn, ...(settings.custom || [])].map((e) => {
-    const o = overrides[e.id] || {};
-    const out = {
+    const o = saved(settings, e.id);
+    return {
       ...e,
       name: o.name || e.name,
       step: o.step > 0 ? o.step : e.step,
+      ...(Array.isArray(o.pins) && o.pins.length > 0 ? { pins: o.pins } : {}),
     };
-    if (Array.isArray(o.pins) && o.pins.length > 0) out.pins = o.pins;
-    return out;
   });
 }
 
 // The saved defaults for one exercise, with null for anything not set.
 export function configFor(settings, id) {
-  const c = (settings.exercises || {})[id] || {};
+  const c = saved(settings, id);
   const out = { notes: typeof c.notes === "string" ? c.notes : "" };
   for (const f of CONFIG_FIELDS) out[f] = Number.isFinite(c[f]) ? c[f] : null;
   return out;
 }
 
-// A personal best typed in on the Settings screen (e.g. from before using the app).
+// A personal best typed in by hand (e.g. from before using the app).
 export function manualPb(cfg) {
   if (cfg.pbWeight === null) return null;
   return { weight: cfg.pbWeight, reps: cfg.pbReps ?? 0 };
 }
 
 export function updateExercise(settings, id, patch) {
-  const current = (settings.exercises || {})[id] || {};
   return {
     ...settings,
-    exercises: { ...(settings.exercises || {}), [id]: { ...current, ...patch } },
+    exercises: { ...(settings.exercises || {}), [id]: { ...saved(settings, id), ...patch } },
   };
 }
 
