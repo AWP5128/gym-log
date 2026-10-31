@@ -5,22 +5,23 @@ import {
   updateExercise, addCustomExercise, removeCustomExercise,
 } from "./settings.js";
 
+const LEG_PRESS = "leg-press";
 const builtIn = [
-  { id: "leg-press", name: "Leg Press Machine", group: "legs", common: true, unit: "lb", step: 10 },
+  { id: LEG_PRESS, name: "Leg Press Machine", group: "legs", common: true, unit: "lb", step: 10 },
 ];
 
+// Shortcuts: settings after saving a patch for the leg press, and its saved config.
+const withLegPress = (patch, s = emptySettings()) => updateExercise(s, LEG_PRESS, patch);
+const cfgOf = (s) => configFor(s, LEG_PRESS);
+const addCustom = (s, name, unit = "lb", group = "abs") => addCustomExercise(s, { name, group, unit, step: 10 });
+
 test("toNumber handles blanks, commas and junk", () => {
-  assert.equal(toNumber(""), null);
-  assert.equal(toNumber("  "), null);
-  assert.equal(toNumber("abc"), null);
-  assert.equal(toNumber("-5"), null);
-  assert.equal(toNumber("100"), 100);
-  assert.equal(toNumber("2,5"), 2.5);
-  assert.equal(toNumber("0"), 0);
+  const expected = [["", null], ["  ", null], ["abc", null], ["-5", null], ["100", 100], ["2,5", 2.5], ["0", 0]];
+  for (const [text, number] of expected) assert.equal(toNumber(text), number, JSON.stringify(text));
 });
 
 test("configFor returns nulls and empty notes when nothing is saved", () => {
-  const cfg = configFor(emptySettings(), "leg-press");
+  const cfg = cfgOf(emptySettings());
   assert.equal(cfg.startHeavy, null);
   assert.equal(cfg.workVolume, null);
   assert.equal(cfg.pbWeight, null);
@@ -29,43 +30,37 @@ test("configFor returns nulls and empty notes when nothing is saved", () => {
 
 test("updateExercise saves values and keeps the old settings object unchanged", () => {
   const before = emptySettings();
-  const after = updateExercise(before, "leg-press", { workHeavy: 120, notes: "Seat 4" });
-  assert.equal(configFor(after, "leg-press").workHeavy, 120);
-  assert.equal(configFor(after, "leg-press").notes, "Seat 4");
-  assert.equal(configFor(before, "leg-press").workHeavy, null);
+  const after = withLegPress({ workHeavy: 120, notes: "Seat 4" }, before);
+  assert.equal(cfgOf(after).workHeavy, 120);
+  assert.equal(cfgOf(after).notes, "Seat 4");
+  assert.equal(cfgOf(before).workHeavy, null);
 });
 
 test("updateExercise merges with earlier values", () => {
-  let s = updateExercise(emptySettings(), "leg-press", { workHeavy: 120 });
-  s = updateExercise(s, "leg-press", { repsHeavy: 5 });
-  const cfg = configFor(s, "leg-press");
+  const cfg = cfgOf(withLegPress({ repsHeavy: 5 }, withLegPress({ workHeavy: 120 })));
   assert.equal(cfg.workHeavy, 120);
   assert.equal(cfg.repsHeavy, 5);
 });
 
 test("allExercises applies a changed name and step", () => {
-  const s = updateExercise(emptySettings(), "leg-press", { name: "Leg Press (Technogym)", step: 15 });
-  const [e] = allExercises(builtIn, s);
+  const [e] = allExercises(builtIn, withLegPress({ name: "Leg Press (Technogym)", step: 15 }));
   assert.equal(e.name, "Leg Press (Technogym)");
   assert.equal(e.step, 15);
 });
 
 test("allExercises ignores a blank name or step", () => {
-  const s = updateExercise(emptySettings(), "leg-press", { name: undefined, step: null });
-  const [e] = allExercises(builtIn, s);
+  const [e] = allExercises(builtIn, withLegPress({ name: undefined, step: null }));
   assert.equal(e.name, "Leg Press Machine");
   assert.equal(e.step, 10);
 });
 
 test("manualPb is null until a weight is typed", () => {
-  assert.equal(manualPb(configFor(emptySettings(), "leg-press")), null);
-  const s = updateExercise(emptySettings(), "leg-press", { pbWeight: 150, pbReps: 3 });
-  assert.deepEqual(manualPb(configFor(s, "leg-press")), { weight: 150, reps: 3 });
+  assert.equal(manualPb(cfgOf(emptySettings())), null);
+  assert.deepEqual(manualPb(cfgOf(withLegPress({ pbWeight: 150, pbReps: 3 }))), { weight: 150, reps: 3 });
 });
 
 test("addCustomExercise adds a weight exercise", () => {
-  const s = addCustomExercise(emptySettings(), { name: "Ab Crunch Machine", group: "abs", unit: "lb", step: 10 });
-  const list = allExercises(builtIn, s);
+  const list = allExercises(builtIn, addCustom(emptySettings(), "Ab Crunch Machine"));
   const added = list.find((e) => e.name === "Ab Crunch Machine");
   assert.equal(added.group, "abs");
   assert.equal(added.kind, "weights");
@@ -74,26 +69,22 @@ test("addCustomExercise adds a weight exercise", () => {
 });
 
 test("addCustomExercise adds a timed exercise measured in minutes", () => {
-  const s = addCustomExercise(emptySettings(), { name: "Treadmill", group: "cardio", unit: "min" });
-  const added = s.custom[0];
+  const added = addCustom(emptySettings(), "Treadmill", "min", "cardio").custom[0];
   assert.equal(added.kind, "time");
   assert.equal(added.unit, "min");
 });
 
 test("addCustomExercise gives duplicate names different ids", () => {
-  let s = addCustomExercise(emptySettings(), { name: "Plank", group: "abs", unit: "min" });
-  s = addCustomExercise(s, { name: "Plank", group: "abs", unit: "min" });
+  const s = addCustom(addCustom(emptySettings(), "Plank", "min"), "Plank", "min");
   assert.notEqual(s.custom[0].id, s.custom[1].id);
 });
 
 test("addCustomExercise ignores a blank name", () => {
-  const s = addCustomExercise(emptySettings(), { name: "   ", group: "abs", unit: "lb" });
-  assert.equal(s.custom.length, 0);
+  assert.equal(addCustom(emptySettings(), "   ").custom.length, 0);
 });
 
 test("removeCustomExercise removes only that exercise", () => {
-  let s = addCustomExercise(emptySettings(), { name: "A", group: "abs", unit: "lb" });
-  s = addCustomExercise(s, { name: "B", group: "abs", unit: "lb" });
+  let s = addCustom(addCustom(emptySettings(), "A"), "B");
   s = removeCustomExercise(s, s.custom[0].id);
   assert.deepEqual(s.custom.map((e) => e.name), ["B"]);
 });

@@ -11,7 +11,8 @@ import {
   formatTime, startWorkout, isRunning, workoutElapsed, machineElapsed,
   runMachines, endWorkout, cleanWorkout,
 } from "./timer.js";
-import { hasExtras, extraOptions, totalWeight, splitFor } from "./extras.js";
+// line 14 — add savedExtra to the import
+import { hasExtras, extraOptions, totalWeight, splitFor, savedExtra } from "./extras.js";
 import { STEP_CHOICES, buildPins, addPin, removePin, describePins, hasPins } from "./stacks.js";
 import {
   cleanStore, migrateLegacy, toLegacySettings, applyLegacySettings, supportsWarmup, exportMachines, importMachines,
@@ -487,11 +488,12 @@ function renderEdit() {
   const key = modeKey();
   const withExtras = hasExtras(e);
   const withWarmup = supportsWarmup(e);
-  const hasStack = Array.isArray(e.pins) && e.pins.length > 0;
-  const savedExtra = (kind) => {
-    const x = settings.exercises?.[e.id]?.[kind + "Extra" + key];
-    return Number.isFinite(x) ? x : 0;
-  };
+// replace the old hasStack and savedExtra block (about lines 490-494)
+  const hasStack = hasPins(e);
+  const extraFor = (kind) => {
+  const x = savedExtra(settings, e.id, kind, key);
+  return Number.isFinite(x) ? x : 0;
+};
 
   // A stack weight: chosen from the machine's stack when it has one, otherwise typed.
   const stackField = (id, label, value) => hasStack
@@ -503,7 +505,8 @@ function renderEdit() {
     const total = cfg[kind + key];
     const id = "f_" + kind;
     if (!withExtras) return stackField(id, label + " weight", total);
-    const extra = total === null ? 0 : savedExtra(kind);
+// and in weightField, change the one call (about line 506)
+    const extra = total === null ? 0 : extraFor(kind);
     const stack = total === null ? null : totalWeight(total, -extra);
     return cols(stackField(id, label + " weight", stack), field(id + "Extra", "Extra", extraSelectHtml(id + "Extra", e, extra)));
   };

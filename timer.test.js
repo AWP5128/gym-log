@@ -8,12 +8,15 @@ import {
 const T0 = new Date(2026, 9, 27, 18, 0, 0).getTime();   // 27 Oct 2026, 18:00:00
 const sec = (n) => n * 1000;
 
+// A workout started at T0 where each [ids, seconds] step runs those machines at that time.
+const workoutWith = (...steps) =>
+  steps.reduce((w, [ids, s]) => runMachines(w, ids, T0 + sec(s)), startWorkout(T0));
+// Seconds a machine has counted at a given second.
+const counted = (w, id, s) => machineElapsed(w, id, T0 + sec(s)) / 1000;
+
 test("formatTime shows minutes and seconds", () => {
-  assert.equal(formatTime(0), "0:00");
-  assert.equal(formatTime(sec(5)), "0:05");
-  assert.equal(formatTime(sec(75)), "1:15");
-  assert.equal(formatTime(sec(75 * 60 + 3)), "75:03");
-  assert.equal(formatTime(-500), "0:00");
+  const expected = [[0, "0:00"], [sec(5), "0:05"], [sec(75), "1:15"], [sec(75 * 60 + 3), "75:03"], [-500, "0:00"]];
+  for (const [ms, text] of expected) assert.equal(formatTime(ms), text);
 });
 
 test("a new workout is running and counts from its start", () => {
@@ -24,29 +27,24 @@ test("a new workout is running and counts from its start", () => {
 });
 
 test("a machine only counts while it is running", () => {
-  let w = startWorkout(T0);
-  w = runMachines(w, ["leg-press"], T0 + sec(10));
-  assert.equal(machineElapsed(w, "leg-press", T0 + sec(40)), sec(30));
+  let w = workoutWith([["leg-press"], 10]);
+  assert.equal(counted(w, "leg-press", 40), 30);
   w = runMachines(w, [], T0 + sec(40));                      // leave the machine
-  assert.equal(machineElapsed(w, "leg-press", T0 + sec(100)), sec(30));
+  assert.equal(counted(w, "leg-press", 100), 30);
   w = runMachines(w, ["leg-press"], T0 + sec(100));          // come back
-  assert.equal(machineElapsed(w, "leg-press", T0 + sec(130)), sec(60));
-  assert.equal(machineElapsed(w, "unknown", T0 + sec(130)), 0);
+  assert.equal(counted(w, "leg-press", 130), 60);
+  assert.equal(counted(w, "unknown", 130), 0);
 });
 
 test("a superset runs both machines and finishing one leaves the other going", () => {
-  let w = startWorkout(T0);
-  w = runMachines(w, ["a", "b"], T0);
-  w = runMachines(w, ["b"], T0 + sec(60));
-  assert.equal(machineElapsed(w, "a", T0 + sec(120)), sec(60));
-  assert.equal(machineElapsed(w, "b", T0 + sec(120)), sec(120));
+  const w = workoutWith([["a", "b"], 0], [["b"], 60]);
+  assert.equal(counted(w, "a", 120), 60);
+  assert.equal(counted(w, "b", 120), 120);
 });
 
 test("running the same machine again does not restart its clock", () => {
-  let w = startWorkout(T0);
-  w = runMachines(w, ["a"], T0);
-  w = runMachines(w, ["a"], T0 + sec(20));
-  assert.equal(machineElapsed(w, "a", T0 + sec(50)), sec(50));
+  const w = workoutWith([["a"], 0], [["a"], 20]);
+  assert.equal(counted(w, "a", 50), 50);
 });
 
 test("runMachines does not change the workout it was given", () => {
@@ -56,12 +54,10 @@ test("runMachines does not change the workout it was given", () => {
 });
 
 test("ending a workout freezes the total and stops the machines", () => {
-  let w = startWorkout(T0);
-  w = runMachines(w, ["a"], T0 + sec(10));
-  w = endWorkout(w, T0 + sec(70));
+  const w = endWorkout(workoutWith([["a"], 10]), T0 + sec(70));
   assert.equal(isRunning(w), false);
   assert.equal(workoutElapsed(w, T0 + sec(500)), sec(70));
-  assert.equal(machineElapsed(w, "a", T0 + sec(500)), sec(60));
+  assert.equal(counted(w, "a", 500), 60);
 });
 
 test("cleanWorkout keeps a good workout from today", () => {
@@ -70,10 +66,11 @@ test("cleanWorkout keeps a good workout from today", () => {
 });
 
 test("cleanWorkout drops missing, damaged or old workouts", () => {
+  const nextDay = T0 + 24 * 3600 * 1000;
   assert.equal(cleanWorkout(null, T0), null);
   assert.equal(cleanWorkout("nonsense", T0), null);
   assert.equal(cleanWorkout({ start: "x" }, T0), null);
-  assert.equal(cleanWorkout({ start: T0, end: null, machines: {} }, T0 + 24 * 3600 * 1000), null);
+  assert.equal(cleanWorkout({ start: T0, end: null, machines: {} }, nextDay), null);
 });
 
 test("cleanWorkout repairs damaged machine entries", () => {

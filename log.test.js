@@ -13,6 +13,11 @@ const YESTERDAY = new Date(2026, 9, 25, 15, 0);
 const legPress = { id: "leg-press", unit: "lb", step: 10 };
 const mk = (weight, reps, when = TODAY_9AM) =>
   makeSet({ exerciseId: "leg-press", weight, reps, now: when });
+const chestSet = () => makeSet({ exerciseId: "chest-press", weight: 60, reps: 8, now: TODAY_9AM });
+
+// What defaultsFor suggests for the leg press today.
+const suggest = (sets, cfg, mode = "heavy") => defaultsFor(legPress, sets, cfg, mode, NOW);
+const lbOptions = (step, current) => weightOptions({ unit: "lb", step }, current);
 
 // ---- makeSet / formatting ----
 
@@ -37,12 +42,7 @@ test("formatSet shows weight x reps or minutes", () => {
 // ---- todaysSets ----
 
 test("todaysSets only returns today's sets for that exercise", () => {
-  const sets = [
-    mk(100, 5, YESTERDAY),
-    mk(110, 5),
-    makeSet({ exerciseId: "chest-press", weight: 60, reps: 8, now: TODAY_9AM }),
-  ];
-  const result = todaysSets(sets, "leg-press", NOW);
+  const result = todaysSets([mk(100, 5, YESTERDAY), mk(110, 5), chestSet()], "leg-press", NOW);
   assert.equal(result.length, 1);
   assert.equal(result[0].weight, 110);
 });
@@ -50,44 +50,39 @@ test("todaysSets only returns today's sets for that exercise", () => {
 // ---- defaultsFor ----
 
 test("defaultsFor with nothing saved uses one step and 5 reps (heavy)", () => {
-  assert.deepEqual(defaultsFor(legPress, [], {}, "heavy", NOW), { weight: 10, reps: 5 });
+  assert.deepEqual(suggest([], {}), { weight: 10, reps: 5 });
 });
 
 test("defaultsFor uses 10 reps for a volume day", () => {
-  assert.deepEqual(defaultsFor(legPress, [], {}, "volume", NOW), { weight: 10, reps: 10 });
+  assert.deepEqual(suggest([], {}, "volume"), { weight: 10, reps: 10 });
 });
 
 test("defaultsFor uses saved working weight and reps for the day type", () => {
   const cfg = { workHeavy: 120, repsHeavy: 4, workVolume: 80, repsVolume: 12 };
-  assert.deepEqual(defaultsFor(legPress, [], cfg, "heavy", NOW), { weight: 120, reps: 4 });
-  assert.deepEqual(defaultsFor(legPress, [], cfg, "volume", NOW), { weight: 80, reps: 12 });
+  assert.deepEqual(suggest([], cfg), { weight: 120, reps: 4 });
+  assert.deepEqual(suggest([], cfg, "volume"), { weight: 80, reps: 12 });
 });
 
 test("defaultsFor uses the start weight for the first set of the day", () => {
-  const cfg = { startHeavy: 60, workHeavy: 120 };
-  assert.deepEqual(defaultsFor(legPress, [], cfg, "heavy", NOW), { weight: 60, reps: 5 });
+  assert.deepEqual(suggest([], { startHeavy: 60, workHeavy: 120 }), { weight: 60, reps: 5 });
 });
 
 test("defaultsFor moves from the warm-up to the working weight after one set", () => {
   const cfg = { startHeavy: 60, workHeavy: 120, repsHeavy: 5 };
-  const sets = [mk(60, 8)];
-  assert.deepEqual(defaultsFor(legPress, sets, cfg, "heavy", NOW), { weight: 120, reps: 5 });
+  assert.deepEqual(suggest([mk(60, 8)], cfg), { weight: 120, reps: 5 });
 });
 
 test("defaultsFor copies the latest set once past the warm-up", () => {
   const cfg = { startHeavy: 60, workHeavy: 120 };
-  const sets = [mk(60, 8), mk(130, 4)];
-  assert.deepEqual(defaultsFor(legPress, sets, cfg, "heavy", NOW), { weight: 130, reps: 4 });
+  assert.deepEqual(suggest([mk(60, 8), mk(130, 4)], cfg), { weight: 130, reps: 4 });
 });
 
 test("defaultsFor falls back to the last weight ever logged when nothing is saved", () => {
-  const sets = [mk(100, 5, YESTERDAY), mk(110, 4, YESTERDAY)];
-  assert.deepEqual(defaultsFor(legPress, sets, {}, "heavy", NOW), { weight: 110, reps: 5 });
+  assert.deepEqual(suggest([mk(100, 5, YESTERDAY), mk(110, 4, YESTERDAY)], {}), { weight: 110, reps: 5 });
 });
 
 test("defaultsFor ignores sets of other exercises", () => {
-  const sets = [makeSet({ exerciseId: "chest-press", weight: 60, reps: 8, now: TODAY_9AM })];
-  assert.deepEqual(defaultsFor(legPress, sets, {}, "heavy", NOW), { weight: 10, reps: 5 });
+  assert.deepEqual(suggest([chestSet()], {}), { weight: 10, reps: 5 });
 });
 
 test("minutesDefault is 10 at first, then the last time used", () => {
@@ -100,19 +95,18 @@ test("minutesDefault is 10 at first, then the last time used", () => {
 // ---- weightOptions ----
 
 test("weightOptions for a lb machine runs from one step to 500", () => {
-  const options = weightOptions({ unit: "lb", step: 10 });
+  const options = lbOptions(10);
   assert.equal(options[0], 10);
-  assert.equal(options[options.length - 1], 500);
+  assert.equal(options.at(-1), 500);
   assert.equal(options.length, 50);
 });
 
 test("weightOptions uses a 15 lb step when set", () => {
-  const options = weightOptions({ unit: "lb", step: 15 });
-  assert.deepEqual(options.slice(0, 3), [15, 30, 45]);
+  assert.deepEqual(lbOptions(15).slice(0, 3), [15, 30, 45]);
 });
 
 test("weightOptions includes an odd current weight, in order", () => {
-  const options = weightOptions({ unit: "lb", step: 10 }, 25);
+  const options = lbOptions(10, 25);
   assert.equal(options[options.indexOf(25) - 1], 20);
   assert.equal(options[options.indexOf(25) + 1], 30);
 });
@@ -120,28 +114,25 @@ test("weightOptions includes an odd current weight, in order", () => {
 test("weightOptions respects min of 0 and kg steps", () => {
   const options = weightOptions({ unit: "kg", step: 2.5, min: 0 });
   assert.deepEqual(options.slice(0, 3), [0, 2.5, 5]);
-  assert.equal(options[options.length - 1], 200);
+  assert.equal(options.at(-1), 200);
 });
 
 // ---- removeLastSet ----
 
 test("removeLastSet removes only the latest set of that exercise", () => {
-  const sets = [
-    { exerciseId: "a", weight: 1, reps: 1, time: "t1" },
-    { exerciseId: "b", weight: 2, reps: 2, time: "t2" },
-    { exerciseId: "a", weight: 3, reps: 3, time: "t3" },
-  ];
+  const sets = [["a", 1], ["b", 2], ["a", 3]].map(([exerciseId, n]) => ({ exerciseId, weight: n, reps: n, time: "t" + n }));
   assert.deepEqual(removeLastSet(sets, "a").map((s) => s.time), ["t1", "t2"]);
 });
 
 // ---- personal best ----
 
 test("beats: heavier wins, same weight needs more reps", () => {
-  assert.ok(beats({ weight: 110, reps: 1 }, { weight: 100, reps: 10 }));
-  assert.ok(beats({ weight: 100, reps: 6 }, { weight: 100, reps: 5 }));
-  assert.ok(!beats({ weight: 100, reps: 5 }, { weight: 100, reps: 5 }));
-  assert.ok(!beats({ weight: 90, reps: 12 }, { weight: 100, reps: 5 }));
-  assert.ok(beats({ weight: 1, reps: 1 }, null));
+  const w = (weight, reps) => ({ weight, reps });
+  assert.ok(beats(w(110, 1), w(100, 10)));
+  assert.ok(beats(w(100, 6), w(100, 5)));
+  assert.ok(!beats(w(100, 5), w(100, 5)));
+  assert.ok(!beats(w(90, 12), w(100, 5)));
+  assert.ok(beats(w(1, 1), null));
 });
 
 test("bestSet finds the heaviest logged set, ties by reps", () => {
@@ -151,19 +142,17 @@ test("bestSet finds the heaviest logged set, ties by reps", () => {
 
 test("bestSet is null with no sets and ignores other exercises", () => {
   assert.equal(bestSet([], "leg-press"), null);
-  const sets = [makeSet({ exerciseId: "chest-press", weight: 60, reps: 8 })];
-  assert.equal(bestSet(sets, "leg-press"), null);
+  assert.equal(bestSet([chestSet()], "leg-press"), null);
 });
 
 test("bestSet includes a typed-in best from before the app", () => {
-  const sets = [mk(100, 5)];
-  assert.deepEqual(bestSet(sets, "leg-press", { weight: 150, reps: 3 }), { weight: 150, reps: 3 });
-  assert.deepEqual(bestSet([], "leg-press", { weight: 150, reps: 3 }), { weight: 150, reps: 3 });
+  const typed = { weight: 150, reps: 3 };
+  assert.deepEqual(bestSet([mk(100, 5)], "leg-press", typed), typed);
+  assert.deepEqual(bestSet([], "leg-press", typed), typed);
 });
 
 test("bestSet ignores timed sets", () => {
-  const sets = [makeSet({ exerciseId: "leg-press", minutes: 20 })];
-  assert.equal(bestSet(sets, "leg-press"), null);
+  assert.equal(bestSet([makeSet({ exerciseId: "leg-press", minutes: 20 })], "leg-press"), null);
 });
 
 test("isNewPb is false for the very first set", () => {
@@ -178,8 +167,9 @@ test("isNewPb is true when a set beats the best, false when it does not", () => 
 });
 
 test("isNewPb compares against a typed-in best", () => {
-  assert.equal(isNewPb([], "leg-press", { weight: 150, reps: 3 }, mk(160, 1)), true);
-  assert.equal(isNewPb([], "leg-press", { weight: 150, reps: 3 }, mk(140, 5)), false);
+  const typed = { weight: 150, reps: 3 };
+  assert.equal(isNewPb([], "leg-press", typed, mk(160, 1)), true);
+  assert.equal(isNewPb([], "leg-press", typed, mk(140, 5)), false);
 });
 
 // ---- done today ----
