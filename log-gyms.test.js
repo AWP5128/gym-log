@@ -2,6 +2,7 @@ import test from "node:test";
 import assert from "node:assert/strict";
 import {
   makeSet, setGym, setsForGym, tagSets, removeLastSet, bestSet, isNewPb, personalBests, GYM_SPECIFIC_TYPES,
+  hasGymBest, describeBest, newBestLevel,
 } from "./log.js";
 
 const at = (iso) => new Date(iso);
@@ -140,4 +141,57 @@ test("personalBests: a typed-in best counts, and an exercise with no type is jud
   assert.deepEqual(r.ever, { weight: 150, reps: 2 });
   assert.equal(personalBests(all, { id: "leg-press", unit: "kg" }, "main").gym, null);
   assert.deepEqual(personalBests([], lp, "main"), { gym: null, ever: null });
+});
+
+test("hasGymBest: machines have a best per gym, free weights do not", () => {
+  assert.equal(hasGymBest(lp), true);
+  assert.equal(hasGymBest({ type: "plate", unit: "kg" }), true);
+  assert.equal(hasGymBest(dl), false);
+  assert.equal(hasGymBest({ type: "dumbbell", unit: "kg" }), false);
+  assert.equal(hasGymBest({ type: "bodyweight", unit: "kg" }), false);
+  assert.equal(hasGymBest({ unit: "lb" }), true);   // no type: judged by the unit, as personalBests does
+  assert.equal(hasGymBest({ unit: "kg" }), false);
+});
+
+test("describeBest: pounds first with kilos in brackets, whichever unit the best is held in", () => {
+  assert.equal(describeBest({ weight: 100, reps: 8 }, "lb"), "100 lb (45.4 kg) x 8");
+  assert.equal(describeBest({ weight: 100, reps: 5 }, "kg"), "220.5 lb (100 kg) x 5");
+  assert.equal(describeBest({ weight: 67.5, reps: 10 }, "kg"), "148.8 lb (67.5 kg) x 10");
+});
+
+test("describeBest: no reps, body weight only, and nothing logged", () => {
+  assert.equal(describeBest({ weight: 150, reps: 0 }, "lb"), "150 lb (68 kg)");   // a typed-in best with no reps
+  assert.equal(describeBest({ weight: 0, reps: 12 }, "kg"), "Body weight x 12");   // pull-ups with no added weight
+  assert.equal(describeBest(null, "lb"), "none yet");
+});
+
+test("newBestLevel: breaking the best ever, only the gym's best, or neither", () => {
+  const before = { gym: { weight: 100, reps: 5 }, ever: { weight: 120, reps: 5 } };
+  assert.equal(newBestLevel(before, { weight: 130, reps: 5 }), "ever");
+  assert.equal(newBestLevel(before, { weight: 120, reps: 6 }), "ever");        // same weight, more reps
+  assert.equal(newBestLevel(before, { weight: 110, reps: 5 }), "gym");         // beats here, not ever
+  assert.equal(newBestLevel(before, { weight: 100, reps: 6 }), "gym");
+  assert.equal(newBestLevel(before, { weight: 100, reps: 5 }), null);          // equal is not a new best
+  assert.equal(newBestLevel(before, { weight: 90, reps: 12 }), null);          // lighter is never a best
+});
+
+test("newBestLevel: the first set never counts, and free weights only ever have the best ever", () => {
+  assert.equal(newBestLevel({ gym: null, ever: null }, { weight: 50, reps: 5 }), null);
+  // First time at a second gym: nothing to beat there, and not above the best ever either.
+  assert.equal(newBestLevel({ gym: null, ever: { weight: 120, reps: 5 } }, { weight: 100, reps: 5 }), null);
+  assert.equal(newBestLevel({ gym: null, ever: { weight: 120, reps: 5 } }, { weight: 130, reps: 5 }), "ever");
+  // Free weights (gym is always null).
+  assert.equal(newBestLevel({ gym: null, ever: { weight: 90, reps: 3 } }, { weight: 92.5, reps: 1 }), "ever");
+});
+
+test("newBestLevel works with personalBests, including a typed-in best and sets in both units", () => {
+  const all = [
+    { exerciseId: "leg-press", weight: 100, reps: 5, gymId: "main", unit: "lb" },
+    { exerciseId: "leg-press", weight: 60, reps: 5, gymId: "home", unit: "kg" },   // about 132 lb
+  ];
+  const before = personalBests(all, lp, "main");
+  assert.equal(newBestLevel(before, { weight: 110, reps: 5 }), "gym");   // beats main (100) but not home's converted 132.28
+  assert.equal(newBestLevel(before, { weight: 140, reps: 5 }), "ever");
+  const typed = personalBests(all, lp, "main", { weight: 200, reps: 1 });
+  assert.equal(newBestLevel(typed, { weight: 150, reps: 5 }), null);     // below the typed-in best at both levels
 });

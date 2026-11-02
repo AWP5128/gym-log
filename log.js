@@ -1,6 +1,6 @@
 import { BUILT_IN_DEFAULTS } from "./defaults.js";
 import { DEFAULT_GYM } from "./store.js";
-import { convert, round2 } from "./gym.js";
+import { convert, round2, formatBoth } from "./gym.js";
 
 const last = (list) => list[list.length - 1];
 const day = (date) => new Date(date).toDateString();
@@ -136,6 +136,27 @@ export function personalBests(allSets, exercise, gymId, manual = null) {
     gym: GYM_SPECIFIC_TYPES.includes(typeOf(exercise)) ? bestSet(allSets, exercise.id, manual, { gymId, unit }) : null,
     ever: bestSet(allSets, exercise.id, manual, { unit }),
   };
+}
+
+// True for exercises that keep a best for each gym as well as a best ever (machines); false for free weights.
+export const hasGymBest = (exercise) => GYM_SPECIFIC_TYPES.includes(typeOf(exercise));
+
+// A best as text, pounds first and kilos in brackets: "100 lb (45.4 kg) x 8". With no weight (body weight
+// only) it reads "Body weight x 12", and with no reps recorded the "x" part is left off. No best at all
+// gives "none yet". unit is the unit the best is held in.
+export function describeBest(best, unit) {
+  if (!best) return "none yet";
+  const what = best.weight === 0 ? "Body weight" : formatBoth(best.weight, unit, "lb");
+  return best.reps > 0 ? what + " x " + best.reps : what;
+}
+
+// Which personal best a new set breaks, given the bests from before it was logged ({ gym, ever } from
+// personalBests): "ever" (it beats the best ever, so it beats the gym's too), "gym" (only the gym's best),
+// or null. The very first set at a level never counts, as with isNewPb.
+export function newBestLevel(before, set) {
+  if (before.ever !== null && beats(set, before.ever)) return "ever";
+  if (before.gym !== null && beats(set, before.gym)) return "gym";
+  return null;
 }
 
 export const formatSet = (exercise, set) =>

@@ -1,11 +1,11 @@
 // Gym Log: the screens and what they do. Saved data goes through storage.js and store.js,
 // and the small HTML and page helpers are in ui.js.
 import { sessionTypes, exercisesForGroup } from "./exercises.js";
-import { emptySettings, configFor, updateExercise, toNumber } from "./settings.js";
+import { emptySettings, configFor, updateExercise, toNumber, manualPb } from "./settings.js";
 import { effectiveConfig, globalDefaults, updateGlobalDefaults, warmupReps, ownWarmupReps } from "./defaults.js";
 import {
   makeSet, todaysSets, defaultsFor, removeLastSet, weightOptions, setsForGym, tagSets,
-  isDoneToday, markDone, unmarkDone,
+  isDoneToday, markDone, unmarkDone, personalBests, hasGymBest, describeBest, newBestLevel,
 } from "./log.js";
 import {
   formatTime, startWorkout, isRunning, workoutElapsed, machineElapsed,
@@ -338,6 +338,27 @@ function openExercise(e) {
 const extraSelectHtml = (id, e, chosen) =>
   selectHtml(id, '<option value="0">None</option>' + optionsHtml(extraOptions(e), chosen, (x) => "+" + x + " " + e.unit));
 
+// The personal bests for an exercise at the current gym: a machine shows the best here and the best ever
+// (one line when they are the same), free weights show the best ever only. All logged sets count, from every gym.
+const bestsFor = (e) => personalBests(sets, e, store.currentGym, manualPb(configFor(settings, e.id)));
+
+function bestsHtml(e) {
+  if (e.kind === "time") return "";
+  const b = bestsFor(e);
+  const row = (label, best) => "<div>" + label + ' <b style="color:#eee">' + esc(describeBest(best, e.unit)) + "</b></div>";
+  const same = b.gym && b.ever && b.gym.weight === b.ever.weight && b.gym.reps === b.ever.reps;
+  const lines = b.ever === null ? "<div>No personal best yet</div>"
+    : !hasGymBest(e) ? row("Best ever", b.ever)
+    : same ? row("Best here and ever", b.ever)
+    : row("Best here", b.gym) + row("Best ever", b.ever);
+  return '<div class="muted small" style="margin-top:8px">' + lines + "</div>";
+}
+
+// Shown under the Log set button after a set that broke a best. p.pb is "ever", "gym" or nothing.
+const newBestHtml = (p) => p.pb
+  ? '<div class="finished" style="margin-top:8px">&#9733; ' + (p.pb === "ever" ? "New best ever" : "New best here") + "</div>"
+  : "";
+
 function panelHtml(p, i) {
   const e = p.ex;
   const cfg = cfgFor(e);
@@ -377,8 +398,9 @@ function panelHtml(p, i) {
   return '<div class="card"><div class="cardhead"><strong>' + esc(e.name) + "</strong>" +
     '<span class="tm cardtime" data-t="m:' + esc(e.id) + '">' + formatTime(machineElapsed(workout, e.id, Date.now())) + "</span>" +
     (panels.length > 1 ? '<button class="link" id="remove' + i + '">Remove</button>' : "") + "</div>" +
-    notes + weightHtml +
+    notes + bestsHtml(e) + weightHtml +
     '<div class="logrow"><span class="progress">' + progress + '</span><button class="' + (complete ? "outline" : "primary") + '" id="logBtn' + i + '">Log set</button></div>' +
+    newBestHtml(p) +
     '<div class="muted small">' + setsText + (today.length > 0 ? ' <button class="link" id="undo' + i + '">Undo last set</button>' : "") + "</div>" +
     finishHtml + "</div>";
 }
@@ -415,10 +437,11 @@ function bindPanel(p, i) {
     rMinus: () => { p.reps = Math.max(0, p.reps - 1); render(); },
     rPlus: () => { p.reps += 1; render(); },
     logBtn: () => {
+      p.pb = e.kind === "time" ? null : newBestLevel(bestsFor(e), { weight: p.weight, reps: p.reps });   // judged before the set is saved
       sets.push(makeSet({ exerciseId: e.id, weight: p.weight, reps: p.reps, mode: dayMode() || undefined, gymId: store.currentGym, unit: e.unit }));
       setsChanged();
     },
-    undo: () => { sets = removeLastSet(sets, e.id, store.currentGym); setsChanged(); },
+    undo: () => { p.pb = null; sets = removeLastSet(sets, e.id, store.currentGym); setsChanged(); },
     // Sets are saved as you log them. Finish marks only this exercise as done for today and takes it
     // off the list. If it was one of a superset, the other exercise stays on the page.
     finish: () => {
