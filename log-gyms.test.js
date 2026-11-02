@@ -2,7 +2,7 @@ import test from "node:test";
 import assert from "node:assert/strict";
 import {
   makeSet, setGym, setsForGym, tagSets, removeLastSet, bestSet, isNewPb, personalBests, GYM_SPECIFIC_TYPES,
-  hasGymBest, describeBest, newBestLevel,
+  hasGymBest, describeBest, weightCaption, newBestLevel,
 } from "./log.js";
 
 const at = (iso) => new Date(iso);
@@ -163,6 +163,21 @@ test("describeBest: no reps, body weight only, and nothing logged", () => {
   assert.equal(describeBest({ weight: 150, reps: 0 }, "lb"), "150 lb (68 kg)");   // a typed-in best with no reps
   assert.equal(describeBest({ weight: 0, reps: 12 }, "kg"), "Body weight x 12");   // pull-ups with no added weight
   assert.equal(describeBest(null, "lb"), "none yet");
+});
+
+test("describeBest: converted and pound figures are shown to one decimal place", () => {
+  assert.equal(describeBest({ weight: 132.28, reps: 6 }, "lb"), "132.3 lb (60 kg) x 6");   // a 60 kg set held in lb
+  assert.equal(describeBest({ weight: 1.25, reps: 10 }, "kg"), "2.8 lb (1.25 kg) x 10");   // kg figures are kept as they are
+  assert.equal(describeBest({ weight: 52.5, reps: 8 }, "lb"), "52.5 lb (23.8 kg) x 8");
+});
+
+test("weightCaption: Stack for stack machines, Weight for everything else", () => {
+  assert.equal(weightCaption({ type: "stack", unit: "lb" }), "Stack");
+  assert.equal(weightCaption({ type: "barbell", unit: "kg" }), "Weight");
+  assert.equal(weightCaption({ type: "plate", unit: "lb" }), "Weight");
+  assert.equal(weightCaption({ type: "dumbbell", unit: "kg" }), "Weight");
+  assert.equal(weightCaption({ unit: "lb" }), "Stack");    // no type: judged by the unit, as elsewhere
+  assert.equal(weightCaption({ unit: "kg" }), "Weight");
 });
 
 test("newBestLevel: breaking the best ever, only the gym's best, or neither", () => {

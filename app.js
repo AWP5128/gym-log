@@ -5,7 +5,7 @@ import { emptySettings, configFor, updateExercise, toNumber, manualPb } from "./
 import { effectiveConfig, globalDefaults, updateGlobalDefaults, warmupReps, ownWarmupReps } from "./defaults.js";
 import {
   makeSet, todaysSets, defaultsFor, removeLastSet, weightOptions, setsForGym, tagSets,
-  isDoneToday, markDone, unmarkDone, personalBests, hasGymBest, describeBest, newBestLevel,
+  isDoneToday, markDone, unmarkDone, personalBests, hasGymBest, describeBest, weightCaption, newBestLevel,
 } from "./log.js";
 import {
   formatTime, startWorkout, isRunning, workoutElapsed, machineElapsed,
@@ -388,7 +388,7 @@ function panelHtml(p, i) {
   // Machines with extras: a stack list and an extra list, then the total beside the reps.
   // Other exercises: one weight list and an "Other weight" box.
   const weightHtml = withExtras
-    ? '<div class="pe"><div><span class="cap">Stack</span>' + weightSel + "</div>" +
+    ? '<div class="pe"><div><span class="cap">' + weightCaption(e) + "</span>" + weightSel + "</div>" +
       '<div><span class="cap">Extra</span>' + extraSelectHtml("extraSel" + i, e, p.extra) + "</div></div>" +
       '<div class="wr"><span class="total">Total <b>' + p.weight + " " + e.unit + "</b></span>" + repsHtml + "</div>"
     : '<div class="wr">' + weightSel + repsHtml + "</div>" +
@@ -417,13 +417,19 @@ function bindPanel(p, i) {
 
   $("weightSel" + i).onchange = (ev) => {
     const v = Number(ev.target.value);
-    if (!hasExtras(e)) { p.weight = v; return; }
+    if (!hasExtras(e)) {
+      p.weight = v;
+      if (p.pb) { p.pb = null; render(); }   // changing the weight clears the "New best" line
+      return;
+    }
+    p.pb = null;
     p.pin = v;
     p.weight = totalWeight(p.pin, p.extra);
     render();
   };
   if ($("extraSel" + i)) {
     $("extraSel" + i).onchange = (ev) => {
+      p.pb = null;
       p.extra = Number(ev.target.value);
       p.weight = totalWeight(p.pin, p.extra);
       render();
@@ -432,10 +438,10 @@ function bindPanel(p, i) {
   wire({
     otherBtn: () => {
       const v = parseFloat($("otherW" + i).value);
-      if (Number.isFinite(v) && v >= 0) { p.weight = v; render(); }
+      if (Number.isFinite(v) && v >= 0) { p.weight = v; p.pb = null; render(); }
     },
-    rMinus: () => { p.reps = Math.max(0, p.reps - 1); render(); },
-    rPlus: () => { p.reps += 1; render(); },
+    rMinus: () => { p.reps = Math.max(0, p.reps - 1); p.pb = null; render(); },
+    rPlus: () => { p.reps += 1; p.pb = null; render(); },
     logBtn: () => {
       p.pb = e.kind === "time" ? null : newBestLevel(bestsFor(e), { weight: p.weight, reps: p.reps });   // judged before the set is saved
       sets.push(makeSet({ exerciseId: e.id, weight: p.weight, reps: p.reps, mode: dayMode() || undefined, gymId: store.currentGym, unit: e.unit }));

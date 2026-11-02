@@ -1,6 +1,6 @@
 import { BUILT_IN_DEFAULTS } from "./defaults.js";
 import { DEFAULT_GYM } from "./store.js";
-import { convert, round2, formatBoth } from "./gym.js";
+import { convert, round2 } from "./gym.js";
 
 const last = (list) => list[list.length - 1];
 const day = (date) => new Date(date).toDateString();
@@ -141,14 +141,22 @@ export function personalBests(allSets, exercise, gymId, manual = null) {
 // True for exercises that keep a best for each gym as well as a best ever (machines); false for free weights.
 export const hasGymBest = (exercise) => GYM_SPECIFIC_TYPES.includes(typeOf(exercise));
 
-// A best as text, pounds first and kilos in brackets: "100 lb (45.4 kg) x 8". With no weight (body weight
-// only) it reads "Body weight x 12", and with no reps recorded the "x" part is left off. No best at all
-// gives "none yet". unit is the unit the best is held in.
+// A best as text, pounds first and kilos in brackets: "100 lb (45.4 kg) x 8". Converted figures and pounds
+// are shown to one decimal place ("132.3 lb", not "132.28 lb"); a best held in kilos keeps its own figure
+// (1.25 kg stays 1.25). With no weight (body weight only) it reads "Body weight x 12", and with no reps
+// recorded the "x" part is left off. No best at all gives "none yet". unit is the unit the best is held in.
+const oneDp = (n) => Math.round(n * 10) / 10;
 export function describeBest(best, unit) {
   if (!best) return "none yet";
-  const what = best.weight === 0 ? "Body weight" : formatBoth(best.weight, unit, "lb");
+  const lb = oneDp(unit === "lb" ? best.weight : convert(best.weight, "kg", "lb"));
+  const kg = unit === "kg" ? best.weight : oneDp(convert(best.weight, "lb", "kg"));
+  const what = best.weight === 0 ? "Body weight" : lb + " lb (" + kg + " kg)";
   return best.reps > 0 ? what + " x " + best.reps : what;
 }
+
+// The caption over the main weight list on the exercise card: "Stack" for a weight stack machine,
+// "Weight" for everything else (barbells, plate machines, dumbbells). A list of extras sits beside it.
+export const weightCaption = (exercise) => (typeOf(exercise) === "stack" ? "Stack" : "Weight");
 
 // Which personal best a new set breaks, given the bests from before it was logged ({ gym, ever } from
 // personalBests): "ever" (it beats the best ever, so it beats the gym's too), "gym" (only the gym's best),
