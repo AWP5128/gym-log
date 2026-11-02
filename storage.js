@@ -2,8 +2,9 @@
 // the phone's storage directly. A database can replace this one file later.
 
 // The storage names. Never rename these: the saved data lives under them.
+// beforeGyms holds a copy of the version 2 store, kept the first time the app upgrades it to gyms.
 export const KEY = Object.fromEntries(
-  ["sets", "session", "settings", "done", "workout", "store", "lastBackup", "beforeRestore"].map((k) => [k, "gymlog." + k])
+  ["sets", "session", "settings", "done", "workout", "store", "lastBackup", "beforeRestore", "beforeGyms"].map((k) => [k, "gymlog." + k])
 );
 
 export function load(key, fallback) {

@@ -9,7 +9,7 @@ const validSet = (s) =>
   !!s && typeof s === "object" && typeof s.exerciseId === "string" &&
   typeof s.time === "string" && !Number.isNaN(new Date(s.time).getTime());
 
-// Everything that is worth keeping: the store (machines, settings) and the logged sets.
+// Everything that is worth keeping: the store (gyms, equipment, settings) and the logged sets.
 export function makeBackup({ store, sets }, now = new Date()) {
   return { type: BACKUP_TYPE, version: BACKUP_VERSION, createdAt: now.toISOString(), store, sets };
 }
@@ -21,7 +21,8 @@ export function backupFileName(kind, now = new Date()) {
 }
 
 // Reads a backup file. Returns { backup, dropped, error }; error is "" when it worked.
-// Damaged sets are left out and counted in dropped.
+// Damaged sets are left out and counted in dropped. A backup from before gyms had their own
+// equipment is upgraded by cleanStore.
 export function parseBackup(text) {
   const fail = (error) => ({ backup: null, dropped: 0, error });
   let data;
@@ -50,12 +51,21 @@ export function fileKind(text) {
   return null;
 }
 
+// The machines in a gym: its stack machines (the equipment that can have a stack), or, for a store
+// written before gyms had equipment, the old shared machine list.
+function gymMachines(gym) {
+  if (gym && gym.equipment && typeof gym.equipment === "object") {
+    return Object.values(gym.equipment).filter((m) => m && m.type === "stack");
+  }
+  return Object.values((gym && gym.machines) || {});
+}
+
 // Counts for the screen: sets, the days they were logged on, machines, and machines with a stack.
 export function dataSummary(store, sets) {
   let machines = 0;
   let stacks = 0;
   for (const gym of Object.values((store && store.gyms) || {})) {
-    for (const m of Object.values(gym.machines || {})) {
+    for (const m of gymMachines(gym)) {
       machines++;
       if (Array.isArray(m.pins) && m.pins.length > 0) stacks++;
     }

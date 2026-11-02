@@ -1,24 +1,31 @@
-// The permanent store: gyms (shared machine stacks) and people (personal settings per gym).
+// The permanent store: gyms (each with its own equipment) and people (personal settings per gym).
 // Everything here is pure (no browser calls) so it can be tested.
 //
 // store = {
-//   version, currentGym, currentPerson, custom: [],
-//   gyms:   { gymId: { name, machines: { exerciseId: { name, step, pins, stackSpec } } } },
+//   version, currentGym, defaultGym, currentPerson, custom: [],
+//   gyms:   { gymId: { name, units: { type: "kg" | "lb" }, equipment: { exerciseId: item } } },
 //   people: { personId: { name, defaults: { heavy|volume: { reps, sets, warmupReps } },
 //             gyms: { gymId: { machines: { exerciseId: { notes, pbWeight, pbReps,
 //               heavy|volume: { warmup: { weight, extra, reps }, working: { weight, extra, reps, sets } } } } } } } }
 // }
+// An equipment item (see gym.js) is { name, group, type, unit, step, common, min?, pins?, stackSpec? }.
 // weight is always the TOTAL; extra is the part of it that came from the extra list.
 //
-// The screens still use an older flat shape (startHeavy, workVolume, repsHeavy ...). The tables below
-// say how each flat name maps to the store, and every conversion in this file is driven by them.
+// The screens still use an older flat shape (startHeavy, workVolume, repsHeavy ...) and the built-in
+// exercise list. The tables below say how each flat name maps to the store, and every conversion in
+// this file is driven by them. In the flat shape a machine's name, step and stack appear only when
+// they differ from the built-in exercise, which is how the screens have always seen them.
 
-export const STORE_VERSION = 2;
+import { exercises } from "./exercises.js";
+import {
+  newGym, makeItem, starterEquipment, withMachineData, updateItem, copyEquipment, uniqueId, DEFAULT_UNITS,
+} from "./gym.js";
+
+export const STORE_VERSION = 3;
 export const DEFAULT_GYM = "main";
 export const DEFAULT_PERSON = "awp";
 export const MACHINES_FILE_TYPE = "gymlog-machines";
 
-const SHARED = ["name", "step", "pins", "stackSpec"];
 const MODES = [["Heavy", "heavy"], ["Volume", "volume"]];
 // [flat name before Heavy/Volume, group in a day type's block, field in that group]
 const FIELDS = [
@@ -33,40 +40,23 @@ const has = (o) => Object.keys(o).length > 0;
 const num = (v) => (Number.isFinite(v) ? v : null);
 const put = (obj, key, v) => { if (Number.isFinite(v)) obj[key] = v; };
 
+// The built-in exercises as equipment items: what a first gym starts with.
+const STARTER = starterEquipment(exercises);
+
 export function emptyStore() {
   return {
     version: STORE_VERSION,
     currentGym: DEFAULT_GYM,
+    defaultGym: DEFAULT_GYM,
     currentPerson: DEFAULT_PERSON,
     custom: [],
-    gyms: { [DEFAULT_GYM]: { name: "My gym", machines: {} } },
+    gyms: { [DEFAULT_GYM]: newGym("My gym", {}, starterEquipment(exercises)) },
     people: { [DEFAULT_PERSON]: { name: "Awp", defaults: {}, gyms: { [DEFAULT_GYM]: { machines: {} } } } },
   };
 }
 
-// A store read back from storage: tidied up, or null if it is missing or not this version.
-export function cleanStore(raw) {
-  if (!isObj(raw) || raw.version !== STORE_VERSION) return null;
-  return {
-    ...emptyStore(),
-    ...raw,
-    gyms: isObj(raw.gyms) ? raw.gyms : {},
-    people: isObj(raw.people) ? raw.people : {},
-    custom: Array.isArray(raw.custom) ? raw.custom : [],
-    currentGym: typeof raw.currentGym === "string" ? raw.currentGym : DEFAULT_GYM,
-    currentPerson: typeof raw.currentPerson === "string" ? raw.currentPerson : DEFAULT_PERSON,
-  };
-}
-
-// Warm-up sets are for weight-stack machines (lb). Free weights, pull-ups and timed
-// exercises have none. An exercise can override this with warmup: true or false.
-export function supportsWarmup(exercise) {
-  if (exercise.warmup !== undefined) return !!exercise.warmup;
-  return exercise.unit === "lb" && exercise.kind !== "time";
-}
-
-// ---------- Flat settings <-> store ----------
-// The shared (machine) part of one flat machine entry.
+// ---------- Equipment <-> shared machine fields ----------
+// The shared fields of one flat machine entry (name, step, stack).
 function sharedFrom(c) {
   const out = {};
   if (typeof c.name === "string" && c.name.trim()) out.name = c.name.trim();
@@ -76,6 +66,117 @@ function sharedFrom(c) {
   return out;
 }
 
+// What an item has that its built-in version does not: a new name or step, and any stack.
+function overrides(item, base = {}) {
+  const out = {};
+  if (item.name && item.name !== base.name) out.name = item.name;
+  if (item.step > 0 && item.step !== base.step) out.step = item.step;
+  if (Array.isArray(item.pins) && item.pins.length > 0) out.pins = item.pins;
+  if (isObj(item.stackSpec)) out.stackSpec = item.stackSpec;
+  return out;
+}
+
+// What an item is compared with: its built-in exercise, or the exercise you added.
+const baseFor = (id, custom = []) => STARTER[id] || custom.find((c) => c.id === id) || {};
+
+// An item for an id that is not built in (an exercise you added), from its shared fields.
+function newItem(id, shared, custom) {
+  const def = custom.find((c) => c.id === id) || {};
+  return makeItem({ type: def.unit === "kg" ? "barbell" : "stack", ...def, ...shared });
+}
+
+// A gym's equipment from the old shared machine data: the built-in list with that data laid over it.
+function buildEquipment(shared, custom) {
+  const equipment = withMachineData(STARTER, shared);
+  for (const [id, o] of Object.entries(shared)) if (!equipment[id]) equipment[id] = newItem(id, o, custom);
+  return equipment;
+}
+
+// ---------- Reading a store ----------
+function cleanGym(g) {
+  if (!isObj(g)) return newGym("My gym");
+  return {
+    ...g,
+    name: typeof g.name === "string" && g.name.trim() ? g.name : "My gym",
+    units: { ...DEFAULT_UNITS, ...(isObj(g.units) ? g.units : {}) },
+    equipment: isObj(g.equipment) ? g.equipment : {},
+  };
+}
+
+// Version 2 kept only the shared machine data in each gym. Version 3 gives each gym its own equipment list.
+function upgradeV2(raw) {
+  const custom = Array.isArray(raw.custom) ? raw.custom : [];
+  const gyms = {};
+  for (const [id, g] of Object.entries(isObj(raw.gyms) ? raw.gyms : {})) {
+    const machines = isObj(g) && isObj(g.machines) ? g.machines : {};
+    gyms[id] = newGym(isObj(g) ? g.name : "", {}, buildEquipment(machines, custom));
+  }
+  return { ...raw, version: STORE_VERSION, gyms };
+}
+
+// A store read back from storage: tidied up (a version 2 store is upgraded), or null if it is
+// missing or not a version this file knows.
+export function cleanStore(raw) {
+  if (!isObj(raw) || (raw.version !== STORE_VERSION && raw.version !== 2)) return null;
+  const v3 = raw.version === 2 ? upgradeV2(raw) : raw;
+  const gyms = Object.fromEntries(Object.entries(isObj(v3.gyms) ? v3.gyms : {}).map(([id, g]) => [id, cleanGym(g)]));
+  // The current and default gym must be gyms that exist (when there are any).
+  const ids = Object.keys(gyms);
+  const exists = (id) => ids.length === 0 || ids.includes(id);
+  const asked = typeof v3.currentGym === "string" ? v3.currentGym : DEFAULT_GYM;
+  const currentGym = exists(asked) ? asked : ids[0];
+  const defaultGym = typeof v3.defaultGym === "string" && exists(v3.defaultGym) ? v3.defaultGym : currentGym;
+  return {
+    ...emptyStore(),
+    ...v3,
+    gyms,
+    people: isObj(v3.people) ? v3.people : {},
+    custom: Array.isArray(v3.custom) ? v3.custom : [],
+    currentGym,
+    defaultGym,
+    currentPerson: typeof v3.currentPerson === "string" ? v3.currentPerson : DEFAULT_PERSON,
+  };
+}
+
+// ---------- Gyms ----------
+// The gyms as a list for the screens: [{ id, name }].
+export const gymList = (store) => Object.entries(store.gyms || {}).map(([id, g]) => ({ id, name: g.name }));
+
+// Adds a gym. It starts with no equipment, or with the chosen items (ids) copied from another gym (from):
+// equipment data only, with stacks and units kept and nothing personal. Does not change the current gym.
+// Returns { store, id, copied }; id is null when the name is blank.
+export function addGym(store, name, { from, ids = [] } = {}) {
+  const clean = String(name ?? "").trim();
+  if (!clean) return { store, id: null, copied: 0 };
+  const id = uniqueId(clean, Object.keys(store.gyms || {}), "gym");
+  let gym = newGym(clean);
+  let copied = 0;
+  if (from && store.gyms?.[from]) ({ gym, copied } = copyEquipment(store.gyms[from], ids, gym));
+  return { store: { ...store, gyms: { ...store.gyms, [id]: gym } }, id, copied };
+}
+
+// A blank name or an unknown gym leaves the store as it was.
+export function renameGym(store, id, name) {
+  const clean = String(name ?? "").trim();
+  const gym = store.gyms?.[id];
+  if (!gym || !clean) return store;
+  return { ...store, gyms: { ...store.gyms, [id]: { ...gym, name: clean } } };
+}
+
+export const setDefaultGym = (store, id) => (store.gyms?.[id] ? { ...store, defaultGym: id } : store);
+export const setCurrentGym = (store, id) => (store.gyms?.[id] ? { ...store, currentGym: id } : store);
+
+// The gym to start in: the default gym becomes the current one.
+export const useDefaultGym = (store) => setCurrentGym(store, store.defaultGym);
+
+// Warm-up sets are for weight-stack machines (lb). Free weights, pull-ups and timed
+// exercises have none. An exercise can override this with warmup: true or false.
+export function supportsWarmup(exercise) {
+  if (exercise.warmup !== undefined) return !!exercise.warmup;
+  return exercise.unit === "lb" && exercise.kind !== "time";
+}
+
+// ---------- Flat settings <-> store ----------
 // The personal part of one flat machine entry.
 function personalFrom(c) {
   const out = {};
@@ -117,16 +218,18 @@ function splitFlat(flat) {
   return { shared, personal, defaults, custom: Array.isArray(f.custom) ? f.custom : [] };
 }
 
-// Builds a first store from the old gymlog.settings data.
+// Builds a first store from the old gymlog.settings data. The first gym gets the built-in
+// exercises with that data laid over them.
 export function migrateLegacy(legacy, opts = {}) {
   const { gymId = DEFAULT_GYM, personId = DEFAULT_PERSON, gymName = "My gym", personName = "Awp" } = opts;
   const s = splitFlat(legacy);
   return {
     ...emptyStore(),
     currentGym: gymId,
+    defaultGym: gymId,
     currentPerson: personId,
     custom: s.custom,
-    gyms: { [gymId]: { name: gymName, machines: s.shared } },
+    gyms: { [gymId]: newGym(gymName, {}, buildEquipment(s.shared, s.custom)) },
     people: { [personId]: { name: personName, defaults: s.defaults, gyms: { [gymId]: { machines: s.personal } } } },
   };
 }
@@ -137,9 +240,9 @@ export function toLegacySettings(store, personId, gymId) {
   const exercises = {};
   const entry = (id) => (exercises[id] ??= {});
 
-  for (const [id, m] of Object.entries(store.gyms?.[gymId]?.machines || {})) {
-    const out = entry(id);
-    for (const f of SHARED) if (m[f] != null) out[f] = m[f];
+  for (const [id, item] of Object.entries(store.gyms?.[gymId]?.equipment || {})) {
+    const o = overrides(item, baseFor(id, store.custom));
+    if (has(o)) Object.assign(entry(id), o);
   }
   for (const [id, p] of Object.entries(person.gyms?.[gymId]?.machines || {})) {
     const out = entry(id);
@@ -162,12 +265,20 @@ export function toLegacySettings(store, personId, gymId) {
 // Other gyms and other people are left exactly as they were.
 export function applyLegacySettings(store, personId, gymId, flat) {
   const s = splitFlat(flat);
-  const gym = store.gyms?.[gymId] || { name: "My gym" };
+  let gym = store.gyms?.[gymId] || newGym("My gym", {}, starterEquipment(exercises));
   const person = store.people?.[personId] || { name: personId, gyms: {} };
+  // Each item takes its name, step and stack from the flat settings; a stack that is no longer there was cleared.
+  for (const id of Object.keys(gym.equipment || {})) {
+    const o = s.shared[id] || {};
+    gym = updateItem(gym, id, { ...o, pins: o.pins ?? null, stackSpec: o.stackSpec ?? null });
+  }
+  for (const [id, o] of Object.entries(s.shared)) {
+    if (!gym.equipment?.[id]) gym = { ...gym, equipment: { ...gym.equipment, [id]: newItem(id, o, s.custom) } };
+  }
   return {
     ...store,
     custom: s.custom,
-    gyms: { ...store.gyms, [gymId]: { ...gym, machines: s.shared } },
+    gyms: { ...store.gyms, [gymId]: gym },
     people: {
       ...store.people,
       [personId]: {
@@ -180,10 +291,16 @@ export function applyLegacySettings(store, personId, gymId, flat) {
 }
 
 // ---------- Sharing the machine list ----------
-// Only the shared fields: no weights, reps or notes.
+// Only the shared fields (name, step, stack): no weights, reps or notes. Machines that are
+// exactly as built in are left out.
 export function exportMachines(store, gymId) {
-  const gym = store.gyms?.[gymId] || { name: "", machines: {} };
-  return JSON.stringify({ type: MACHINES_FILE_TYPE, version: 1, gymName: gym.name, machines: gym.machines || {} }, null, 2);
+  const gym = store.gyms?.[gymId] || { name: "", equipment: {} };
+  const machines = {};
+  for (const [id, item] of Object.entries(gym.equipment || {})) {
+    const o = overrides(item, baseFor(id, store.custom));
+    if (has(o)) machines[id] = o;
+  }
+  return JSON.stringify({ type: MACHINES_FILE_TYPE, version: 1, gymName: gym.name, machines }, null, 2);
 }
 
 // Adds the machines from an exported file to a gym. Personal settings are not touched.
@@ -200,7 +317,11 @@ export function importMachines(store, gymId, text) {
     const s = sharedFrom(c || {});
     if (has(s)) incoming[id] = s;
   }
-  const gym = store.gyms?.[gymId] || { name: data.gymName || "My gym", machines: {} };
-  const machines = { ...gym.machines, ...incoming };
-  return { store: { ...store, gyms: { ...store.gyms, [gymId]: { ...gym, machines } } }, count: Object.keys(incoming).length, error: "" };
+  let gym = store.gyms?.[gymId] || newGym(data.gymName || "My gym", {}, starterEquipment(exercises));
+  for (const [id, o] of Object.entries(incoming)) {
+    gym = gym.equipment?.[id]
+      ? updateItem(gym, id, o)
+      : { ...gym, equipment: { ...gym.equipment, [id]: newItem(id, o, store.custom || []) } };
+  }
+  return { store: { ...store, gyms: { ...store.gyms, [gymId]: gym } }, count: Object.keys(incoming).length, error: "" };
 }

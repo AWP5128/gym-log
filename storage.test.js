@@ -23,6 +23,7 @@ test("the storage names never change", () => {
     store: "gymlog.store",
     lastBackup: "gymlog.lastBackup",
     beforeRestore: "gymlog.beforeRestore",
+    beforeGyms: "gymlog.beforeGyms",
   });
 });
 
@@ -30,6 +31,14 @@ test("save then load gives back the same value", () => {
   useFakeStorage();
   save(KEY.session, { type: "legs", mode: "heavy" });
   assert.deepEqual(load(KEY.session, null), { type: "legs", mode: "heavy" });
+});
+
+test("the safety copy is kept apart from the store", () => {
+  useFakeStorage();
+  save(KEY.store, { version: 3 });
+  save(KEY.beforeGyms, { version: 2 });
+  assert.deepEqual(load(KEY.store, null), { version: 3 });
+  assert.deepEqual(load(KEY.beforeGyms, null), { version: 2 });
 });
 
 test("load gives the fallback when nothing is saved or the data is damaged", () => {

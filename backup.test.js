@@ -4,6 +4,7 @@ import {
   BACKUP_TYPE, makeBackup, backupFileName, parseBackup, fileKind, dataSummary, describeData, backupAge,
 } from "./backup.js";
 import { emptyStore, migrateLegacy, exportMachines } from "./store.js";
+import { makeItem } from "./gym.js";
 
 const when = (y, m, d, h = 12) => new Date(y, m - 1, d, h, 0, 0);
 const setAt = (id, date) => ({ exerciseId: id, weight: 100, reps: 5, time: date.toISOString() });
@@ -15,9 +16,24 @@ test("a backup can be written and read back", () => {
   assert.equal(r.error, "");
   assert.equal(r.dropped, 0);
   assert.deepEqual(r.backup.sets, sets);
-  assert.deepEqual(r.backup.store.gyms.main.machines["leg-press"].pins, [10, 20]);
+  assert.deepEqual(r.backup.store.gyms.main.equipment["leg-press"].pins, [10, 20]);
   assert.equal(r.backup.store.people.awp.gyms.main.machines["leg-press"].notes, "Seat 4");
   assert.equal(r.backup.createdAt, when(2026, 10, 30).toISOString());
+});
+
+test("a backup made before gyms had their own equipment still restores", () => {
+  const old = {
+    version: 2, currentGym: "main", currentPerson: "awp", custom: [],
+    gyms: { main: { name: "My gym", machines: { "leg-press": { name: "Leg Press", pins: [10, 20, 35] } } } },
+    people: { awp: { name: "Awp", defaults: {}, gyms: { main: { machines: { "leg-press": { notes: "Seat 4" } } } } } },
+  };
+  const sets = [setAt("leg-press", when(2026, 10, 29))];
+  const r = parseBackup(JSON.stringify({ type: BACKUP_TYPE, version: 1, createdAt: "2026-10-30T10:00:00.000Z", store: old, sets }));
+  assert.equal(r.error, "");
+  assert.equal(r.backup.store.version, 3);
+  assert.deepEqual(r.backup.store.gyms.main.equipment["leg-press"].pins, [10, 20, 35]);
+  assert.equal(r.backup.store.people.awp.gyms.main.machines["leg-press"].notes, "Seat 4");
+  assert.deepEqual(r.backup.sets, sets);
 });
 
 test("parseBackup rejects files that are not usable backups", () => {
@@ -52,11 +68,30 @@ test("backupFileName uses the local date", () => {
   assert.equal(backupFileName("machines", when(2026, 1, 5)), "gym-log-machines-2026-01-05.json");
 });
 
-test("dataSummary counts sets, days, machines and stacks", () => {
+test("dataSummary counts sets, days, stack machines and stacks", () => {
   const store = emptyStore();
-  store.gyms.main.machines = { a: { name: "A", pins: [10, 20] }, b: { name: "B" }, c: { pins: [] } };
+  store.gyms.main.equipment = {
+    a: makeItem({ name: "A", type: "stack", pins: [10, 20] }),
+    b: makeItem({ name: "B", type: "stack" }),
+    c: makeItem({ name: "C", type: "stack", pins: [] }),
+    d: makeItem({ name: "Bar", type: "barbell", pins: [20, 30] }),
+    e: makeItem({ name: "Dumbbells", type: "dumbbell" }),
+  };
   const sets = [setAt("a", when(2026, 10, 28, 9)), setAt("a", when(2026, 10, 28, 10)), setAt("b", when(2026, 10, 29))];
   assert.deepEqual(dataSummary(store, sets), { sets: 3, days: 2, machines: 3, stacks: 1 });
+});
+
+test("dataSummary adds up the stack machines in every gym", () => {
+  const store = emptyStore();
+  store.gyms.main.equipment = { a: makeItem({ name: "A", type: "stack", pins: [10] }) };
+  store.gyms.home = { name: "Home", equipment: { a: makeItem({ name: "A", type: "stack" }), b: makeItem({ name: "B", type: "plate" }) } };
+  assert.deepEqual(dataSummary(store, []), { sets: 0, days: 0, machines: 2, stacks: 1 });
+});
+
+test("dataSummary still reads a store in the old shape", () => {
+  const old = { gyms: { main: { name: "My gym", machines: { a: { name: "A", pins: [10, 20] }, b: { name: "B" } } } } };
+  assert.deepEqual(dataSummary(old, []), { sets: 0, days: 0, machines: 2, stacks: 1 });
+  assert.deepEqual(dataSummary(null, []), { sets: 0, days: 0, machines: 0, stacks: 0 });
 });
 
 test("describeData reads naturally", () => {

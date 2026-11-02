@@ -1,19 +1,39 @@
 import { BUILT_IN_DEFAULTS } from "./defaults.js";
+import { DEFAULT_GYM } from "./store.js";
+import { convert, round2 } from "./gym.js";
 
 const last = (list) => list[list.length - 1];
 const day = (date) => new Date(date).toDateString();
 
-// A logged set. Weight exercises store weight and reps; timed ones store minutes.
-export function makeSet({ exerciseId, weight = 0, reps = 0, minutes, mode, now = new Date() }) {
+// A logged set. Weight exercises store weight and reps; timed ones store minutes. A set also records
+// the gym it was done at and the unit of its weight, so that bests can be told apart by gym and
+// compared between kg and lb. Sets saved before gyms existed have neither: they count as the first
+// gym's, in the unit of the exercise.
+export function makeSet({ exerciseId, weight = 0, reps = 0, minutes, mode, gymId, unit, now = new Date() }) {
   return {
     exerciseId,
     time: now.toISOString(),
-    ...(minutes !== undefined ? { minutes } : { weight, reps }),
+    ...(minutes !== undefined ? { minutes } : { weight, reps, ...(unit ? { unit } : {}) }),
     ...(mode ? { mode } : {}),
+    ...(gymId ? { gymId } : {}),
   };
 }
 
 export const setsForExercise = (allSets, exerciseId) => allSets.filter((s) => s.exerciseId === exerciseId);
+
+// The gym a set was done at (sets with no gym are the first gym's).
+export const setGym = (set) => set.gymId ?? DEFAULT_GYM;
+
+// Only the sets done at one gym.
+export const setsForGym = (allSets, gymId) => allSets.filter((s) => setGym(s) === gymId);
+
+// Stamps sets that have no gym (and no unit, when unitOf is given) with the first gym's details.
+// unitOf turns an exercise id into the unit its weights were logged in. Sets already stamped are left alone.
+export const tagSets = (allSets, gymId = DEFAULT_GYM, unitOf = null) =>
+  allSets.map((s) => {
+    const unit = !s.unit && s.weight !== undefined && unitOf ? unitOf(s.exerciseId) : null;
+    return s.gymId && !unit ? s : { ...s, gymId: s.gymId ?? gymId, ...(unit ? { unit } : {}) };
+  });
 
 export const todaysSets = (allSets, exerciseId, now = new Date()) =>
   setsForExercise(allSets, exerciseId).filter((s) => day(s.time) === day(now));
@@ -68,9 +88,13 @@ export function weightOptions(exercise, current) {
   return options;
 }
 
-// Returns a new list with the most recent set of this exercise removed.
-export function removeLastSet(allSets, exerciseId) {
-  const index = allSets.map((s) => s.exerciseId).lastIndexOf(exerciseId);
+// Returns a new list with the most recent set of this exercise removed. With a gym, only sets done
+// at that gym are considered.
+export function removeLastSet(allSets, exerciseId, gymId) {
+  let index = -1;
+  allSets.forEach((s, i) => {
+    if (s.exerciseId === exerciseId && (gymId === undefined || setGym(s) === gymId)) index = i;
+  });
   return index === -1 ? allSets : allSets.filter((_, i) => i !== index);
 }
 
@@ -79,18 +103,39 @@ export const beats = (set, best) =>
   !best || set.weight > best.weight || (set.weight === best.weight && set.reps > best.reps);
 
 // Best of everything logged plus an optional typed-in best, or null if none.
-export function bestSet(allSets, exerciseId, manual = null) {
+// Options: gymId looks only at sets done at that gym; unit gives the result in that unit, converting
+// sets that were logged in the other one (a set with no unit is taken to be in this unit already).
+export function bestSet(allSets, exerciseId, manual = null, { gymId, unit } = {}) {
   let best = manual ? { weight: manual.weight, reps: manual.reps ?? 0 } : null;
   for (const s of setsForExercise(allSets, exerciseId)) {
-    if (s.weight !== undefined && beats(s, best)) best = { weight: s.weight, reps: s.reps };
+    if (s.weight === undefined) continue;
+    if (gymId !== undefined && setGym(s) !== gymId) continue;
+    const weight = unit && s.unit && s.unit !== unit ? round2(convert(s.weight, s.unit, unit)) : s.weight;
+    if (beats({ weight, reps: s.reps }, best)) best = { weight, reps: s.reps };
   }
   return best;
 }
 
-// True when a new set beats an existing best (the very first set never counts).
-export function isNewPb(allSets, exerciseId, manual, newSet) {
-  const before = bestSet(allSets, exerciseId, manual);
+// True when a new set beats an existing best (the very first set never counts). Takes the same
+// options as bestSet.
+export function isNewPb(allSets, exerciseId, manual, newSet, options = {}) {
+  const before = bestSet(allSets, exerciseId, manual, options);
   return before !== null && beats(newSet, before);
+}
+
+// Machines keep a best for each gym as well as a best ever; free weights have the best ever only.
+export const GYM_SPECIFIC_TYPES = ["stack", "plate"];
+const typeOf = (exercise) => exercise.type ?? (exercise.unit === "lb" ? "stack" : "barbell");
+
+// The two personal bests for an exercise, both in the exercise's own unit: { gym, ever }. gym is the
+// best at gymId (null for free weights, which have none); ever is the best across all gyms, with
+// weights logged in the other unit converted. A typed-in best (manual) counts at both levels.
+export function personalBests(allSets, exercise, gymId, manual = null) {
+  const unit = exercise.unit;
+  return {
+    gym: GYM_SPECIFIC_TYPES.includes(typeOf(exercise)) ? bestSet(allSets, exercise.id, manual, { gymId, unit }) : null,
+    ever: bestSet(allSets, exercise.id, manual, { unit }),
+  };
 }
 
 export const formatSet = (exercise, set) =>

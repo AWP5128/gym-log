@@ -1,21 +1,22 @@
 // Gym Log: the screens and what they do. Saved data goes through storage.js and store.js,
 // and the small HTML and page helpers are in ui.js.
-import { sessionTypes, exercises, exercisesForGroup } from "./exercises.js";
-import { emptySettings, allExercises, configFor, updateExercise, toNumber } from "./settings.js";
+import { sessionTypes, exercisesForGroup } from "./exercises.js";
+import { emptySettings, configFor, updateExercise, toNumber } from "./settings.js";
 import { effectiveConfig, globalDefaults, updateGlobalDefaults, warmupReps, ownWarmupReps } from "./defaults.js";
 import {
-  makeSet, todaysSets, defaultsFor, removeLastSet, weightOptions,
+  makeSet, todaysSets, defaultsFor, removeLastSet, weightOptions, setsForGym, tagSets,
   isDoneToday, markDone, unmarkDone,
 } from "./log.js";
 import {
   formatTime, startWorkout, isRunning, workoutElapsed, machineElapsed,
   runMachines, endWorkout, cleanWorkout,
 } from "./timer.js";
-// line 14 — add savedExtra to the import
 import { hasExtras, extraOptions, totalWeight, splitFor, savedExtra } from "./extras.js";
-import { STEP_CHOICES, buildPins, addPin, removePin, describePins, hasPins } from "./stacks.js";
+import { buildPins, addPin, removePin, describePins, hasPins } from "./stacks.js";
+import { exerciseList, stepChoices, defaultStep, TYPES } from "./gym.js";
 import {
-  cleanStore, migrateLegacy, toLegacySettings, applyLegacySettings, supportsWarmup, exportMachines, importMachines,
+  STORE_VERSION, DEFAULT_GYM, cleanStore, migrateLegacy, toLegacySettings, applyLegacySettings, supportsWarmup,
+  exportMachines, importMachines, gymList, addGym, renameGym, setDefaultGym, setCurrentGym, useDefaultGym,
 } from "./store.js";
 import { makeBackup, backupFileName, parseBackup, fileKind, dataSummary, describeData, backupAge } from "./backup.js";
 import { KEY, load, loadList, save } from "./storage.js";
@@ -31,11 +32,24 @@ let done = loadList(KEY.done);       // exercises finished today: { exerciseId, 
 let workout = cleanWorkout(load(KEY.workout, null), Date.now());
 
 // The permanent store. The first time, it is built from the old gymlog.settings data, which is left
-// untouched as a backup.
-let store = cleanStore(load(KEY.store, null));
+// untouched as a backup. A store saved before gyms had their own equipment (version 2) is upgraded, and a
+// copy of it is kept first under gymlog.beforeGyms.
+const savedStore = load(KEY.store, null);
+let store = cleanStore(savedStore);
 if (!store) {
   store = migrateLegacy(load(KEY.settings, {}));
   save(KEY.store, store);
+} else if (savedStore.version !== STORE_VERSION) {
+  if (load(KEY.beforeGyms, null) === null) save(KEY.beforeGyms, savedStore);
+  save(KEY.store, store);
+}
+store = useDefaultGym(store);   // every visit starts in the default gym
+
+// Sets logged before gyms existed belong to the first gym, in the unit their exercise used.
+{
+  const firstGym = store.gyms[DEFAULT_GYM] || {};
+  const tagged = tagSets(sets, DEFAULT_GYM, (id) => firstGym.equipment?.[id]?.unit);
+  if (tagged.some((s, i) => s !== sets[i])) { sets = tagged; save(KEY.sets, sets); }
 }
 
 // The screens use the current person's and gym's settings in a flat shape. The store is the saved copy.
@@ -52,7 +66,22 @@ function saveSettings(next) {
   save(KEY.store, store);
 }
 reloadSettings();
-const exList = () => (exCache ??= allExercises(exercises, settings));   // includes your renames and stacks
+
+// Saves a changed store (gyms, current gym, default gym) and refreshes what the screens read from it.
+function saveStore(next) {
+  store = next;
+  save(KEY.store, store);
+  reloadSettings();
+}
+
+// The current gym's equipment in the shape the screens use, plus any exercises you added that the gym
+// has not saved anything for yet.
+const exList = () => (exCache ??= [
+  ...exerciseList(store.gyms[store.currentGym] || {}),
+  ...(store.custom || []).filter((c) => !store.gyms[store.currentGym]?.equipment?.[c.id]),
+]);
+const gymSets = () => setsForGym(sets, store.currentGym);   // only the sets done at the current gym
+const gymName = (id) => store.gyms[id]?.name ?? id;
 
 // The selected session. Whatever is selected is remembered and is what Quick start uses.
 let session = { type: "legs", mode: "heavy", ...load(KEY.session, {}) };
@@ -71,6 +100,8 @@ let backupMsg = "";        // a short message shown once on the Backup screen
 let stackFilter = "all";   // Machine setup list: "all", "legs" or "arms"
 let stackId = null;        // the machine being set up on the Machine setup screen
 let stackPins = [];        // the list of stack weights being built for that machine
+let gymId = null;          // the gym shown on the Gym screen
+let draft = { name: "", from: "", ids: new Set() };   // a gym being added: its name and the equipment to copy
 
 const app = $("app");
 const typeInfo = (id) => sessionTypes.find((t) => t.id === id);
@@ -146,11 +177,12 @@ document.addEventListener("visibilitychange", tick);
 // Where each screen's Back button (and the phone's back gesture) goes.
 const BACK = {
   list: "start", setup: "start", edit: "setup", exercise: "list", pick: "exercise",
-  stacks: "start", stackEdit: "stacks", backup: "start",
+  stacks: "start", stackEdit: "stacks", backup: "start", gyms: "start", gymEdit: "gyms", gymAdd: "gyms",
 };
 const SCREENS = {
   start: renderStart, list: renderList, exercise: renderExercise, pick: renderPick, setup: renderSetup,
   edit: renderEdit, stacks: renderStacks, stackEdit: renderStackEdit, backup: renderBackup,
+  gyms: renderGyms, gymEdit: renderGymEdit, gymAdd: renderGymAdd,
 };
 
 function render() {
@@ -193,12 +225,15 @@ function renderStart() {
   const age = backupAge(load(KEY.lastBackup, null));
   app.innerHTML =
     "<h1>Gym Log</h1>" + timeBar() +
+    "<label>Gym</label>" +
+    selectHtml("gymSel", optionsHtml(gymList(store).map((g) => g.id), store.currentGym, (id) => esc(gymName(id))), "field") +
     '<button class="primary" id="quick">Quick start: ' + esc(sessionLabel(session)) + "</button>" +
     "<label>Session</label>" +
     '<div class="choices" id="types"></div>' +
     (t.weights ? '<label>Day type</label><div class="choices" id="modes"></div>' : "") +
     '<button class="secondary" id="setupBtn">Set up ' + esc(sessionLabel(session)) + "</button>" +
     '<button class="link" id="stacksBtn" style="display:block;margin:32px auto 0;opacity:0.6">Machine setup</button>' +
+    '<button class="link" id="gymsBtn" style="display:block;margin:12px auto 0;opacity:0.6">Gyms</button>' +
     '<button class="faintlink" id="backupBtn">Backup &amp; restore' + (age.stale ? " (last backup: " + age.text + ")" : "") + "</button>";
 
   // Choosing a session or day type updates Quick start and is remembered straight away.
@@ -211,8 +246,10 @@ function renderStart() {
     quick: () => { showMore = false; go("list"); },
     setupBtn: () => go("setup"),
     stacksBtn: () => go("stacks"),
+    gymsBtn: () => go("gyms"),
     backupBtn: () => go("backup"),
   });
+  $("gymSel").onchange = (ev) => { saveStore(setCurrentGym(store, ev.target.value)); render(); };
 }
 
 // ---------- Exercise list ----------
@@ -239,7 +276,7 @@ function renderList() {
   addItems("list", shown.map((e) => [esc(e.name), () => openExercise(e)]));
   if (showDone) {
     addItems("doneList", finished.map((e) => {
-      const n = todaysSets(sets, e.id).length;
+      const n = todaysSets(gymSets(), e.id).length;
       return ["&#10003; " + esc(e.name) + "<small>" + n + (n === 1 ? " set" : " sets") + " &middot; tap to view or reopen</small>", () => openExercise(e)];
     }));
   }
@@ -270,11 +307,11 @@ function cfgFor(e) {
 function resetPanel(p) {
   const cfg = cfgFor(p.ex);
   const key = modeKey();
-  const d = defaultsFor(p.ex, sets, cfg, dayMode() ?? "volume");
+  const d = defaultsFor(p.ex, gymSets(), cfg, dayMode() ?? "volume");
   p.reps = d.reps;
   p.weight = d.weight;
   // The warm-up set (the first set of the day, when a warm-up weight is set) uses the warm-up reps.
-  if (cfg["start" + key] !== null && todaysSets(sets, p.ex.id).length === 0) {
+  if (cfg["start" + key] !== null && todaysSets(gymSets(), p.ex.id).length === 0) {
     p.reps = warmupReps(settings, p.ex.id, key);
   }
   if (!hasExtras(p.ex)) return;
@@ -305,7 +342,7 @@ function panelHtml(p, i) {
   const e = p.ex;
   const cfg = cfgFor(e);
   const key = modeKey();
-  const today = todaysSets(sets, e.id);
+  const today = todaysSets(gymSets(), e.id);
   const hasWarmup = cfg["start" + key] !== null;
   const totalSets = cfg["sets" + key] + (hasWarmup ? 1 : 0);
   const complete = today.length >= totalSets;
@@ -378,10 +415,10 @@ function bindPanel(p, i) {
     rMinus: () => { p.reps = Math.max(0, p.reps - 1); render(); },
     rPlus: () => { p.reps += 1; render(); },
     logBtn: () => {
-      sets.push(makeSet({ exerciseId: e.id, weight: p.weight, reps: p.reps, mode: dayMode() || undefined }));
+      sets.push(makeSet({ exerciseId: e.id, weight: p.weight, reps: p.reps, mode: dayMode() || undefined, gymId: store.currentGym, unit: e.unit }));
       setsChanged();
     },
-    undo: () => { sets = removeLastSet(sets, e.id); setsChanged(); },
+    undo: () => { sets = removeLastSet(sets, e.id, store.currentGym); setsChanged(); },
     // Sets are saved as you log them. Finish marks only this exercise as done for today and takes it
     // off the list. If it was one of a superset, the other exercise stays on the page.
     finish: () => {
@@ -488,12 +525,11 @@ function renderEdit() {
   const key = modeKey();
   const withExtras = hasExtras(e);
   const withWarmup = supportsWarmup(e);
-// replace the old hasStack and savedExtra block (about lines 490-494)
   const hasStack = hasPins(e);
   const extraFor = (kind) => {
-  const x = savedExtra(settings, e.id, kind, key);
-  return Number.isFinite(x) ? x : 0;
-};
+    const x = savedExtra(settings, e.id, kind, key);
+    return Number.isFinite(x) ? x : 0;
+  };
 
   // A stack weight: chosen from the machine's stack when it has one, otherwise typed.
   const stackField = (id, label, value) => hasStack
@@ -505,7 +541,6 @@ function renderEdit() {
     const total = cfg[kind + key];
     const id = "f_" + kind;
     if (!withExtras) return stackField(id, label + " weight", total);
-// and in weightField, change the one call (about line 506)
     const extra = total === null ? 0 : extraFor(kind);
     const stack = total === null ? null : totalWeight(total, -extra);
     return cols(stackField(id, label + " weight", stack), field(id + "Extra", "Extra", extraSelectHtml(id + "Extra", e, extra)));
@@ -550,8 +585,9 @@ function renderEdit() {
 // ---------- Machine setup: the weights on each machine's stack ----------
 // A one-off job done at the gym (it can be repeated for any machine). The saved list of weights
 // replaces the step-based weight list for that machine.
+const isStack = (e) => (e.type ?? (e.unit === "lb" ? "stack" : "")) === "stack";
 const stackMachines = () =>
-  exList().filter((e) => e.unit === "lb" && e.kind !== "time" && (e.group === "legs" || e.group === "arms"));
+  exList().filter((e) => isStack(e) && e.kind !== "time" && (e.group === "legs" || e.group === "arms"));
 
 function renderStacks() {
   const all = stackMachines();
@@ -571,23 +607,24 @@ function renderStacks() {
 
 function renderStackEdit() {
   const e = exList().find((x) => x.id === stackId);
+  const unit = e.unit;
   const saved = settings.exercises?.[e.id]?.stackSpec || {};
   const changes = Array.isArray(saved.changes) ? saved.changes : [];
 
   const stepSelect = (id, chosen, optional) =>
-    selectHtml(id, (optional ? '<option value="">None</option>' : "") + optionsHtml(STEP_CHOICES, chosen, (s) => s + " lb"));
+    selectHtml(id, (optional ? '<option value="">None</option>' : "") + optionsHtml(stepChoices(unit), chosen, (s) => s + " " + unit));
   const changeRow = (n) => {
     const c = changes[n - 1] || {};
-    return cols(numField("s_at" + n, "From weight (lb)", c.at, "e.g. 100"), field("s_cs" + n, "New step", stepSelect("s_cs" + n, c.step, true)));
+    return cols(numField("s_at" + n, "From weight (" + unit + ")", c.at, "e.g. 100"), field("s_cs" + n, "New step", stepSelect("s_cs" + n, c.step, true)));
   };
 
   app.innerHTML =
     backBtn("Back without saving") + "<h2>" + esc(e.name) + "</h2>" +
-    numField("s_low", "Lowest weight (lb)", saved.low, "e.g. 10") +
-    field("s_step", "Step", stepSelect("s_step", saved.step ?? 10, false)) +
+    numField("s_low", "Lowest weight (" + unit + ")", saved.low, "e.g. 10") +
+    field("s_step", "Step", stepSelect("s_step", saved.step ?? defaultStep("stack", unit), false)) +
     box("Step changes (optional)",
-      muted("Use these if the step changes part way up the stack, e.g. from 100 lb the step becomes 15 lb.") + changeRow(1) + changeRow(2)) +
-    numField("s_top", "Top weight (lb)", saved.top, "e.g. 150") +
+      muted("Use these if the step changes part way up the stack, e.g. from 100 " + unit + " the step becomes 15 " + unit + ".") + changeRow(1) + changeRow(2)) +
+    numField("s_top", "Top weight (" + unit + ")", saved.top, "e.g. 150") +
     box("Weights on this machine",
       '<div id="preview"></div><div class="other"><input id="s_add" type="number" inputmode="decimal" step="any" placeholder="Add a weight, e.g. 125"><button id="addBtn">Add weight</button></div>') +
     '<button class="primary" id="save">Save</button>' +
@@ -609,7 +646,7 @@ function renderStackEdit() {
       (stackPins.length ? muted(stackPins.length + " weights. Tap one to remove it.", "small") : "") +
       stackPins.map((w) => '<button class="chip" data-w="' + w + '">' + w + "</button>").join("");
     $("preview").querySelectorAll(".chip").forEach((b) => {
-      b.onclick = () => { stackPins = removePin(stackPins, Number(b.dataset.w)); drawPreview("Removed " + b.dataset.w + " lb."); };
+      b.onclick = () => { stackPins = removePin(stackPins, Number(b.dataset.w)); drawPreview("Removed " + b.dataset.w + " " + unit + "."); };
     });
   };
 
@@ -633,7 +670,7 @@ function renderStackEdit() {
       if (w === null) return;
       stackPins = addPin(stackPins, w);
       $("s_add").value = "";
-      drawPreview("Added " + w + " lb.");
+      drawPreview("Added " + w + " " + unit + ".");
     },
     save: () => {
       if (stackPins.length === 0) { alert("Fill in the boxes first so there are weights to save."); return; }
@@ -648,6 +685,107 @@ function renderStackEdit() {
       if (!confirm("Remove the saved weights for this machine?")) return;
       saveSettings(updateExercise(settings, e.id, { pins: null, stackSpec: null }));
       go("stacks");
+    },
+  });
+}
+
+// ---------- Gyms ----------
+// Each gym has its own equipment list. This screen shows the gyms, renames them, sets the default gym and
+// adds a new one (blank, or with chosen equipment copied from another gym).
+const typeLabel = (t) => TYPES.find((x) => x.id === t)?.label ?? "Equipment";
+const gymItems = (id) => Object.entries(store.gyms[id]?.equipment || {});
+const flashHtml = () => (flash ? '<div class="note">' + esc(flash) + "</div>" : "");
+
+function renderGyms() {
+  app.innerHTML =
+    backBtn() + "<h2>Gyms</h2>" + flashHtml() +
+    muted("Each gym has its own equipment. Tap a gym to rename it, make it your default or see its equipment.") +
+    '<div id="list"></div>' +
+    '<button class="secondary" id="addGymBtn">Add a gym</button>';
+  flash = "";
+  addItems("list", gymList(store).map((g) => [
+    esc(g.name) + "<small>" +
+      [g.id === store.defaultGym && "Default", g.id === store.currentGym && "In use now", gymItems(g.id).length + " items"].filter(Boolean).join(" &middot; ") +
+      "</small>",
+    () => { gymId = g.id; go("gymEdit"); },
+  ]));
+  wire({
+    back: goBack,
+    addGymBtn: () => { draft = { name: "", from: "", ids: new Set() }; go("gymAdd"); },
+  });
+}
+
+function renderGymEdit() {
+  const g = store.gyms[gymId];
+  if (!g) return go("gyms");
+  const items = gymItems(gymId);
+  const known = sessionTypes.map((t) => [t.label, items.filter(([, i]) => i.group === t.id)]);
+  const other = items.filter(([, i]) => !sessionTypes.some((t) => t.id === i.group));
+  const groups = [...known, ["Other", other]].filter(([, list]) => list.length > 0);
+  const line = ([, i]) =>
+    muted(esc(i.name) + " &middot; " + typeLabel(i.type) + ", " + i.unit + (Array.isArray(i.pins) && i.pins.length ? " &middot; stack saved" : ""), "small");
+  app.innerHTML =
+    backBtn() + "<h2>" + esc(g.name) + "</h2>" + flashHtml() +
+    field("ge_name", "Gym name", '<input class="field" id="ge_name" type="text" value="' + esc(g.name) + '">') +
+    '<button class="secondary" id="saveName">Save name</button>' +
+    (store.defaultGym === gymId ? muted("This is your default gym. The app starts here.") : '<button class="secondary" id="makeDefault">Make this my default gym</button>') +
+    (store.currentGym === gymId ? muted("You are using this gym now.") : '<button class="primary" id="useNow">Use this gym now</button>') +
+    "<h2>Equipment (" + items.length + ")</h2>" +
+    (items.length === 0 ? muted("No equipment yet.") : "") +
+    groups.map(([label, list]) => box(esc(label) + " (" + list.length + ")", list.map(line).join(""))).join("");
+  flash = "";
+  wire({
+    back: goBack,
+    saveName: () => {
+      const next = renameGym(store, gymId, $("ge_name").value);
+      if (next === store) { alert("Enter a name for the gym."); return; }
+      saveStore(next);
+      flash = "Name saved";
+      render();
+    },
+    makeDefault: () => { saveStore(setDefaultGym(store, gymId)); flash = "Default gym changed"; render(); },
+    useNow: () => { saveStore(setCurrentGym(store, gymId)); flash = "Now using " + gymName(gymId); render(); },
+  });
+}
+
+function renderGymAdd() {
+  const items = draft.from ? gymItems(draft.from) : [];
+  app.innerHTML =
+    backBtn("Back without adding") + "<h2>Add a gym</h2>" +
+    field("ga_name", "Gym name", '<input class="field" id="ga_name" type="text" placeholder="e.g. Holiday gym" value="' + esc(draft.name) + '">') +
+    field("ga_from", "Copy equipment from",
+      selectHtml("ga_from", '<option value="">Start with no equipment</option>' +
+        optionsHtml(gymList(store).map((g) => g.id), draft.from, (id) => esc(gymName(id))), "field")) +
+    (draft.from
+      ? muted("Tap to tick or untick what this gym also has. Stacks and units are copied. Your own weights and notes are not.", "small") +
+        '<div class="topbar">' + ghostBtn("allBtn", "Select all") + ghostBtn("noneBtn", "Select none") + "</div>" +
+        '<div id="copyList"></div>'
+      : "") +
+    '<button class="primary" id="addBtn">Add gym</button>';
+
+  $("ga_name").oninput = (ev) => { draft.name = ev.target.value; };
+  $("ga_from").onchange = (ev) => {
+    draft.from = ev.target.value;
+    draft.ids = new Set(draft.from ? gymItems(draft.from).map(([id]) => id) : []);
+    render();
+  };
+  if (draft.from) {
+    addItems("copyList", items.map(([id, i]) => [
+      (draft.ids.has(id) ? "&#10003; " : "") + esc(i.name) + "<small>" + esc(typeLabel(i.type)) + ", " + i.unit + "</small>",
+      () => { if (draft.ids.has(id)) draft.ids.delete(id); else draft.ids.add(id); render(); },
+    ]));
+  }
+  wire({
+    back: goBack,
+    allBtn: () => { draft.ids = new Set(items.map(([id]) => id)); render(); },
+    noneBtn: () => { draft.ids = new Set(); render(); },
+    addBtn: () => {
+      const r = addGym(store, draft.name, draft.from ? { from: draft.from, ids: [...draft.ids] } : {});
+      if (r.id === null) { alert("Enter a name for the gym."); return; }
+      saveStore(r.store);
+      gymId = r.id;
+      flash = "Added " + gymName(r.id) + (r.copied > 0 ? " with " + r.copied + (r.copied === 1 ? " item" : " items") + " copied" : "");
+      go("gymEdit");
     },
   });
 }
