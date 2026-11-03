@@ -2,7 +2,7 @@ import test from "node:test";
 import assert from "node:assert/strict";
 import {
   makeSet, setGym, setsForGym, tagSets, removeLastSet, bestSet, isNewPb, personalBests, GYM_SPECIFIC_TYPES,
-  hasGymBest, describeBest, weightCaption, newBestLevel,
+  hasGymBest, describeBest, weightCaption, newBestLevel, hasHistory, idsWithHistory,
 } from "./log.js";
 
 const at = (iso) => new Date(iso);
@@ -209,4 +209,30 @@ test("newBestLevel works with personalBests, including a typed-in best and sets 
   assert.equal(newBestLevel(before, { weight: 140, reps: 5 }), "ever");
   const typed = personalBests(all, lp, "main", { weight: 200, reps: 1 });
   assert.equal(newBestLevel(typed, { weight: 150, reps: 5 }), null);     // below the typed-in best at both levels
+});
+
+// ---------- Stage 3B: which machines have history at a gym ----------
+test("hasHistory: any logged set at that gym counts, and sets with no gym belong to the first gym", () => {
+  const all = [
+    { exerciseId: "leg-press", weight: 100, reps: 5 },                       // an old set, no gym: "main"
+    { exerciseId: "deadlift", weight: 60, reps: 5, gymId: "home", unit: "kg" },
+  ];
+  assert.equal(hasHistory(all, "leg-press", "main"), true);
+  assert.equal(hasHistory(all, "leg-press", "home"), false);
+  assert.equal(hasHistory(all, "deadlift", "home"), true);
+  assert.equal(hasHistory(all, "deadlift", "main"), false);
+  assert.equal(hasHistory(all, "pull-up", "main"), false);
+  assert.equal(hasHistory([], "leg-press", "main"), false);
+});
+
+test("idsWithHistory lists every exercise with a set at that gym, once each", () => {
+  const all = [
+    { exerciseId: "leg-press", weight: 100, reps: 5 },
+    { exerciseId: "leg-press", weight: 110, reps: 5, gymId: "main", unit: "lb" },
+    { exerciseId: "deadlift", weight: 60, reps: 5, gymId: "home", unit: "kg" },
+    { exerciseId: "treadmill", minutes: 10, gymId: "main" },
+  ];
+  assert.deepEqual([...idsWithHistory(all, "main")].sort(), ["leg-press", "treadmill"]);
+  assert.deepEqual([...idsWithHistory(all, "home")], ["deadlift"]);
+  assert.equal(idsWithHistory(all, "away").size, 0);
 });
