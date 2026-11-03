@@ -3,7 +3,10 @@ import assert from "node:assert/strict";
 import {
   DEFAULT_UNITS, extraList, mainStep, stepChoices, makeItem, uniqueId, newGym, starterEquipment, withMachineData,
   addItem, updateItem, removeItem, setDefaultUnit, copyEquipment, toExercise, exerciseList, convert, formatBoth,
+  checkName, isHidden, hideItem, restoreItem, visibleEntries, hiddenEntries, unitChangeImpact, dumbbellBands,
 } from "./gym.js";
+import { buildPins } from "./stacks.js";
+import { emptyStore, toLegacySettings, applyLegacySettings, DEFAULT_GYM, DEFAULT_PERSON } from "./store.js";
 
 const builtIn = [
   { id: "leg-press", name: "Leg Press Machine", group: "legs", common: true, unit: "lb", step: 10 },
@@ -175,4 +178,101 @@ test("convert and formatBoth", () => {
   assert.equal(formatBoth(100, "lb", "kg"), "45.4 kg (100 lb)");
   assert.equal(formatBoth(100, "kg"), "100 kg (220.5 lb)");
   assert.equal(formatBoth(62.5, "kg", "lb"), "137.8 lb (62.5 kg)");
+});
+
+// ---------- Stage 3B: editing equipment ----------
+test("makeItem keeps hidden only when it is true and tidies a weight list", () => {
+  assert.equal(makeItem({ name: "x", hidden: true }).hidden, true);
+  assert.equal("hidden" in makeItem({ name: "x", hidden: false }), false);
+  assert.equal("hidden" in makeItem({ name: "x", hidden: "yes" }), false);
+  assert.deepEqual(makeItem({ name: "x", pins: [30, 10, 20, 10, 0, -5, 20] }).pins, [10, 20, 30]);
+});
+
+test("checkName spots blank, duplicate and hidden names, ignoring case and spaces", () => {
+  const g = newGym("G", {}, {
+    lp: makeItem({ name: "Leg Press" }),
+    old: makeItem({ name: "Old Machine", hidden: true }),
+  });
+  assert.deepEqual(checkName(g, "  "), { ok: false, reason: "blank", existing: null });
+  assert.deepEqual(checkName(g, " leg press "), { ok: false, reason: "duplicate", existing: "lp" });
+  assert.deepEqual(checkName(g, "OLD machine"), { ok: false, reason: "hidden", existing: "old" });
+  assert.equal(checkName(g, "Chest Press").ok, true);
+  assert.equal(checkName(g, "Leg Press", "lp").ok, true);   // renaming an item to its own name is fine
+  const both = { ...g, equipment: { ...g.equipment, lp2: makeItem({ name: "leg press", hidden: true }) } };
+  assert.equal(checkName(both, "Leg Press").reason, "duplicate");
+});
+
+test("updateItem can change the type, keeping a weight list or resetting the step", () => {
+  const g = newGym("G", {}, {
+    a: makeItem({ name: "A", type: "stack", unit: "lb", pins: [10, 20] }),
+    b: makeItem({ name: "B", type: "stack", unit: "kg" }),
+  });
+  const a = updateItem(g, "a", { type: "plate" }).equipment.a;
+  assert.equal(a.type, "plate");
+  assert.deepEqual(a.pins, [10, 20]);
+  assert.equal(a.step, g.equipment.a.step);
+  const b = updateItem(g, "b", { type: "barbell" }).equipment.b;
+  assert.equal(b.type, "barbell");
+  assert.equal(b.step, 10);                                   // the barbell's main step in kg
+  assert.equal(updateItem(g, "b", { type: "nonsense" }).equipment.b.type, "stack");
+  assert.equal(updateItem(g, "b", { name: "  Bee  " }).equipment.b.name, "Bee");
+});
+
+test("hiding an item keeps it, leaves it out of the exercise list and can be undone", () => {
+  const g = newGym("G", {}, { a: makeItem({ name: "A", pins: [10, 20] }), b: makeItem({ name: "B" }) });
+  const h = hideItem(g, "a");
+  assert.equal(isHidden(h.equipment.a), true);
+  assert.deepEqual(h.equipment.a.pins, [10, 20]);
+  assert.deepEqual(visibleEntries(h).map(([id]) => id), ["b"]);
+  assert.deepEqual(hiddenEntries(h).map(([id]) => id), ["a"]);
+  assert.deepEqual(exerciseList(h).map((e) => e.id), ["b"]);
+  assert.equal(Object.keys(h.equipment).length, 2);
+  assert.equal(isHidden(g.equipment.a), false);               // the original gym is unchanged
+  const back = restoreItem(h, "a");
+  assert.equal("hidden" in back.equipment.a, false);
+  assert.deepEqual(exerciseList(back).map((e) => e.id), ["a", "b"]);
+  assert.equal(hideItem(g, "missing"), g);
+  assert.equal(uniqueId("A", Object.keys(h.equipment)), "a-2");   // a hidden item keeps its id
+});
+
+test("unitChangeImpact counts the items that would change and the saved lists that would be cleared", () => {
+  const g = newGym("G", {}, {
+    a: makeItem({ name: "A", type: "stack", unit: "lb", pins: [10, 20] }),
+    b: makeItem({ name: "B", type: "stack", unit: "lb" }),
+    c: makeItem({ name: "C", type: "stack", unit: "kg", pins: [5] }),
+    d: makeItem({ name: "D", type: "dumbbell", unit: "lb" }),
+  });
+  assert.deepEqual(unitChangeImpact(g, "stack", "kg"), { items: 2, lists: 1 });
+  assert.deepEqual(unitChangeImpact(g, "stack", "lb"), { items: 1, lists: 1 });
+  assert.deepEqual(unitChangeImpact(g, "barbell", "kg"), { items: 0, lists: 0 });
+});
+
+test("dumbbell bands build the usual weights through the stack builder", () => {
+  const kg = buildPins(dumbbellBands("kg"));
+  assert.equal(kg.error, "");
+  assert.equal(kg.note, "");
+  assert.deepEqual(kg.pins.slice(0, 11), [1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 12]);
+  assert.equal(kg.pins.at(-1), 50);
+  assert.equal(kg.pins.length, 30);
+  const lb = buildPins(dumbbellBands("lb"));
+  assert.equal(lb.error, "");
+  assert.equal(lb.note, "");
+  assert.deepEqual(lb.pins.slice(0, 6), [2.5, 5, 7.5, 10, 15, 20]);
+  assert.equal(lb.pins.at(-1), 100);
+  const copy = dumbbellBands("kg");
+  copy.changes.push({ at: 99, step: 1 });
+  assert.equal(dumbbellBands("kg").changes.length, 1);        // each call gives a fresh copy
+});
+
+test("a hidden item stays hidden, with its stack, through the settings round trip", () => {
+  let store = emptyStore();
+  const gym = store.gyms[DEFAULT_GYM];
+  const lp = updateItem(gym, "leg-press", { pins: [10, 20, 30], stackSpec: { low: 10, step: 10, top: 30, changes: [] } });
+  store = { ...store, gyms: { ...store.gyms, [DEFAULT_GYM]: hideItem(lp, "leg-press") } };
+  const flat = toLegacySettings(store, DEFAULT_PERSON, DEFAULT_GYM);
+  const after = applyLegacySettings(store, DEFAULT_PERSON, DEFAULT_GYM, flat).gyms[DEFAULT_GYM];
+  assert.equal(isHidden(after.equipment["leg-press"]), true);
+  assert.deepEqual(after.equipment["leg-press"].pins, [10, 20, 30]);
+  assert.equal(exerciseList(after).some((e) => e.id === "leg-press"), false);
+  assert.equal(exerciseList(after).some((e) => e.id === "deadlift"), true);
 });
