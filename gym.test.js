@@ -17,18 +17,18 @@ const builtIn = [
   { id: "treadmill", name: "Treadmill", group: "cardio", common: true, unit: "min", step: 1, kind: "time" },
 ];
 
-test("extras: stack lb 2.5 to 20, stack kg 1.25 to 10, barbell and plate between the main steps", () => {
+test("extras: stack lb 2.5 to 20, stack kg 1.25 to 10, barbell and plate 2.5, 5 and 7.5 in both units", () => {
   assert.deepEqual(extraList("stack", "lb"), [2.5, 5, 7.5, 10, 12.5, 15, 17.5, 20]);
   assert.deepEqual(extraList("stack", "kg"), [1.25, 2.5, 3.75, 5, 6.25, 7.5, 8.75, 10]);
   assert.deepEqual(extraList("barbell", "kg"), [2.5, 5, 7.5]);
-  assert.deepEqual(extraList("plate", "lb"), [5, 10, 15]);
+  assert.deepEqual(extraList("plate", "lb"), [2.5, 5, 7.5]);
   assert.deepEqual(extraList("dumbbell", "kg"), []);
   assert.deepEqual(extraList("bodyweight", "lb"), []);
 });
 
-test("main step is 10 kg or 20 lb for barbells and plate machines only", () => {
+test("main step is 10 (kg or lb) for barbells and plate machines only", () => {
   assert.equal(mainStep("barbell", "kg"), 10);
-  assert.equal(mainStep("plate", "lb"), 20);
+  assert.equal(mainStep("plate", "lb"), 10);
   assert.equal(mainStep("stack", "lb"), null);
   assert.deepEqual(stepChoices("lb"), [5, 10, 15, 20]);
   assert.ok(stepChoices("kg").length > 0);

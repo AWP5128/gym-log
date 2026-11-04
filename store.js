@@ -19,6 +19,7 @@
 import { exercises } from "./exercises.js";
 import {
   newGym, makeItem, starterEquipment, withMachineData, updateItem, copyEquipment, uniqueId, DEFAULT_UNITS,
+  ensureWeightSets, seedStarterFree, STARTER_FREE,
 } from "./gym.js";
 
 export const STORE_VERSION = 3;
@@ -42,6 +43,11 @@ const put = (obj, key, v) => { if (Number.isFinite(v)) obj[key] = v; };
 
 // The built-in exercises as equipment items: what a first gym starts with.
 const STARTER = starterEquipment(exercises);
+// The starter dumbbell and barbell exercises as built in (so they are not listed as changed).
+const STARTER_FREE_BASE = Object.fromEntries(STARTER_FREE.map((x) => [x.id, makeItem(x)]));
+
+// A gym with its dumbbell and barbell sets in place and the starter exercises added.
+const freshGym = (gym) => ensureWeightSets(seedStarterFree(ensureWeightSets(gym)));
 
 export function emptyStore() {
   return {
@@ -50,7 +56,7 @@ export function emptyStore() {
     defaultGym: DEFAULT_GYM,
     currentPerson: DEFAULT_PERSON,
     custom: [],
-    gyms: { [DEFAULT_GYM]: newGym("My gym", {}, starterEquipment(exercises)) },
+    gyms: { [DEFAULT_GYM]: freshGym(newGym("My gym", {}, starterEquipment(exercises))) },
     people: { [DEFAULT_PERSON]: { name: "Awp", defaults: {}, gyms: { [DEFAULT_GYM]: { machines: {} } } } },
   };
 }
@@ -70,6 +76,7 @@ function sharedFrom(c) {
 function overrides(item, base = {}) {
   const out = {};
   if (item.name && item.name !== base.name) out.name = item.name;
+  if (item.weightSet) return out;   // its weights belong to the gym's weight set
   if (item.step > 0 && item.step !== base.step) out.step = item.step;
   if (Array.isArray(item.pins) && item.pins.length > 0) out.pins = item.pins;
   if (isObj(item.stackSpec)) out.stackSpec = item.stackSpec;
@@ -77,7 +84,7 @@ function overrides(item, base = {}) {
 }
 
 // What an item is compared with: its built-in exercise, or the exercise you added.
-const baseFor = (id, custom = []) => STARTER[id] || custom.find((c) => c.id === id) || {};
+const baseFor = (id, custom = []) => STARTER[id] || STARTER_FREE_BASE[id] || custom.find((c) => c.id === id) || {};
 
 // An item for an id that is not built in (an exercise you added), from its shared fields.
 function newItem(id, shared, custom) {
@@ -94,13 +101,13 @@ function buildEquipment(shared, custom) {
 
 // ---------- Reading a store ----------
 function cleanGym(g) {
-  if (!isObj(g)) return newGym("My gym");
-  return {
+  if (!isObj(g)) return freshGym(newGym("My gym"));
+  return freshGym({
     ...g,
     name: typeof g.name === "string" && g.name.trim() ? g.name : "My gym",
     units: { ...DEFAULT_UNITS, ...(isObj(g.units) ? g.units : {}) },
     equipment: isObj(g.equipment) ? g.equipment : {},
-  };
+  });
 }
 
 // Version 2 kept only the shared machine data in each gym. Version 3 gives each gym its own equipment list.
@@ -149,7 +156,7 @@ export function addGym(store, name, { from, ids = [] } = {}) {
   const clean = String(name ?? "").trim();
   if (!clean) return { store, id: null, copied: 0 };
   const id = uniqueId(clean, Object.keys(store.gyms || {}), "gym");
-  let gym = newGym(clean);
+  let gym = { ...newGym(clean), starterFree: true };   // a new gym never gets the starter exercises
   let copied = 0;
   if (from && store.gyms?.[from]) ({ gym, copied } = copyEquipment(store.gyms[from], ids, gym));
   return { store: { ...store, gyms: { ...store.gyms, [id]: gym } }, id, copied };
@@ -229,7 +236,7 @@ export function migrateLegacy(legacy, opts = {}) {
     defaultGym: gymId,
     currentPerson: personId,
     custom: s.custom,
-    gyms: { [gymId]: newGym(gymName, {}, buildEquipment(s.shared, s.custom)) },
+    gyms: { [gymId]: freshGym(newGym(gymName, {}, buildEquipment(s.shared, s.custom))) },
     people: { [personId]: { name: personName, defaults: s.defaults, gyms: { [gymId]: { machines: s.personal } } } },
   };
 }

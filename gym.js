@@ -4,6 +4,12 @@
 // gym  = { name, units: { type: "kg" | "lb" }, equipment: { exerciseId: item } }
 // item = { name, group, type, unit, step, common, min?, pins?, stackSpec?, hidden? }
 //
+// - Dumbbells and barbells are shared: a gym has weight sets (gym.weightSets, normally "dumbbells" and
+//   "barbell") that hold the unit and the list of weights the gym has. Any number of exercises can use a set
+//   (item.weightSet is the set's id), and each picks its working weight from the set's list.
+//   weightSet = { name, type: "dumbbell" | "barbell", unit, pins, stackSpec?, top? }
+//   Dumbbell weights are per dumbbell (the weight in each hand). Barbell weights go up in steps of 10 (kg or
+//   lb), with extras of 2.5, 5 and 7.5 on top; the bar's own weight is not recorded.
 // - hidden: true means the item was removed from the gym's list but is kept, so it can be brought back.
 //   Logged sets are never touched by hiding. Hidden items are left out of the exercise list.
 // - The unit belongs to the equipment type within a gym (stack machines can be lb while dumbbells are kg).
@@ -27,16 +33,16 @@ export const round2 = (n) => Math.round(n * 100) / 100;
 const ladder = (step, count) => Array.from({ length: count }, (_, i) => round2(step * (i + 1)));
 const barLike = (type) => type === "barbell" || type === "plate";
 
-// Extras: stack machines 2.5 to 20 lb or 1.25 to 10 kg; barbells and plate-loaded machines sit
-// between their main steps (10 kg or 20 lb), so they offer 2.5, 5, 7.5 kg or 5, 10, 15 lb.
+// Extras: stack machines 2.5 to 20 lb or 1.25 to 10 kg; barbells and plate-loaded machines count in main
+// steps of 10 (kg or lb), so they offer extras of 2.5, 5 and 7.5.
 const STACK_EXTRAS = { lb: ladder(2.5, 8), kg: ladder(1.25, 8) };
-const BAR_EXTRAS = { lb: [5, 10, 15], kg: [2.5, 5, 7.5] };
+const BAR_EXTRAS = { lb: [2.5, 5, 7.5], kg: [2.5, 5, 7.5] };
 // The steps offered when building a stack list (change these if a machine needs another).
 const STEPS = { lb: [5, 10, 15, 20], kg: [2.5, 5, 7.5, 10] };
 // The step used until a stack list is built.
 const START_STEP = {
   stack: { lb: 10, kg: 5 }, dumbbell: { lb: 5, kg: 2 },
-  barbell: { lb: 20, kg: 10 }, plate: { lb: 20, kg: 10 }, bodyweight: { lb: 5, kg: 2.5 },
+  barbell: { lb: 10, kg: 10 }, plate: { lb: 10, kg: 10 }, bodyweight: { lb: 5, kg: 2.5 },
 };
 
 export function extraList(type, unit) {
@@ -44,7 +50,7 @@ export function extraList(type, unit) {
   if (barLike(type)) return BAR_EXTRAS[unit] || [];
   return [];
 }
-// The main step of a barbell or plate-loaded machine, or null for other types.
+// The main step of a barbell or plate-loaded machine (10 kg or 10 lb), or null for other types.
 export const mainStep = (type, unit) => (barLike(type) ? START_STEP[type][unit] ?? null : null);
 export const stepChoices = (unit) => STEPS[unit] || [];
 export const defaultStep = (type, unit) => START_STEP[type]?.[unit] ?? 1;
@@ -67,6 +73,7 @@ export function makeItem(spec) {
   if (pins.length > 0) item.pins = pins;
   if (spec.stackSpec && typeof spec.stackSpec === "object") item.stackSpec = spec.stackSpec;
   if (spec.hidden === true) item.hidden = true;
+  if (typeof spec.weightSet === "string" && spec.weightSet) item.weightSet = spec.weightSet;
   return item;
 }
 
@@ -104,6 +111,7 @@ export const newGym = (name, units = {}, equipment = {}) => ({
   name: String(name ?? "").trim() || "My gym",
   units: { ...DEFAULT_UNITS, ...units },
   equipment,
+  weightSets: defaultWeightSets({ ...DEFAULT_UNITS, ...units }),
 });
 
 // The built-in exercise list as equipment items: lb exercises are stack machines; the kg ones are
@@ -114,7 +122,7 @@ export function starterEquipment(builtIn) {
   for (const e of builtIn) {
     if (e.kind === "time") continue;
     const type = e.unit === "lb" ? "stack" : STARTER_TYPE[e.id] || "barbell";
-    // Barbells and plate-loaded machines count in main steps (10 kg or 20 lb) plus extras between them.
+    // Barbells and plate-loaded machines count in main steps of 10 plus extras between them.
     out[e.id] = makeItem({ ...e, type, ...(barLike(type) ? { step: mainStep(type, e.unit) } : {}) });
   }
   return out;
@@ -131,13 +139,18 @@ export function withMachineData(equipment, machines = {}) {
   return out;
 }
 
-// Adds an item, taking the unit from the gym's setting for that type. Returns { gym, id } (id is null
-// when the name is blank).
+// Adds an item, taking the unit from the gym's setting for that type. A dumbbell or barbell item joins the
+// gym's weight set for that type (and takes its unit), unless a different unit is asked for. Returns
+// { gym, id } (id is null when the name is blank).
 export function addItem(gym, spec) {
   if (!String(spec.name ?? "").trim()) return { gym, id: null };
   const type = TYPE_IDS.includes(spec.type) ? spec.type : "stack";
   const id = uniqueId(spec.name, Object.keys(gym.equipment || {}));
-  const item = makeItem({ ...spec, type, unit: spec.unit ?? gym.units?.[type] });
+  const setId = setIdFor(type);
+  const set = setId ? gym.weightSets?.[setId] : null;
+  const linked = !!set && (spec.unit === undefined || spec.unit === set.unit);
+  const unit = linked ? set.unit : spec.unit ?? gym.units?.[type];
+  const item = makeItem({ ...spec, type, unit, ...(linked ? { weightSet: setId } : {}) });
   return { gym: { ...gym, equipment: { ...gym.equipment, [id]: item } }, id };
 }
 
@@ -200,39 +213,209 @@ const DUMBBELL_BANDS = {
 };
 export const dumbbellBands = (unit) => structuredClone(DUMBBELL_BANDS[unit] ?? DUMBBELL_BANDS.kg);
 
+// ---------- Weight sets: the dumbbells and barbell a gym has ----------
+export const WEIGHT_SET_TYPES = ["dumbbell", "barbell"];
+export const setIdFor = (type) => (type === "dumbbell" ? "dumbbells" : type === "barbell" ? "barbell" : null);
+const SET_NAME = { dumbbell: "Dumbbells", barbell: "Barbell" };
+const BARBELL_TOP = { kg: 200, lb: 450 };
+
+// The usual dumbbell weights in a unit (see dumbbellBands). stacks.js buildPins gives the same list.
+export function dumbbellWeights(unit) {
+  const { low, step, top, changes } = dumbbellBands(unit);
+  const weights = [low];
+  for (let w = low; ; ) {
+    w = round2(w + changes.reduce((s, c) => (c.at <= w ? c.step : s), step));
+    if (w > top) break;
+    weights.push(w);
+  }
+  return weights;
+}
+
+// Barbell main weights: 10, 20, 30 ... up to top (200 kg or 450 lb unless a gym says otherwise).
+export function barbellWeights(unit, top = BARBELL_TOP[unit] ?? BARBELL_TOP.kg) {
+  const out = [];
+  for (let w = 10; w <= top; w += 10) out.push(w);
+  return out;
+}
+
+// A tidy weight set from loose data. With no weights given it starts with the usual ones for its type.
+export function makeWeightSet(spec) {
+  const type = WEIGHT_SET_TYPES.includes(spec.type) ? spec.type : "dumbbell";
+  const unit = UNITS.includes(spec.unit) ? spec.unit : DEFAULT_UNITS[type];
+  const out = { name: String(spec.name ?? "").trim() || SET_NAME[type], type, unit };
+  const pins = cleanPins(spec.pins);
+  if (type === "barbell") {
+    out.top = Number.isFinite(spec.top) && spec.top >= 10 ? spec.top : pins.length > 0 ? pins[pins.length - 1] : BARBELL_TOP[unit];
+    out.pins = pins.length > 0 ? pins : barbellWeights(unit, out.top);
+  } else {
+    out.pins = pins.length > 0 ? pins : dumbbellWeights(unit);
+    if (spec.stackSpec && typeof spec.stackSpec === "object") out.stackSpec = spec.stackSpec;
+    else if (pins.length === 0) out.stackSpec = dumbbellBands(unit);
+  }
+  return out;
+}
+
+// The two sets a new gym starts with, in the gym's units for those types.
+export const defaultWeightSets = (units = DEFAULT_UNITS) => ({
+  dumbbells: makeWeightSet({ type: "dumbbell", unit: units.dumbbell }),
+  barbell: makeWeightSet({ type: "barbell", unit: units.barbell }),
+});
+
+// Makes sure a gym has its dumbbell and barbell sets and that its dumbbell and barbell items use them. A
+// missing set is built from the gym's first item of that type (its unit and any weight list it had), else
+// the usual weights. An item whose unit differs from the set's is left alone, with its own weights.
+// Running it again changes nothing.
+export function ensureWeightSets(gym) {
+  const units = { ...DEFAULT_UNITS, ...(gym.units || {}) };
+  const entries = Object.entries(gym.equipment || {});
+  const weightSets = {};
+  for (const [id, s] of Object.entries(gym.weightSets && typeof gym.weightSets === "object" ? gym.weightSets : {})) {
+    weightSets[id] = makeWeightSet(s);
+  }
+  for (const type of WEIGHT_SET_TYPES) {
+    const id = setIdFor(type);
+    if (weightSets[id]) continue;
+    const first = entries.map(([, i]) => i).find((i) => i.type === type);
+    weightSets[id] = makeWeightSet({
+      type, unit: first?.unit ?? units[type], pins: first?.pins, stackSpec: first?.stackSpec,
+    });
+  }
+  const equipment = {};
+  for (const [id, item] of entries) {
+    const setId = setIdFor(item.type);
+    const own = item.weightSet && weightSets[item.weightSet]?.type === item.type ? weightSets[item.weightSet] : null;
+    const set = own ?? (setId && !item.weightSet ? weightSets[setId] : null);
+    equipment[id] = set && set.unit === item.unit ? makeItem({ ...item, weightSet: own ? item.weightSet : setId }) : item;
+  }
+  return { ...gym, weightSets, equipment };
+}
+
+// Items that use a weight set.
+export const weightSetUsers = (gym, id) =>
+  Object.entries(gym.equipment || {}).filter(([, i]) => i.weightSet === id).map(([itemId]) => itemId);
+
+// A set's unit cannot change once an exercise that uses it has logged sets at this gym (historyIds is the
+// set of exercise ids with sets there, from idsWithHistory in log.js).
+export const weightSetUnitLocked = (gym, id, historyIds = new Set()) =>
+  weightSetUsers(gym, id).some((itemId) => historyIds.has(itemId));
+
+// Changes a set's weights, name or top weight (a barbell's top builds a new list unless pins are given).
+// An empty list of pins goes back to the usual weights. A field set to null (stackSpec) is removed.
+export function updateWeightSet(gym, id, patch) {
+  const old = gym.weightSets?.[id];
+  if (!old) return gym;
+  const next = { ...old };
+  if (String(patch.name ?? "").trim()) next.name = String(patch.name).trim();
+  if ("top" in patch && old.type === "barbell" && patch.top >= 10) {
+    next.top = patch.top;
+    if (!("pins" in patch)) next.pins = barbellWeights(old.unit, patch.top);
+  }
+  if ("pins" in patch) next.pins = patch.pins;
+  if ("stackSpec" in patch) {
+    if (patch.stackSpec == null) delete next.stackSpec;
+    else next.stackSpec = patch.stackSpec;
+  }
+  return { ...gym, weightSets: { ...gym.weightSets, [id]: makeWeightSet(next) } };
+}
+
+// Changes a set's unit: its weights start again at the usual ones, and the items that use it move to the
+// new unit. Refused when an exercise using it has history here. Returns { gym, ok, reason } where reason is
+// "" when it worked, or "missing", "same" or "history".
+export function setWeightSetUnit(gym, id, unit, historyIds = new Set()) {
+  const old = gym.weightSets?.[id];
+  if (!old) return { gym, ok: false, reason: "missing" };
+  if (!UNITS.includes(unit) || unit === old.unit) return { gym, ok: false, reason: "same" };
+  if (weightSetUnitLocked(gym, id, historyIds)) return { gym, ok: false, reason: "history" };
+  let next = { ...gym, weightSets: { ...gym.weightSets, [id]: makeWeightSet({ name: old.name, type: old.type, unit }) } };
+  for (const itemId of weightSetUsers(gym, id)) next = updateItem(next, itemId, { unit });
+  return { gym: next, ok: true, reason: "" };
+}
+
+// ---------- The starter dumbbell and barbell exercises ----------
+// Added once to a gym that has equipment already (see seedStarterFree). Any of them can be hidden.
+const free = (id, name, group, type, common = true) => ({ id, name, group, type, common });
+export const STARTER_FREE = [
+  free("dumbbell-curl", "Dumbbell Curl", "arms", "dumbbell"),
+  free("hammer-curl", "Hammer Curl", "arms", "dumbbell", false),
+  free("dumbbell-shoulder-press", "Dumbbell Shoulder Press", "arms", "dumbbell"),
+  free("lateral-raise", "Lateral Raise", "arms", "dumbbell", false),
+  free("dumbbell-chest-press", "Dumbbell Chest Press", "arms", "dumbbell"),
+  free("dumbbell-row", "Dumbbell Row", "arms", "dumbbell"),
+  free("overhead-tricep-extension", "Overhead Tricep Extension (dumbbell)", "arms", "dumbbell", false),
+  free("goblet-squat", "Goblet Squat", "legs", "dumbbell"),
+  free("dumbbell-lunge", "Dumbbell Lunge", "legs", "dumbbell", false),
+  free("dumbbell-rdl", "Dumbbell Romanian Deadlift", "legs", "dumbbell", false),
+  free("dumbbell-step-up", "Dumbbell Step-up", "legs", "dumbbell", false),
+  free("weighted-crunch", "Weighted Crunch", "abs", "dumbbell"),
+  free("russian-twist", "Russian Twist", "abs", "dumbbell", false),
+  free("dumbbell-side-bend", "Dumbbell Side Bend", "abs", "dumbbell", false),
+  free("barbell-squat", "Barbell Squat", "legs", "barbell"),
+  free("barbell-rdl", "Barbell Romanian Deadlift", "legs", "barbell", false),
+  free("hip-thrust", "Hip Thrust (barbell)", "legs", "barbell", false),
+  free("barbell-bench-press", "Barbell Bench Press", "arms", "barbell"),
+  free("overhead-press", "Overhead Press (barbell)", "arms", "barbell"),
+  free("barbell-row", "Bent-over Row (barbell)", "arms", "barbell"),
+  free("barbell-curl", "Barbell Curl", "arms", "barbell", false),
+];
+
+// Adds the starter exercises to a gym that already has equipment, once (the gym remembers it with
+// starterFree). An empty gym is marked without adding anything. Ids the gym already has are left alone.
+export function seedStarterFree(gym) {
+  if (gym.starterFree === true) return gym;
+  if (Object.keys(gym.equipment || {}).length === 0) return { ...gym, starterFree: true };
+  const equipment = { ...gym.equipment };
+  for (const s of STARTER_FREE) {
+    if (equipment[s.id]) continue;
+    const set = gym.weightSets?.[setIdFor(s.type)];
+    equipment[s.id] = makeItem({ ...s, ...(set ? { unit: set.unit, weightSet: setIdFor(s.type) } : {}) });
+  }
+  return { ...gym, equipment, starterFree: true };
+}
+
 // Sets the unit new items of this type will get. Items already in the gym are not changed.
 export const setDefaultUnit = (gym, type, unit) =>
   UNITS.includes(unit) && TYPE_IDS.includes(type) ? { ...gym, units: { ...gym.units, [type]: unit } } : gym;
 
 // Copies the chosen items from one gym into another, keeping their ids. Items already in the
 // other gym are skipped unless overwrite is true. Equipment data only; nothing personal.
+// An item that uses a weight set joins the other gym's set of that name, which keeps its own weights and unit
+// (every gym has its own dumbbells); the set is copied across only if the other gym has none.
 // Returns { gym, copied, skipped }.
 export function copyEquipment(from, ids, to, { overwrite = false } = {}) {
   const equipment = { ...to.equipment };
+  const weightSets = { ...to.weightSets };
   let copied = 0;
   let skipped = 0;
   for (const id of ids) {
     const item = from.equipment?.[id];
     if (!item) continue;
     if (id in equipment && !overwrite) { skipped++; continue; }
-    equipment[id] = structuredClone(item);
+    const copy = structuredClone(item);
+    if (copy.weightSet) {
+      if (!weightSets[copy.weightSet] && from.weightSets?.[copy.weightSet]) {
+        weightSets[copy.weightSet] = structuredClone(from.weightSets[copy.weightSet]);
+      }
+      if (weightSets[copy.weightSet]) copy.unit = weightSets[copy.weightSet].unit;
+      else delete copy.weightSet;
+    }
+    equipment[id] = copy;
     copied++;
   }
-  return { gym: { ...to, equipment }, copied, skipped };
+  return { gym: { ...to, equipment, weightSets }, copied, skipped };
 }
 
 // ---------- For the screens ----------
 // An item in the shape the existing exercise code expects (id, extras, warm-up). Only stack
 // machines have warm-up sets, as before.
-export const toExercise = (id, item) => ({
-  id,
-  ...item,
-  extras: extraList(item.type, item.unit),
-  warmup: item.type === "stack",
-});
+// An item that uses a weight set takes its unit and weight list from the set (pass the gym's weightSets).
+export function toExercise(id, item, weightSets = {}) {
+  const set = item.weightSet ? weightSets?.[item.weightSet] : null;
+  const base = set ? { ...item, unit: set.unit, pins: set.pins } : item;
+  return { id, ...base, extras: extraList(item.type, base.unit), warmup: item.type === "stack" };
+}
 
 // Items that have been hidden are left out.
-export const exerciseList = (gym) => visibleEntries(gym).map(([id, item]) => toExercise(id, item));
+export const exerciseList = (gym) => visibleEntries(gym).map(([id, item]) => toExercise(id, item, gym.weightSets));
 
 // ---------- kg and lb ----------
 export const KG_PER_LB = 0.45359237;
