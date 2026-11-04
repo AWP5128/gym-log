@@ -774,15 +774,17 @@ function renderGymEdit() {
     '<button class="secondary" id="saveName">Save name</button>' +
     (store.defaultGym === gymId ? muted("This is your default gym. The app starts here.") : '<button class="secondary" id="makeDefault">Make this my default gym</button>') +
     (store.currentGym === gymId ? muted("You are using this gym now.") : '<button class="primary" id="useNow">Use this gym now</button>') +
-    "<h2>Weights</h2>" +
-    muted("The dumbbells and barbell this gym has. Exercises pick their weight from these lists.", "small") +
-    Object.entries(g.weightSets || {}).map(([sid, ws]) => box(esc(ws.name),
-      muted(ws.pins.length + " weights (" + ws.unit + ") &middot; used by " + weightSetUsers(g, sid).length + " exercises", "small") +
-      field("wsu_" + sid, "Unit", '<div class="choices" id="wsu_' + sid + '"></div>') +
-      '<button class="secondary" id="wsEdit_' + sid + '">Edit weights</button>')).join("") +
-    box("Units for new equipment",
-      muted("The unit a new item of each type starts in. Items already in the gym keep their own unit.", "small") +
-      TYPES.filter((t) => !SET_TYPES.includes(t.id)).map((t) => field("unit_" + t.id, esc(t.label), '<div class="choices" id="unit_' + t.id + '"></div>')).join("")) +
+    box("Units",
+      muted("The unit each kind of equipment uses. Dumbbell and barbell lists are shared by their exercises.", "small") +
+      TYPES.map((t) => {
+        const sid = SET_TYPES.includes(t.id) ? Object.keys(g.weightSets || {}).find((k) => g.weightSets[k].type === t.id) : null;
+        const ws = sid ? g.weightSets[sid] : null;
+        const head = ws
+          ? '<div class="cardhead" style="margin-top:10px"><span>' + esc(ws.name) + " <small style='color:#aaa'>(" + ws.pins.length + " weights)</small></span>" +
+            '<button class="chip" style="white-space:nowrap" id="wsEdit_' + sid + '">Edit weights</button></div>'
+          : '<div style="margin-top:10px">' + esc(t.label) + "</div>";
+        return head + '<div class="choices" id="' + (ws ? "wsu_" + sid : "unit_" + t.id) + '"></div>';
+      }).join("")) +
     "<h2>Equipment (" + items.length + ")</h2>" +
     (items.length === 0 ? muted("No equipment yet.") : "") +
     groups.map(([label, list]) => box(esc(label) + " (" + list.length + ")", list.map((e) => row(e, "hide")).join(""))).join("") +
