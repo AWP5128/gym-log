@@ -13,7 +13,10 @@ import {
 } from "./timer.js";
 import { hasExtras, extraOptions, totalWeight, splitFor, savedExtra } from "./extras.js";
 import { buildPins, addPin, removePin, describePins, hasPins } from "./stacks.js";
-import { exerciseList, stepChoices, defaultStep, TYPES } from "./gym.js";
+import {
+  exerciseList, stepChoices, defaultStep, TYPES, UNITS, visibleEntries, hiddenEntries, hideItem, restoreItem,
+  setDefaultUnit, addItem, updateItem, checkName, dumbbellBands,
+} from "./gym.js";
 import {
   STORE_VERSION, DEFAULT_GYM, cleanStore, migrateLegacy, toLegacySettings, applyLegacySettings, supportsWarmup,
   exportMachines, importMachines, gymList, addGym, renameGym, setDefaultGym, setCurrentGym, useDefaultGym,
@@ -102,6 +105,7 @@ let stackId = null;        // the machine being set up on the Machine setup scre
 let stackPins = [];        // the list of stack weights being built for that machine
 let gymId = null;          // the gym shown on the Gym screen
 let draft = { name: "", from: "", ids: new Set() };   // a gym being added: its name and the equipment to copy
+let itemDraft = { name: "", type: "stack", group: "legs", unit: "lb" };   // an item being added to a gym
 
 const app = $("app");
 const typeInfo = (id) => sessionTypes.find((t) => t.id === id);
@@ -177,12 +181,12 @@ document.addEventListener("visibilitychange", tick);
 // Where each screen's Back button (and the phone's back gesture) goes.
 const BACK = {
   list: "start", setup: "start", edit: "setup", exercise: "list", pick: "exercise",
-  stacks: "start", stackEdit: "stacks", backup: "start", gyms: "start", gymEdit: "gyms", gymAdd: "gyms",
+  stacks: "start", stackEdit: "stacks", backup: "start", gyms: "start", gymEdit: "gyms", gymAdd: "gyms", gymItemAdd: "gymEdit",
 };
 const SCREENS = {
   start: renderStart, list: renderList, exercise: renderExercise, pick: renderPick, setup: renderSetup,
   edit: renderEdit, stacks: renderStacks, stackEdit: renderStackEdit, backup: renderBackup,
-  gyms: renderGyms, gymEdit: renderGymEdit, gymAdd: renderGymAdd,
+  gyms: renderGyms, gymEdit: renderGymEdit, gymAdd: renderGymAdd, gymItemAdd: renderGymItemAdd,
 };
 
 function render() {
@@ -722,7 +726,8 @@ function renderStackEdit() {
 // Each gym has its own equipment list. This screen shows the gyms, renames them, sets the default gym and
 // adds a new one (blank, or with chosen equipment copied from another gym).
 const typeLabel = (t) => TYPES.find((x) => x.id === t)?.label ?? "Equipment";
-const gymItems = (id) => Object.entries(store.gyms[id]?.equipment || {});
+const gymItems = (id) => visibleEntries(store.gyms[id] || {});   // the items in use (hidden ones are left out)
+const saveGym = (id, gym) => saveStore({ ...store, gyms: { ...store.gyms, [id]: gym } });
 const flashHtml = () => (flash ? '<div class="note">' + esc(flash) + "</div>" : "");
 
 function renderGyms() {
@@ -744,25 +749,55 @@ function renderGyms() {
   });
 }
 
+// The weights a new dumbbell item starts with, in words.
+const dumbbellNote = (unit) =>
+  unit === "lb" ? "2.5 lb steps up to 10 lb, then 5 lb steps up to 100 lb" : "1 kg steps up to 10 kg, then 2 kg steps up to 50 kg";
+
 function renderGymEdit() {
   const g = store.gyms[gymId];
   if (!g) return go("gyms");
   const items = gymItems(gymId);
-  const known = sessionTypes.map((t) => [t.label, items.filter(([, i]) => i.group === t.id)]);
-  const other = items.filter(([, i]) => !sessionTypes.some((t) => t.id === i.group));
-  const groups = [...known, ["Other", other]].filter(([, list]) => list.length > 0);
-  const line = ([, i]) =>
-    muted(esc(i.name) + " &middot; " + typeLabel(i.type) + ", " + i.unit + (Array.isArray(i.pins) && i.pins.length ? " &middot; stack saved" : ""), "small");
+  const hidden = hiddenEntries(g);
+  const buttons = [];   // [id, "hide" | "restore"] for each Hide or Restore button, by position
+  const row = ([id, i], kind) => {
+    buttons.push([id, kind]);
+    const saved = Array.isArray(i.pins) && i.pins.length > 0 ? " &middot; " + (i.type === "stack" ? "stack" : "weight list") + " saved" : "";
+    return '<div class="cardhead" style="margin-top:10px"><div>' + esc(i.name) +
+      '<small style="display:block;color:#aaa;font-size:0.9rem">' + i.unit + saved + "</small></div>" +
+      '<button class="chip" id="act' + (buttons.length - 1) + '">' + (kind === "hide" ? "Hide" : "Restore") + "</button></div>";
+  };
+  const groups = TYPES.map((t) => [t.label, items.filter(([, i]) => i.type === t.id)]).filter(([, list]) => list.length > 0);
   app.innerHTML =
     backBtn() + "<h2>" + esc(g.name) + "</h2>" + flashHtml() +
     field("ge_name", "Gym name", '<input class="field" id="ge_name" type="text" value="' + esc(g.name) + '">') +
     '<button class="secondary" id="saveName">Save name</button>' +
     (store.defaultGym === gymId ? muted("This is your default gym. The app starts here.") : '<button class="secondary" id="makeDefault">Make this my default gym</button>') +
     (store.currentGym === gymId ? muted("You are using this gym now.") : '<button class="primary" id="useNow">Use this gym now</button>') +
+    box("Units for new equipment",
+      muted("The unit a new item of each type starts in. Items already in the gym keep their own unit.", "small") +
+      TYPES.map((t) => field("unit_" + t.id, esc(t.label), '<div class="choices" id="unit_' + t.id + '"></div>')).join("")) +
     "<h2>Equipment (" + items.length + ")</h2>" +
     (items.length === 0 ? muted("No equipment yet.") : "") +
-    groups.map(([label, list]) => box(esc(label) + " (" + list.length + ")", list.map(line).join(""))).join("");
+    groups.map(([label, list]) => box(esc(label) + " (" + list.length + ")", list.map((e) => row(e, "hide")).join(""))).join("") +
+    '<button class="secondary" id="addItemBtn">Add equipment</button>' +
+    (hidden.length > 0
+      ? "<h2>Hidden (" + hidden.length + ")</h2>" +
+        muted("Hidden items are kept with their weights and history. Restore brings one back.", "small") +
+        box("Hidden equipment", hidden.map((e) => row(e, "restore")).join(""))
+      : "");
   flash = "";
+
+  for (const t of TYPES) {
+    addChoices("unit_" + t.id, UNITS.map((u) => [u, g.units?.[t.id] === u, () => { saveGym(gymId, setDefaultUnit(g, t.id, u)); render(); }]));
+  }
+  buttons.forEach(([id, kind], n) => {
+    $("act" + n).onclick = () => {
+      const name = g.equipment[id].name;
+      saveGym(gymId, kind === "hide" ? hideItem(g, id) : restoreItem(g, id));
+      flash = kind === "hide" ? "Hid " + name + ". You can bring it back under Hidden." : "Brought back " + name;
+      render();
+    };
+  });
   wire({
     back: goBack,
     saveName: () => {
@@ -774,6 +809,56 @@ function renderGymEdit() {
     },
     makeDefault: () => { saveStore(setDefaultGym(store, gymId)); flash = "Default gym changed"; render(); },
     useNow: () => { saveStore(setCurrentGym(store, gymId)); flash = "Now using " + gymName(gymId); render(); },
+    addItemBtn: () => { itemDraft = { name: "", type: "stack", group: "legs", unit: g.units?.stack ?? "lb" }; go("gymItemAdd"); },
+  });
+}
+
+// Adds a piece of equipment to the gym. A new dumbbell item starts with the usual dumbbell weights.
+function renderGymItemAdd() {
+  const g = store.gyms[gymId];
+  if (!g) return go("gyms");
+  const d = itemDraft;
+  app.innerHTML =
+    backBtn("Back without adding") + "<h2>Add equipment</h2>" +
+    field("ia_name", "Name", '<input class="field" id="ia_name" type="text" placeholder="e.g. Chest Press" value="' + esc(d.name) + '">') +
+    field("ia_type", "Type", selectHtml("ia_type", optionsHtml(TYPES.map((t) => t.id), d.type, (id) => esc(typeLabel(id))), "field")) +
+    field("ia_group", "Session", selectHtml("ia_group", optionsHtml(["legs", "arms", "abs"], d.group, (id) => esc(typeInfo(id).label)), "field")) +
+    field("ia_unit", "Unit", selectHtml("ia_unit", optionsHtml(UNITS, d.unit), "field")) +
+    (d.type === "dumbbell"
+      ? muted("Dumbbells start with " + dumbbellNote(d.unit) + ". Change them later if yours differ.", "small")
+      : d.type === "stack" ? muted("Set up the stack on Machine setup once the machine is added.", "small") : "") +
+    '<button class="primary" id="addBtn">Add</button>';
+
+  $("ia_name").oninput = (ev) => { d.name = ev.target.value; };
+  $("ia_type").onchange = (ev) => { d.type = ev.target.value; d.unit = g.units?.[d.type] ?? d.unit; render(); };
+  $("ia_group").onchange = (ev) => { d.group = ev.target.value; };
+  $("ia_unit").onchange = (ev) => { d.unit = ev.target.value; render(); };
+  wire({
+    back: goBack,
+    addBtn: () => {
+      const name = d.name.trim();
+      const c = checkName(g, name);
+      if (c.reason === "blank") { alert("Enter a name for the equipment."); return; }
+      if (c.reason === "duplicate") { alert("This gym already has \"" + g.equipment[c.existing].name + "\"."); return; }
+      if (c.reason === "hidden") {
+        if (confirm("\"" + g.equipment[c.existing].name + "\" is hidden in this gym. Bring it back instead?")) {
+          saveGym(gymId, restoreItem(g, c.existing));
+          flash = "Brought back " + g.equipment[c.existing].name;
+          go("gymEdit");
+        }
+        return;
+      }
+      const r = addItem(g, { name, type: d.type, group: d.group, unit: d.unit, ...(d.type === "bodyweight" ? { min: 0 } : {}) });
+      let next = r.gym;
+      if (d.type === "dumbbell") {
+        const spec = dumbbellBands(d.unit);
+        const built = buildPins(spec);
+        if (!built.error) next = updateItem(next, r.id, { pins: built.pins, stackSpec: spec });
+      }
+      saveGym(gymId, next);
+      flash = "Added " + name;
+      go("gymEdit");
+    },
   });
 }
 
