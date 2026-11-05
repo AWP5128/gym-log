@@ -782,11 +782,11 @@ function renderGymEdit() {
       TYPES.map((t) => {
         const sid = SET_TYPES.includes(t.id) ? Object.keys(g.weightSets || {}).find((k) => g.weightSets[k].type === t.id) : null;
         const ws = sid ? g.weightSets[sid] : null;
-        const head = ws
-          ? '<div class="cardhead" style="margin-top:10px"><span>' + esc(ws.name) + " <small style='color:#aaa'>(" + ws.pins.length + " weights)</small></span>" +
-            '<button class="chip" style="white-space:nowrap" id="wsEdit_' + sid + '">Edit weights</button></div>'
-          : '<div style="margin-top:10px">' + esc(t.label) + "</div>";
-        return head + '<div class="choices" id="' + (ws ? "wsu_" + sid : "unit_" + t.id) + '"></div>';
+        const label = ws ? (t.id === "dumbbell" ? "Dumbbells List" : "Barbell List") : t.label;
+        const sub = ws ? '<small style="display:block;color:#aaa;font-size:0.9rem">' + ws.pins.length + " weights</small>" : "";
+        return '<div class="cardhead" style="margin-top:10px"><div>' + esc(label) + sub + "</div>" +
+          '<div class="choices sm" id="' + (ws ? "wsu_" + sid : "unit_" + t.id) + '">' +
+          (ws ? '<button class="chip" id="wsEdit_' + sid + '">Edit</button>' : "") + "</div></div>";
       }).join("")) +
     "<h2>Equipment (" + items.length + ")</h2>" +
     (items.length === 0 ? muted("No equipment yet.") : "") +
@@ -809,6 +809,7 @@ function renderGymEdit() {
       flash = ws.name + " is now in " + u;
       render();
     }]));
+    $("wsu_" + sid).append($("wsEdit_" + sid));   // the Edit chip goes after the kg and lb chips
     $("wsEdit_" + sid).onclick = () => { editSetId = sid; setPins = [...ws.pins]; go("gymSet"); };
   }
   for (const t of TYPES.filter((x) => !SET_TYPES.includes(x.id))) {
