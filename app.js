@@ -103,6 +103,7 @@ let flash = "";            // a short message shown once, e.g. "Defaults saved"
 let backupMsg = "";        // a short message shown once on the Backup screen
 let stackFilter = "all";   // Machine setup list: "all", "legs" or "arms"
 let stackId = null;        // the machine being set up on the Machine setup screen
+let stacksFrom = "start";   // where Machine setup was opened from: the start screen or the Gym screen
 let stackPins = [];        // the list of stack weights being built for that machine
 let gymId = null;          // the gym shown on the Gym screen
 let draft = { name: "", from: "", ids: new Set() };   // a gym being added: its name and the equipment to copy
@@ -209,7 +210,7 @@ function go(name) {
 
 function goBack() {
   if (screen === "exercise") panels = [];
-  go(BACK[screen]);
+  go(screen === "stacks" ? stacksFrom : BACK[screen]);
 }
 
 // The phone's back button or gesture steps back one screen instead of closing the app.
@@ -255,7 +256,7 @@ function renderStart() {
   wire({
     quick: () => { showMore = false; listKind = null; go("list"); },
     setupBtn: () => go("setup"),
-    stacksBtn: () => go("stacks"),
+    stacksBtn: () => { stacksFrom = "start"; go("stacks"); },
     gymsBtn: () => go("gyms"),
     backupBtn: () => go("backup"),
   });
@@ -642,7 +643,7 @@ function renderStacks() {
   const all = stackMachines();
   const shown = stackFilter === "all" ? all : all.filter((e) => e.group === stackFilter);
   app.innerHTML =
-    backBtn() + "<h2>Machine setup</h2>" +
+    backBtn() + "<h2>Machine setup</h2>" + muted(esc(gymName(store.currentGym)), "small") +
     muted(all.filter(hasPins).length + " of " + all.length + " machines done. Tap a machine to enter its weights. You can redo any machine later.") +
     '<div class="choices" id="filters" style="margin-top:12px"></div><div id="list"></div>';
 
@@ -811,6 +812,9 @@ function renderGymEdit() {
     box("Exercise list",
       muted("The kind of exercise the list opens on at this gym.", "small") +
       '<div class="choices sm" id="listDefault" style="flex-wrap:wrap;margin-top:10px"></div>') +
+    (store.currentGym === gymId
+      ? '<button class="secondary" id="machineSetup">Machine setup (' + stackMachines().filter(hasPins).length + " of " + stackMachines().length + " machines done)</button>"
+      : muted("Machine setup works on the gym you are using. Tap Use this gym now to set up this gym's machines.", "small")) +
     "<h2>Equipment (" + items.length + ")</h2>" +
     (items.length === 0 ? muted("No equipment yet.") : "") +
     (shownSets.length > 0 ? box("Free weights (" + shownSets.length + ")", shownSets.map((k) => setRow(k, "hide")).join("")) : "") +
@@ -834,6 +838,7 @@ function renderGymEdit() {
       render();
     };
   }
+  if (store.currentGym === gymId) $("machineSetup").onclick = () => { stacksFrom = "gymEdit"; go("stacks"); };
   addChoices("listDefault", LIST_KINDS.map((k) => [k.label, listDefaultOf(g) === k.id, () => { saveGym(gymId, setListDefault(g, k.id)); render(); }]));
   for (const t of TYPES.filter((x) => !SET_TYPES.includes(x.id))) {
     addChoices("unit_" + t.id, UNITS.map((u) => [u, g.units?.[t.id] === u, () => { saveGym(gymId, setDefaultUnit(g, t.id, u)); render(); }]));
