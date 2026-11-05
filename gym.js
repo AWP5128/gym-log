@@ -182,6 +182,51 @@ export function updateItem(gym, id, patch) {
 }
 
 // Deletes an item for good. The screens use hideItem instead, which can be undone.
+// Edits an item from the Edit item screen: name, session, type, unit, or linking it to the gym's weight set.
+// Returns { gym, ok, reason } where reason is "" when it worked, or "missing", "blank", "duplicate", "hidden"
+// (the name belongs to another item; existing says which) or "history" (the type or unit cannot change
+// because the item has logged sets at this gym: historyIds is the set of exercise ids with sets there).
+export function editItem(gym, id, patch, historyIds = new Set()) {
+  const old = gym.equipment?.[id];
+  if (!old) return { gym, ok: false, reason: "missing", existing: null };
+  const name = "name" in patch ? String(patch.name ?? "").trim() : old.name;
+  const c = checkName(gym, name, id);
+  if (!c.ok) return { gym, ok: false, reason: c.reason, existing: c.existing };
+  const type = TYPE_IDS.includes(patch.type) ? patch.type : old.type;
+  const setId = setIdFor(type);
+  const set = setId ? gym.weightSets?.[setId] : null;
+  const next = { ...old, name };
+  if (patch.group) next.group = patch.group;
+  const wantsLink = !!set && (type !== old.type || patch.useSet === true) && !old.weightSet;
+  const typeChanged = type !== old.type;
+  const unit = UNITS.includes(patch.unit) ? patch.unit : old.unit;
+  const unitChanged = !old.weightSet && !wantsLink && unit !== old.unit;
+  const linkUnitChanged = wantsLink && set.unit !== old.unit;
+  if ((typeChanged || unitChanged || linkUnitChanged) && historyIds.has(id)) return { gym, ok: false, reason: "history", existing: null };
+  if (typeChanged) {
+    next.type = type;
+    delete next.weightSet;
+    delete next.pins;
+    delete next.stackSpec;
+    delete next.min;
+    next.step = defaultStep(type, next.unit);
+  }
+  if (wantsLink) {
+    next.weightSet = setId;
+    next.unit = set.unit;
+    delete next.pins;
+    delete next.stackSpec;
+    next.step = defaultStep(type, set.unit);
+  } else if (unitChanged) {
+    next.unit = unit;
+    next.step = defaultStep(type, unit);
+    delete next.pins;
+    delete next.stackSpec;
+    delete next.min;
+  }
+  return { gym: { ...gym, equipment: { ...gym.equipment, [id]: makeItem(next) } }, ok: true, reason: "", existing: null };
+}
+
 export function removeItem(gym, id) {
   const { [id]: gone, ...equipment } = gym.equipment || {};
   return { ...gym, equipment };

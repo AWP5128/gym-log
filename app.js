@@ -15,7 +15,7 @@ import { hasExtras, extraOptions, totalWeight, splitFor, savedExtra } from "./ex
 import { buildPins, addPin, removePin, describePins, hasPins } from "./stacks.js";
 import {
   exerciseList, stepChoices, defaultStep, TYPES, UNITS, visibleEntries, hiddenEntries, hideItem, restoreItem,
-  setDefaultUnit, addItem, updateItem, checkName, weightSetUsers, setWeightSetUnit, updateWeightSet, dumbbellWeights,
+  setDefaultUnit, addItem, updateItem, editItem, checkName, weightSetUsers, setWeightSetUnit, updateWeightSet, dumbbellWeights,
 } from "./gym.js";
 import {
   STORE_VERSION, DEFAULT_GYM, cleanStore, migrateLegacy, toLegacySettings, applyLegacySettings, supportsWarmup,
@@ -107,6 +107,8 @@ let gymId = null;          // the gym shown on the Gym screen
 let draft = { name: "", from: "", ids: new Set() };   // a gym being added: its name and the equipment to copy
 let itemDraft = { name: "", type: "stack", group: "legs", unit: "lb" };   // an item being added to a gym
 let editSetId = null;      // the dumbbell or barbell set being edited
+let editItemId = null;     // the item shown on the Edit item screen
+let itemEditDraft = null;  // its name, session, type, unit and weight-set link while being edited
 let setPins = [];          // the weights of that set while editing
 const SET_TYPES = ["dumbbell", "barbell"];   // equipment types whose weights come from the gym's weight sets
 
@@ -184,12 +186,12 @@ document.addEventListener("visibilitychange", tick);
 // Where each screen's Back button (and the phone's back gesture) goes.
 const BACK = {
   list: "start", setup: "start", edit: "setup", exercise: "list", pick: "exercise",
-  stacks: "start", stackEdit: "stacks", backup: "start", gyms: "start", gymEdit: "gyms", gymAdd: "gyms", gymItemAdd: "gymEdit", gymSet: "gymEdit",
+  stacks: "start", stackEdit: "stacks", backup: "start", gyms: "start", gymEdit: "gyms", gymAdd: "gyms", gymItemAdd: "gymEdit", gymItemEdit: "gymEdit", gymSet: "gymEdit",
 };
 const SCREENS = {
   start: renderStart, list: renderList, exercise: renderExercise, pick: renderPick, setup: renderSetup,
   edit: renderEdit, stacks: renderStacks, stackEdit: renderStackEdit, backup: renderBackup,
-  gyms: renderGyms, gymEdit: renderGymEdit, gymAdd: renderGymAdd, gymItemAdd: renderGymItemAdd, gymSet: renderGymSet,
+  gyms: renderGyms, gymEdit: renderGymEdit, gymAdd: renderGymAdd, gymItemAdd: renderGymItemAdd, gymItemEdit: renderGymItemEdit, gymSet: renderGymSet,
 };
 
 function render() {
@@ -765,7 +767,8 @@ function renderGymEdit() {
       : Array.isArray(i.pins) && i.pins.length > 0 ? " &middot; " + (i.type === "stack" ? "stack" : "weight list") + " saved" : "";
     return '<div class="cardhead" style="margin-top:10px"><div>' + esc(i.name) +
       '<small style="display:block;color:#aaa;font-size:0.9rem">' + i.unit + saved + "</small></div>" +
-      '<button class="chip" id="act' + (buttons.length - 1) + '">' + (kind === "hide" ? "Hide" : "Restore") + "</button></div>";
+      '<span style="white-space:nowrap">' + (kind === "hide" ? '<button class="chip" id="edit' + (buttons.length - 1) + '">Edit</button> ' : "") +
+      '<button class="chip" id="act' + (buttons.length - 1) + '">' + (kind === "hide" ? "Hide" : "Restore") + "</button></span></div>";
   };
   const groups = TYPES.map((t) => [t.label, items.filter(([, i]) => i.type === t.id)]).filter(([, list]) => list.length > 0);
   app.innerHTML =
@@ -812,6 +815,14 @@ function renderGymEdit() {
     addChoices("unit_" + t.id, UNITS.map((u) => [u, g.units?.[t.id] === u, () => { saveGym(gymId, setDefaultUnit(g, t.id, u)); render(); }]));
   }
   buttons.forEach(([id, kind], n) => {
+    if (kind === "hide") {
+      $("edit" + n).onclick = () => {
+        const it = g.equipment[id];
+        editItemId = id;
+        itemEditDraft = { name: it.name, group: it.group, type: it.type, unit: it.unit, useSet: false };
+        go("gymItemEdit");
+      };
+    }
     $("act" + n).onclick = () => {
       const name = g.equipment[id].name;
       saveGym(gymId, kind === "hide" ? hideItem(g, id) : restoreItem(g, id));
@@ -875,6 +886,57 @@ function renderGymItemAdd() {
       saveGym(gymId, r.gym);
       flash = "Added " + name;
       go("gymEdit");
+    },
+  });
+}
+
+// Edits one item: its name and session always; its type and unit only while it has no logged sets at this gym.
+// A dumbbell or barbell exercise takes its weights and unit from the gym's list for it.
+function renderGymItemEdit() {
+  const g = store.gyms[gymId];
+  const it = g?.equipment?.[editItemId];
+  if (!it) return go("gymEdit");
+  const d = itemEditDraft;
+  const locked = idsWithHistory(sets, gymId).has(editItemId);
+  const setId = SET_TYPES.includes(d.type) ? (d.type === "dumbbell" ? "dumbbells" : "barbell") : null;
+  const set = setId ? g.weightSets?.[setId] : null;
+  const linked = !!set && (d.useSet || (d.type === it.type && !!it.weightSet));
+  const typeLabelFor = (id) => ({ dumbbell: "Dumbbell exercise", barbell: "Barbell exercise" }[id] ?? typeLabel(id));
+  app.innerHTML =
+    backBtn("Back without saving") + "<h2>Edit " + esc(it.name) + "</h2>" +
+    field("ie_name", "Name", '<input class="field" id="ie_name" type="text" value="' + esc(d.name) + '">') +
+    field("ie_group", "Session", selectHtml("ie_group", optionsHtml(["legs", "arms", "abs"], d.group, (id) => esc(typeInfo(id).label)), "field")) +
+    (locked
+      ? muted("Type and unit can't change because this exercise has logged sets at this gym. Name and session can.", "small")
+      : field("ie_type", "Type", selectHtml("ie_type", optionsHtml(TYPES.map((t) => t.id), d.type, (id) => esc(typeLabelFor(id))), "field"))) +
+    (set
+      ? muted(linked || d.type !== it.type
+          ? "Uses this gym's " + esc(set.name) + " list (" + set.unit + "). Change the list on the gym screen."
+          : "Not linked to this gym's " + esc(set.name) + " list (this exercise is in " + it.unit + ").", "small") +
+        (!linked && d.type === it.type ? '<button class="secondary" id="useSetBtn">Use the ' + esc(set.name) + " list</button>" : "")
+      : locked
+        ? muted("Unit: " + it.unit, "small")
+        : field("ie_unit", "Unit", selectHtml("ie_unit", optionsHtml(UNITS, d.unit), "field"))) +
+    '<button class="primary" id="saveItem">Save</button>';
+
+  $("ie_name").oninput = (ev) => { d.name = ev.target.value; };
+  $("ie_group").onchange = (ev) => { d.group = ev.target.value; };
+  if (!locked) $("ie_type").onchange = (ev) => { d.type = ev.target.value; d.useSet = false; render(); };
+  if (!set && !locked) $("ie_unit").onchange = (ev) => { d.unit = ev.target.value; };
+  wire({
+    back: goBack,
+    ...(set && !linked && d.type === it.type ? { useSetBtn: () => { d.useSet = true; render(); } } : {}),
+    saveItem: () => {
+      const patch = { name: d.name, group: d.group, type: d.type, useSet: d.useSet, ...(set ? {} : { unit: d.unit }) };
+      const changes = [d.type !== it.type && "type", d.useSet && "list", !set && !locked && d.unit !== it.unit && "unit"].filter(Boolean);
+      if (changes.length > 0 && !confirm("Changing the " + changes.join(" and ") + " restarts this exercise's weight list. Continue?")) return;
+      const r = editItem(g, editItemId, patch, idsWithHistory(sets, gymId));
+      if (r.reason === "blank") { alert("Enter a name for the equipment."); return; }
+      if (r.reason === "duplicate" || r.reason === "hidden") { alert("This gym already has \"" + g.equipment[r.existing].name + "\" (" + (r.reason === "hidden" ? "hidden" : "in use") + ")."); return; }
+      if (!r.ok) { alert("This exercise has logged sets at this gym, so its type and unit can't change."); return; }
+      saveGym(gymId, r.gym);
+      flash = "Saved " + d.name.trim();
+      goBack();
     },
   });
 }
