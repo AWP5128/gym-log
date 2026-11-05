@@ -15,7 +15,7 @@ import { hasExtras, extraOptions, totalWeight, splitFor, savedExtra } from "./ex
 import { buildPins, addPin, removePin, describePins, hasPins } from "./stacks.js";
 import {
   exerciseList, stepChoices, defaultStep, TYPES, UNITS, visibleEntries, hiddenEntries, hideItem, restoreItem,
-  setDefaultUnit, addItem, updateItem, editItem, checkName, hideWeightSet, restoreWeightSet, isSetHidden, hiddenSetIds, weightSetUsers, setWeightSetUnit, updateWeightSet, dumbbellWeights,
+  setDefaultUnit, addItem, updateItem, editItem, checkName, LIST_KINDS, listKindOf, listDefaultOf, setListDefault, kindCounts, chooseListKind, hideWeightSet, restoreWeightSet, isSetHidden, hiddenSetIds, weightSetUsers, setWeightSetUnit, updateWeightSet, dumbbellWeights,
 } from "./gym.js";
 import {
   STORE_VERSION, DEFAULT_GYM, cleanStore, migrateLegacy, toLegacySettings, applyLegacySettings, supportsWarmup,
@@ -94,6 +94,7 @@ if (session.mode !== "volume") session.mode = "heavy";
 // ---------- What is on screen ----------
 let screen = "start";
 let showMore = false;      // show less common exercises on the list
+let listKind = null;       // the kind of exercise shown on the list (machines, dumbbells...); null means the gym's default
 let showDone = false;      // is the "done today" list open on the exercise list?
 let pickMore = false;      // show less common exercises when picking a superset partner
 let panels = [];           // exercises on the logging page: one, or two when supersetting
@@ -246,19 +247,19 @@ function renderStart() {
     '<button class="faintlink" id="backupBtn">Backup &amp; restore' + (age.stale ? " (last backup: " + age.text + ")" : "") + "</button>";
 
   // Choosing a session or day type updates Quick start and is remembered straight away.
-  const choose = (change) => { Object.assign(session, change); save(KEY.session, session); render(); };
+  const choose = (change) => { Object.assign(session, change); listKind = null; save(KEY.session, session); render(); };
   addChoices("types", sessionTypes.map((st) => [st.label, st.id === session.type, () => choose({ type: st.id })]));
   if (t.weights) {
     addChoices("modes", [["heavy", "Heavy"], ["volume", "Volume"]].map(([mode, label]) => [label, session.mode === mode, () => choose({ mode })]));
   }
   wire({
-    quick: () => { showMore = false; go("list"); },
+    quick: () => { showMore = false; listKind = null; go("list"); },
     setupBtn: () => go("setup"),
     stacksBtn: () => go("stacks"),
     gymsBtn: () => go("gyms"),
     backupBtn: () => go("backup"),
   });
-  $("gymSel").onchange = (ev) => { saveStore(setCurrentGym(store, ev.target.value)); render(); };
+  $("gymSel").onchange = (ev) => { listKind = null; saveStore(setCurrentGym(store, ev.target.value)); render(); };
 }
 
 // ---------- Exercise list ----------
@@ -267,14 +268,21 @@ function renderList() {
   // Finished exercises include any pull-ups done as a superset on an arms day.
   const finished = sessionPool().filter((e) => isDoneToday(done, e.id));
   const open = all.filter((e) => !isDoneToday(done, e.id));
-  const { shown, toggle } = commonSplit(open, showMore, "more");
+  // One kind of exercise at a time keeps the list short (machines, dumbbells, barbells, body weight).
+  const present = LIST_KINDS.map((k) => k.id).filter((k) => all.some((e) => listKindOf(e) === k));
+  const openCounts = kindCounts(open);
+  const kind = chooseListKind(present, openCounts, listKind, listDefaultOf(store.gyms[store.currentGym]));
+  const openKind = open.filter((e) => listKindOf(e) === kind);
+  const { shown, toggle } = commonSplit(openKind, showMore, "more");
 
   let message = "";
   if (all.length === 0) message = "No exercises here yet. You will be able to add some in a later step.";
+  else if (shown.length === 0 && openKind.length === 0 && open.length > 0) message = "Nothing left in this list. The other lists still have exercises.";
   else if (shown.length === 0 && finished.length > 0) message = open.length === 0 ? "All done for today. Nice work." : "All the main exercises are done.";
 
   app.innerHTML =
     timeBar() + ghostBtn("change", esc(sessionLabel(session)) + " &#9662; change", "margin-top:0") +
+    (present.length > 1 ? '<div class="choices sm" id="kinds" style="flex-wrap:wrap;margin-top:12px"></div>' : "") +
     '<div id="list"></div>' +
     (message ? muted(message) : "") +
     toggle +
@@ -282,6 +290,9 @@ function renderList() {
     '<div id="doneList"></div>' +
     (isRunning(workout) ? '<button class="secondary" id="endWorkout">End workout</button>' : "");
 
+  if (present.length > 1) {
+    addChoices("kinds", present.map((k) => [LIST_KINDS.find((x) => x.id === k).label + " (" + openCounts[k] + ")", k === kind, () => { listKind = k; showMore = false; render(); }]));
+  }
   addItems("list", shown.map((e) => [esc(e.name), () => openExercise(e)]));
   if (showDone) {
     addItems("doneList", finished.map((e) => {
@@ -797,6 +808,9 @@ function renderGymEdit() {
       TYPES.filter((t) => !SET_TYPES.includes(t.id)).map((t) =>
         '<div class="cardhead" style="margin-top:10px"><div>' + esc(t.label) + "</div>" +
         '<div class="choices sm" id="unit_' + t.id + '"></div></div>').join("")) +
+    box("Exercise list",
+      muted("The kind of exercise the list opens on at this gym.", "small") +
+      '<div class="choices sm" id="listDefault" style="flex-wrap:wrap;margin-top:10px"></div>') +
     "<h2>Equipment (" + items.length + ")</h2>" +
     (items.length === 0 ? muted("No equipment yet.") : "") +
     (shownSets.length > 0 ? box("Free weights (" + shownSets.length + ")", shownSets.map((k) => setRow(k, "hide")).join("")) : "") +
@@ -820,6 +834,7 @@ function renderGymEdit() {
       render();
     };
   }
+  addChoices("listDefault", LIST_KINDS.map((k) => [k.label, listDefaultOf(g) === k.id, () => { saveGym(gymId, setListDefault(g, k.id)); render(); }]));
   for (const t of TYPES.filter((x) => !SET_TYPES.includes(x.id))) {
     addChoices("unit_" + t.id, UNITS.map((u) => [u, g.units?.[t.id] === u, () => { saveGym(gymId, setDefaultUnit(g, t.id, u)); render(); }]));
   }

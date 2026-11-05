@@ -462,6 +462,35 @@ export function copyEquipment(from, ids, to, { overwrite = false } = {}) {
   return { gym: { ...to, equipment, weightSets }, copied, skipped };
 }
 
+// ---------- The kinds of exercise list ----------
+// The exercise list shows one kind at a time so it is short: machines (stack and plate-loaded), dumbbells,
+// barbells or body weight. Each gym has a default kind (gym.listDefault); an exercise without a type counts
+// as a machine.
+export const LIST_KINDS = [
+  { id: "machines", label: "Machines", types: ["stack", "plate"] },
+  { id: "dumbbells", label: "Dumbbells", types: ["dumbbell"] },
+  { id: "barbell", label: "Barbells", types: ["barbell"] },
+  { id: "bodyweight", label: "Body weight", types: ["bodyweight"] },
+];
+export const listKindOf = (item) => LIST_KINDS.find((k) => k.types.includes(item?.type))?.id ?? "machines";
+export const listDefaultOf = (gym) => (LIST_KINDS.some((k) => k.id === gym?.listDefault) ? gym.listDefault : "machines");
+export const setListDefault = (gym, kind) => (LIST_KINDS.some((k) => k.id === kind) ? { ...gym, listDefault: kind } : gym);
+
+// Counts per kind for a list of exercises: { machines, dumbbells, barbell, bodyweight }.
+export function kindCounts(list) {
+  const out = Object.fromEntries(LIST_KINDS.map((k) => [k.id, 0]));
+  for (const e of list) out[listKindOf(e)] += 1;
+  return out;
+}
+
+// Which kind to show. present = kinds the session has at all; open = exercises still to do per kind (from
+// kindCounts). Tries what was picked, then the gym's default, then the first kind with something left, then
+// any kind the session has.
+export function chooseListKind(present, open, wanted, fallback) {
+  const order = [wanted, fallback, ...LIST_KINDS.map((k) => k.id)].filter(Boolean);
+  return order.find((k) => present.includes(k) && open[k] > 0) ?? order.find((k) => present.includes(k)) ?? fallback ?? "machines";
+}
+
 // ---------- For the screens ----------
 // An item in the shape the existing exercise code expects (id, extras, warm-up). Only stack
 // machines have warm-up sets, as before.
