@@ -90,7 +90,7 @@ const sameName = (a, b) => String(a ?? "").trim().toLowerCase() === String(b ?? 
 export function checkName(gym, name, exceptId = null) {
   if (!String(name ?? "").trim()) return { ok: false, reason: "blank", existing: null };
   const others = Object.entries(gym.equipment || {}).filter(([id, i]) => id !== exceptId && sameName(i.name, name));
-  const visible = others.find(([, i]) => !isHidden(i));
+  const visible = others.find(([, i]) => !isHidden(i) && !inHiddenSet(gym, i));
   if (visible) return { ok: false, reason: "duplicate", existing: visible[0] };
   if (others.length > 0) return { ok: false, reason: "hidden", existing: others[0][0] };
   return { ok: true, reason: "", existing: null };
@@ -237,8 +237,16 @@ export const isHidden = (item) => item?.hidden === true;
 export const hideItem = (gym, id) => updateItem(gym, id, { hidden: true });
 export const restoreItem = (gym, id) => updateItem(gym, id, { hidden: null });
 // [id, item] pairs: the items in use, and the removed ones.
-export const visibleEntries = (gym) => Object.entries(gym.equipment || {}).filter(([, i]) => !isHidden(i));
-export const hiddenEntries = (gym) => Object.entries(gym.equipment || {}).filter(([, i]) => isHidden(i));
+// A whole weight set (the gym's dumbbells or barbell) can be hidden when the gym does not have it. Every
+// exercise that uses it then drops out of the lists, and comes back when the set is restored.
+export const isSetHidden = (gym, setId) => gym.weightSets?.[setId]?.hidden === true;
+const inHiddenSet = (gym, item) => !!item?.weightSet && isSetHidden(gym, item.weightSet);
+export const visibleEntries = (gym) => Object.entries(gym.equipment || {}).filter(([, i]) => !isHidden(i) && !inHiddenSet(gym, i));
+// Items hidden one by one (items inside a hidden set are not listed: they come back with the set).
+export const hiddenEntries = (gym) => Object.entries(gym.equipment || {}).filter(([, i]) => isHidden(i) && !inHiddenSet(gym, i));
+export const hideWeightSet = (gym, id) => updateWeightSet(gym, id, { hidden: true });
+export const restoreWeightSet = (gym, id) => updateWeightSet(gym, id, { hidden: null });
+export const hiddenSetIds = (gym) => Object.keys(gym.weightSets || {}).filter((id) => isSetHidden(gym, id));
 
 // ---------- Units ----------
 // What changing the unit of every item of this type in a gym would do, for a warning before it happens:
@@ -288,6 +296,7 @@ export function makeWeightSet(spec) {
   const type = WEIGHT_SET_TYPES.includes(spec.type) ? spec.type : "dumbbell";
   const unit = UNITS.includes(spec.unit) ? spec.unit : DEFAULT_UNITS[type];
   const out = { name: String(spec.name ?? "").trim() || SET_NAME[type], type, unit };
+  if (spec.hidden === true) out.hidden = true;
   const pins = cleanPins(spec.pins);
   if (type === "barbell") {
     out.top = Number.isFinite(spec.top) && spec.top >= 10 ? spec.top : pins.length > 0 ? pins[pins.length - 1] : BARBELL_TOP[unit];
@@ -356,6 +365,10 @@ export function updateWeightSet(gym, id, patch) {
     if (!("pins" in patch)) next.pins = barbellWeights(old.unit, patch.top);
   }
   if ("pins" in patch) next.pins = patch.pins;
+  if ("hidden" in patch) {
+    if (patch.hidden === true) next.hidden = true;
+    else delete next.hidden;
+  }
   if ("stackSpec" in patch) {
     if (patch.stackSpec == null) delete next.stackSpec;
     else next.stackSpec = patch.stackSpec;
@@ -371,7 +384,7 @@ export function setWeightSetUnit(gym, id, unit, historyIds = new Set()) {
   if (!old) return { gym, ok: false, reason: "missing" };
   if (!UNITS.includes(unit) || unit === old.unit) return { gym, ok: false, reason: "same" };
   if (weightSetUnitLocked(gym, id, historyIds)) return { gym, ok: false, reason: "history" };
-  let next = { ...gym, weightSets: { ...gym.weightSets, [id]: makeWeightSet({ name: old.name, type: old.type, unit }) } };
+  let next = { ...gym, weightSets: { ...gym.weightSets, [id]: makeWeightSet({ name: old.name, type: old.type, unit, hidden: old.hidden }) } };
   for (const itemId of weightSetUsers(gym, id)) next = updateItem(next, itemId, { unit });
   return { gym: next, ok: true, reason: "" };
 }

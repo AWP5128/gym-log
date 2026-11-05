@@ -15,7 +15,7 @@ import { hasExtras, extraOptions, totalWeight, splitFor, savedExtra } from "./ex
 import { buildPins, addPin, removePin, describePins, hasPins } from "./stacks.js";
 import {
   exerciseList, stepChoices, defaultStep, TYPES, UNITS, visibleEntries, hiddenEntries, hideItem, restoreItem,
-  setDefaultUnit, addItem, updateItem, editItem, checkName, weightSetUsers, setWeightSetUnit, updateWeightSet, dumbbellWeights,
+  setDefaultUnit, addItem, updateItem, editItem, checkName, hideWeightSet, restoreWeightSet, isSetHidden, hiddenSetIds, weightSetUsers, setWeightSetUnit, updateWeightSet, dumbbellWeights,
 } from "./gym.js";
 import {
   STORE_VERSION, DEFAULT_GYM, cleanStore, migrateLegacy, toLegacySettings, applyLegacySettings, supportsWarmup,
@@ -770,7 +770,22 @@ function renderGymEdit() {
       '<span style="white-space:nowrap">' + (kind === "hide" ? '<button class="chip" id="edit' + (buttons.length - 1) + '">Edit</button> ' : "") +
       '<button class="chip" id="act' + (buttons.length - 1) + '">' + (kind === "hide" ? "Hide" : "Restore") + "</button></span></div>";
   };
-  const groups = TYPES.map((t) => [t.label, items.filter(([, i]) => i.type === t.id)]).filter(([, list]) => list.length > 0);
+  // The gym's dumbbells and barbell are equipment like the machines: Edit changes their weights and unit,
+  // Hide means the gym does not have them (the exercises that use them are hidden with them).
+  const setIds = Object.keys(g.weightSets || {}).filter((k) => SET_TYPES.includes(g.weightSets[k].type));
+  const setLabel = (sid) => (g.weightSets[sid].type === "dumbbell" ? "Dumbbells" : "Barbell");
+  const setRow = (sid, kind) => {
+    const ws = g.weightSets[sid];
+    const sub = ws.unit + " &middot; " + ws.pins.length + " weights" + (kind === "restore" ? " &middot; " + weightSetUsers(g, sid).length + " exercises" : "");
+    return '<div class="cardhead" style="margin-top:10px"><div>' + esc(setLabel(sid)) +
+      '<small style="display:block;color:#aaa;font-size:0.9rem">' + sub + "</small></div>" +
+      '<span style="white-space:nowrap">' + (kind === "hide" ? '<button class="chip" id="wsEdit_' + sid + '">Edit</button> ' : "") +
+      '<button class="chip" id="wsAct_' + sid + '">' + (kind === "hide" ? "Hide" : "Restore") + "</button></span></div>";
+  };
+  const shownSets = setIds.filter((k) => !isSetHidden(g, k));
+  const hiddenSets = setIds.filter((k) => isSetHidden(g, k));
+  const listLabel = (t) => (t.id === "dumbbell" ? "Dumbbells List" : t.id === "barbell" ? "Barbell List" : t.label);
+  const groups = TYPES.map((t) => [listLabel(t), items.filter(([, i]) => i.type === t.id)]).filter(([, list]) => list.length > 0);
   app.innerHTML =
     backBtn() + "<h2>" + esc(g.name) + "</h2>" + flashHtml() +
     field("ge_name", "Gym name", '<input class="field" id="ge_name" type="text" value="' + esc(g.name) + '">') +
@@ -778,39 +793,32 @@ function renderGymEdit() {
     (store.defaultGym === gymId ? muted("This is your default gym. The app starts here.") : '<button class="secondary" id="makeDefault">Make this my default gym</button>') +
     (store.currentGym === gymId ? muted("You are using this gym now.") : '<button class="primary" id="useNow">Use this gym now</button>') +
     box("Units",
-      muted("The unit each kind of equipment uses. Dumbbell and barbell lists are shared by their exercises.", "small") +
-      TYPES.map((t) => {
-        const sid = SET_TYPES.includes(t.id) ? Object.keys(g.weightSets || {}).find((k) => g.weightSets[k].type === t.id) : null;
-        const ws = sid ? g.weightSets[sid] : null;
-        const label = ws ? (t.id === "dumbbell" ? "Dumbbells List" : "Barbell List") : t.label;
-        const sub = ws ? '<small style="display:block;color:#aaa;font-size:0.9rem">' + ws.pins.length + " weights</small>" : "";
-        return '<div class="cardhead" style="margin-top:10px"><div>' + esc(label) + sub + "</div>" +
-          '<div class="choices sm" id="' + (ws ? "wsu_" + sid : "unit_" + t.id) + '">' +
-          (ws ? '<button class="chip" id="wsEdit_' + sid + '">Edit</button>' : "") + "</div></div>";
-      }).join("")) +
+      muted("The unit new equipment of each kind starts in. The dumbbells and barbell have their own units: tap Edit on them.", "small") +
+      TYPES.filter((t) => !SET_TYPES.includes(t.id)).map((t) =>
+        '<div class="cardhead" style="margin-top:10px"><div>' + esc(t.label) + "</div>" +
+        '<div class="choices sm" id="unit_' + t.id + '"></div></div>').join("")) +
     "<h2>Equipment (" + items.length + ")</h2>" +
     (items.length === 0 ? muted("No equipment yet.") : "") +
+    (shownSets.length > 0 ? box("Free weights (" + shownSets.length + ")", shownSets.map((k) => setRow(k, "hide")).join("")) : "") +
     groups.map(([label, list]) => box(esc(label) + " (" + list.length + ")", list.map((e) => row(e, "hide")).join(""))).join("") +
     '<button class="secondary" id="addItemBtn">Add equipment</button>' +
-    (hidden.length > 0
-      ? "<h2>Hidden (" + hidden.length + ")</h2>" +
+    (hidden.length + hiddenSets.length > 0
+      ? "<h2>Hidden (" + (hidden.length + hiddenSets.length) + ")</h2>" +
         muted("Hidden items are kept with their weights and history. Restore brings one back.", "small") +
-        box("Hidden equipment", hidden.map((e) => row(e, "restore")).join(""))
+        box("Hidden equipment", hiddenSets.map((k) => setRow(k, "restore")).join("") + hidden.map((e) => row(e, "restore")).join(""))
       : "");
   flash = "";
 
-  for (const [sid, ws] of Object.entries(g.weightSets || {})) {
-    addChoices("wsu_" + sid, UNITS.map((u) => [u, ws.unit === u, () => {
-      if (u === ws.unit) return;
-      const r = setWeightSetUnit(g, sid, u, idsWithHistory(sets, gymId));
-      if (r.reason === "history") { alert("Exercises using the " + ws.name + " list have logged sets at this gym, so its unit can't be changed."); return; }
-      if (!r.ok || !confirm("Change " + ws.name + " to " + u + "? Its list of weights starts again at the usual " + u + " weights.")) return;
-      saveGym(gymId, r.gym);
-      flash = ws.name + " is now in " + u;
+  for (const sid of setIds) {
+    const hiddenNow = isSetHidden(g, sid);
+    if (!hiddenNow) $("wsEdit_" + sid).onclick = () => { editSetId = sid; setPins = [...g.weightSets[sid].pins]; go("gymSet"); };
+    $("wsAct_" + sid).onclick = () => {
+      const n = weightSetUsers(g, sid).length;
+      if (!hiddenNow && !confirm("Hide the " + setLabel(sid) + "? The " + n + " exercises that use them are hidden too. Nothing is deleted, and Restore brings them all back.")) return;
+      saveGym(gymId, hiddenNow ? restoreWeightSet(g, sid) : hideWeightSet(g, sid));
+      flash = hiddenNow ? "Brought back the " + setLabel(sid) + " and its exercises" : "Hid the " + setLabel(sid) + ". You can bring it back under Hidden.";
       render();
-    }]));
-    $("wsu_" + sid).append($("wsEdit_" + sid));   // the Edit chip goes after the kg and lb chips
-    $("wsEdit_" + sid).onclick = () => { editSetId = sid; setPins = [...ws.pins]; go("gymSet"); };
+    };
   }
   for (const t of TYPES.filter((x) => !SET_TYPES.includes(x.id))) {
     addChoices("unit_" + t.id, UNITS.map((u) => [u, g.units?.[t.id] === u, () => { saveGym(gymId, setDefaultUnit(g, t.id, u)); render(); }]));
@@ -859,7 +867,7 @@ function renderGymItemAdd() {
     field("ia_type", "Type", selectHtml("ia_type", optionsHtml(TYPES.map((t) => t.id), d.type, (id) => esc(addLabel[id] ?? typeLabel(id))), "field")) +
     field("ia_group", "Session", selectHtml("ia_group", optionsHtml(["legs", "arms", "abs"], d.group, (id) => esc(typeInfo(id).label)), "field")) +
     (set
-      ? muted("Uses this gym's " + esc(set.name) + " list (" + set.unit + "). Change the list under Weights on the gym screen.", "small")
+      ? muted("Uses this gym's " + esc(set.name) + " list (" + set.unit + "). Change the list with Edit on the gym screen.", "small")
       : field("ia_unit", "Unit", selectHtml("ia_unit", optionsHtml(UNITS, d.unit), "field"))) +
     (d.type === "stack" ? muted("Set up the stack on Machine setup once the machine is added.", "small") : "") +
     '<button class="primary" id="addBtn">Add</button>';
@@ -883,7 +891,13 @@ function renderGymItemAdd() {
         }
         return;
       }
-      const r = addItem(g, { name, type: d.type, group: d.group, ...(set ? {} : { unit: d.unit }), ...(d.type === "bodyweight" ? { min: 0 } : {}) });
+      const setKey = set ? (d.type === "dumbbell" ? "dumbbells" : "barbell") : null;
+      let base = g;
+      if (setKey && isSetHidden(g, setKey)) {
+        if (!confirm("The " + set.name + " are hidden in this gym. Bring them back and add this exercise?")) return;
+        base = restoreWeightSet(g, setKey);
+      }
+      const r = addItem(base, { name, type: d.type, group: d.group, ...(set ? {} : { unit: d.unit }), ...(d.type === "bodyweight" ? { min: 0 } : {}) });
       saveGym(gymId, r.gym);
       flash = "Added " + name;
       go("gymEdit");
@@ -912,7 +926,7 @@ function renderGymItemEdit() {
       : field("ie_type", "Type", selectHtml("ie_type", optionsHtml(TYPES.map((t) => t.id), d.type, (id) => esc(typeLabelFor(id))), "field"))) +
     (set
       ? muted(linked || d.type !== it.type
-          ? "Uses this gym's " + esc(set.name) + " list (" + set.unit + "). Change the list on the gym screen."
+          ? "Uses this gym's " + esc(set.name) + " list (" + set.unit + "). Change the list with Edit on the gym screen."
           : "Not linked to this gym's " + esc(set.name) + " list (this exercise is in " + it.unit + ").", "small") +
         (!linked && d.type === it.type ? '<button class="secondary" id="useSetBtn">Use the ' + esc(set.name) + " list</button>" : "")
       : locked
@@ -931,7 +945,13 @@ function renderGymItemEdit() {
       const patch = { name: d.name, group: d.group, type: d.type, useSet: d.useSet, ...(set ? {} : { unit: d.unit }) };
       const changes = [d.type !== it.type && "type", d.useSet && "list", !set && !locked && d.unit !== it.unit && "unit"].filter(Boolean);
       if (changes.length > 0 && !confirm("Changing the " + changes.join(" and ") + " restarts this exercise's weight list. Continue?")) return;
-      const r = editItem(g, editItemId, patch, idsWithHistory(sets, gymId));
+      const toSet = SET_TYPES.includes(d.type) && (d.type !== it.type || d.useSet) ? (d.type === "dumbbell" ? "dumbbells" : "barbell") : null;
+      let base = g;
+      if (toSet && isSetHidden(g, toSet)) {
+        if (!confirm("The " + g.weightSets[toSet].name + " are hidden in this gym. Bring them back too?")) return;
+        base = restoreWeightSet(g, toSet);
+      }
+      const r = editItem(base, editItemId, patch, idsWithHistory(sets, gymId));
       if (r.reason === "blank") { alert("Enter a name for the equipment."); return; }
       if (r.reason === "duplicate" || r.reason === "hidden") { alert("This gym already has \"" + g.equipment[r.existing].name + "\" (" + (r.reason === "hidden" ? "hidden" : "in use") + ")."); return; }
       if (!r.ok) { alert("This exercise has logged sets at this gym, so its type and unit can't change."); return; }
@@ -953,6 +973,7 @@ function renderGymSet() {
   app.innerHTML =
     backBtn("Back without saving") + "<h2>" + esc(ws.name) + "</h2>" +
     muted(used + " exercises use this list. Weights are in " + ws.unit + (bar ? "." : ", per dumbbell (the weight in each hand).")) +
+    '<label>Unit</label><div class="choices" id="wsUnit"></div>' +
     (bar
       ? numField("w_top", "Top weight (" + ws.unit + ")", ws.top, "e.g. 200") +
         muted("The barbell goes up in steps of 10 " + ws.unit + ". Each exercise adds 2.5, 5 or 7.5 " + ws.unit + " on top.", "small")
@@ -969,6 +990,15 @@ function renderGymSet() {
       b.onclick = () => { setPins = removePin(setPins, Number(b.dataset.w)); draw("Removed " + b.dataset.w + " " + ws.unit + "."); };
     });
   };
+  addChoices("wsUnit", UNITS.map((u) => [u, ws.unit === u, () => {
+    if (u === ws.unit) return;
+    const r = setWeightSetUnit(g, editSetId, u, idsWithHistory(sets, gymId));
+    if (r.reason === "history") { alert("Exercises using the " + ws.name + " list have logged sets at this gym, so its unit can't be changed."); return; }
+    if (!r.ok || !confirm("Change to " + u + "? The list of weights starts again at the usual " + u + " weights.")) return;
+    saveGym(gymId, r.gym);
+    setPins = [...r.gym.weightSets[editSetId].pins];
+    render();
+  }]));
   if (!bar) draw("Saved weights shown below.");
   const done = () => { flash = ws.name + " saved"; goBack(); };
   wire({
