@@ -278,7 +278,7 @@ function renderList() {
 
   app.innerHTML =
     timeBar() + ghostBtn("change", esc(sessionLabel(session)) + " &#9662; change", "margin-top:0") +
-    (present.length > 1 ? '<div class="choices sm" id="kinds" style="flex-wrap:wrap;margin-top:12px"></div>' : "") +
+    (present.length > 1 ? '<div class="choices sm fit" id="kinds" style="margin-top:12px"></div>' : "") +
     '<div id="list"></div>' +
     (message ? muted(message) : "") +
     toggle +
@@ -287,7 +287,7 @@ function renderList() {
     (isRunning(workout) ? '<button class="secondary" id="endWorkout">End workout</button>' : "");
 
   if (present.length > 1) {
-    addChoices("kinds", present.map((k) => [LIST_KINDS.find((x) => x.id === k).label + " (" + openCounts[k] + ")", k === kind, () => { listKind = k; showMore = false; render(); }]));
+    addChoices("kinds", present.map((k) => [LIST_KINDS.find((x) => x.id === k).label + " " + openCounts[k], k === kind, () => { listKind = k; showMore = false; render(); }]));
   }
   addItems("list", shown.map((e) => [esc(e.name), () => openExercise(e)]));
   if (showDone) {
@@ -771,7 +771,7 @@ function renderGymEdit() {
         '<div class="choices sm" id="unit_' + t.id + '"></div></div>').join("")) +
     box("Exercise list",
       muted("The kind of exercise the list opens on at this gym.", "small") +
-      '<div class="choices sm" id="listDefault" style="flex-wrap:wrap;margin-top:10px"></div>') +
+      '<div class="choices sm fit" id="listDefault" style="margin-top:10px"></div>') +
     "<h2>Equipment (" + items.length + ")</h2>" +
     (items.length === 0 ? muted("No equipment yet.") : "") +
     (shownSets.length > 0 ? box("Free weights (" + shownSets.length + ")", shownSets.map((k) => setRow(k, "hide")).join("")) : "") +
