@@ -12,7 +12,7 @@ import {
   runMachines, endWorkout, cleanWorkout,
 } from "./timer.js";
 import { hasExtras, extraOptions, totalWeight, splitFor, savedExtra } from "./extras.js";
-import { buildPins, addPin, removePin, describePins, hasPins } from "./stacks.js";
+import { buildPins, addPin, removePin, hasPins } from "./stacks.js";
 import {
   exerciseList, stepChoices, defaultStep, TYPES, UNITS, visibleEntries, hiddenEntries, hideItem, restoreItem,
   setDefaultUnit, addItem, updateItem, editItem, checkName, LIST_KINDS, listKindOf, listDefaultOf, setListDefault, kindCounts, chooseListKind, hideWeightSet, restoreWeightSet, isSetHidden, hiddenSetIds, weightSetUsers, setWeightSetUnit, updateWeightSet, dumbbellWeights,
@@ -101,9 +101,7 @@ let panels = [];           // exercises on the logging page: one, or two when su
 let editId = null;         // the exercise being set up
 let flash = "";            // a short message shown once, e.g. "Defaults saved"
 let backupMsg = "";        // a short message shown once on the Backup screen
-let stackFilter = "all";   // Machine setup list: "all", "legs", "arms" or "abs"
-let stackId = null;        // the machine being set up on the Machine setup screen
-let stackPins = [];        // the list of stack weights being built for that machine
+let stackPins = [];        // the list of stack weights being built for the machine on the Edit item screen
 let gymId = null;          // the gym shown on the Gym screen
 let draft = { name: "", from: "", ids: new Set() };   // a gym being added: its name and the equipment to copy
 let itemDraft = { name: "", type: "stack", group: "legs", unit: "lb" };   // an item being added to a gym
@@ -187,11 +185,11 @@ document.addEventListener("visibilitychange", tick);
 // Where each screen's Back button (and the phone's back gesture) goes.
 const BACK = {
   list: "start", setup: "start", edit: "setup", exercise: "list", pick: "exercise",
-  stacks: "start", stackEdit: "stacks", backup: "start", gyms: "start", gymEdit: "gyms", gymAdd: "gyms", gymItemAdd: "gymEdit", gymItemEdit: "gymEdit", gymSet: "gymEdit",
+  backup: "start", gyms: "start", gymEdit: "gyms", gymAdd: "gyms", gymItemAdd: "gymEdit", gymItemEdit: "gymEdit", gymSet: "gymEdit",
 };
 const SCREENS = {
   start: renderStart, list: renderList, exercise: renderExercise, pick: renderPick, setup: renderSetup,
-  edit: renderEdit, stacks: renderStacks, stackEdit: renderStackEdit, backup: renderBackup,
+  edit: renderEdit, backup: renderBackup,
   gyms: renderGyms, gymEdit: renderGymEdit, gymAdd: renderGymAdd, gymItemAdd: renderGymItemAdd, gymItemEdit: renderGymItemEdit, gymSet: renderGymSet,
 };
 
@@ -242,7 +240,6 @@ function renderStart() {
     '<div class="choices" id="types"></div>' +
     (t.weights ? '<label>Day type</label><div class="choices" id="modes"></div>' : "") +
     '<button class="secondary" id="setupBtn">Set up ' + esc(sessionLabel(session)) + "</button>" +
-    '<button class="link" id="stacksBtn" style="display:block;margin:32px auto 0;opacity:0.6">Machine setup</button>' +
     '<button class="link" id="gymsBtn" style="display:block;margin:12px auto 0;opacity:0.6">Gyms</button>' +
     '<button class="faintlink" id="backupBtn">Backup &amp; restore' + (age.stale ? " (last backup: " + age.text + ")" : "") + "</button>";
 
@@ -255,7 +252,6 @@ function renderStart() {
   wire({
     quick: () => { showMore = false; listKind = null; go("list"); },
     setupBtn: () => go("setup"),
-    stacksBtn: () => go("stacks"),
     gymsBtn: () => go("gyms"),
     backupBtn: () => go("backup"),
   });
@@ -565,7 +561,7 @@ function renderSetup() {
 }
 
 // ---------- Set up session: one machine (personal settings) ----------
-// Name and stack are set on Machine setup. This screen is just for you: warm-up and working
+// Name and stack are set on the Gym screen (Edit). This screen is just for you: warm-up and working
 // weights and reps, and notes (the same notes for Heavy and Volume days).
 function renderEdit() {
   const e = exList().find((x) => x.id === editId);
@@ -597,7 +593,7 @@ function renderEdit() {
 
   app.innerHTML =
     backBtn("Back without saving") + timeBar() + "<h2>" + esc(e.name) + "</h2>" +
-    muted(hasStack ? "Weights come from this machine's stack." : "No stack set up yet. Add one on Machine setup to get a list of weights.") +
+    muted(hasStack ? "Weights come from this machine's stack." : "No stack set up yet. Add one under Gyms: tap the gym, then Edit on the machine.") +
     box(esc(sessionLabel(session)) + " for you",
       (withWarmup
         ? weightField("start", "Warm-up") +
@@ -631,31 +627,9 @@ function renderEdit() {
   });
 }
 
-// ---------- Machine setup: the weights on each machine's stack ----------
-// A one-off job done at the gym (it can be repeated for any machine). The saved list of weights
-// replaces the step-based weight list for that machine.
-const isStack = (e) => (e.type ?? (e.unit === "lb" ? "stack" : "")) === "stack";
-const stackMachines = () =>
-  exList().filter((e) => isStack(e) && e.kind !== "time" && (e.group === "legs" || e.group === "arms" || e.group === "abs"));
-
-function renderStacks() {
-  const all = stackMachines();
-  const shown = stackFilter === "all" ? all : all.filter((e) => e.group === stackFilter);
-  app.innerHTML =
-    backBtn() + "<h2>Machine setup</h2>" + muted(esc(gymName(store.currentGym)), "small") +
-    muted(all.filter(hasPins).length + " of " + all.length + " machines done. Tap a machine to enter its weights. You can redo any machine later.") +
-    '<div class="choices" id="filters" style="margin-top:12px"></div><div id="list"></div>';
-
-  addChoices("filters", [["all", "All"], ["legs", "Legs"], ["arms", "Arms"], ["abs", "Abs"]].map(([id, label]) => [label, stackFilter === id, () => { stackFilter = id; render(); }]));
-  addItems("list", shown.map((e) => [
-    (hasPins(e) ? "&#10003; " : "") + esc(e.name) + "<small>" + esc(hasPins(e) ? describePins(e.pins) : "Not set up") + "</small>",
-    () => { stackId = e.id; stackPins = hasPins(e) ? [...e.pins] : []; go("stackEdit"); },
-  ]));
-  wire({ back: goBack });
-}
-
-// The stack boxes and the list of weights they build, used by the Machine setup screen and by the Edit item
-// screen. bindStackForm hooks the boxes up after the html is on the page and returns readSpec.
+// ---------- Stack of a stack machine: edited on the Edit item screen (Gym screen, Edit) ----------
+// The stack boxes and the list of weights they build, used by the Edit item screen.
+// bindStackForm hooks the boxes up after the html is on the page and returns readSpec.
 function stackFormHtml(e, savedSpec) {
   const unit = e.unit;
   const saved = savedSpec || {};
@@ -724,30 +698,6 @@ function bindStackForm(e) {
 }
 
 const stackToSave = (spec) => ({ low: spec.low, step: spec.step, top: spec.top, changes: spec.changes.filter((c) => c.at !== null && c.step !== null) });
-
-function renderStackEdit() {
-  const e = exList().find((x) => x.id === stackId);
-  app.innerHTML =
-    backBtn("Back without saving") + "<h2>" + esc(e.name) + "</h2>" +
-    stackFormHtml(e, settings.exercises?.[e.id]?.stackSpec) +
-    '<button class="primary" id="save">Save</button>' +
-    (hasPins(e) ? '<button class="ghost" id="clear">Clear this machine</button>' : "");
-  const form = bindStackForm(e);
-
-  wire({
-    back: goBack,
-    save: () => {
-      if (stackPins.length === 0) { alert("Fill in the boxes first so there are weights to save."); return; }
-      saveSettings(updateExercise(settings, e.id, { pins: stackPins, stackSpec: stackToSave(form.readSpec()) }));
-      go("stacks");
-    },
-    clear: () => {
-      if (!confirm("Remove the saved weights for this machine?")) return;
-      saveSettings(updateExercise(settings, e.id, { pins: null, stackSpec: null }));
-      go("stacks");
-    },
-  });
-}
 
 // ---------- Gyms ----------
 // Each gym has its own equipment list. This screen shows the gyms, renames them, sets the default gym and
@@ -896,7 +846,7 @@ function renderGymItemAdd() {
     (set
       ? muted("Uses this gym's " + esc(set.name) + " list (" + set.unit + "). Change the list with Edit on the gym screen.", "small")
       : field("ia_unit", "Unit", selectHtml("ia_unit", optionsHtml(UNITS, d.unit), "field"))) +
-    (d.type === "stack" ? muted("Set up the stack on Machine setup once the machine is added.", "small") : "") +
+    (d.type === "stack" ? muted("Set up the stack with Edit on the machine once it is added.", "small") : "") +
     '<button class="primary" id="addBtn">Add</button>';
 
   $("ia_name").oninput = (ev) => { d.name = ev.target.value; };
