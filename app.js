@@ -22,6 +22,7 @@ import {
   exportMachines, importMachines, gymList, addGym, renameGym, setDefaultGym, setCurrentGym, useDefaultGym,
 } from "./store.js";
 import { makeBackup, backupFileName, parseBackup, fileKind, dataSummary, describeData, backupAge } from "./backup.js";
+import { muscleOf, muscleLabel, partnerGroups, getPairs, setPairs, addPair, removePair, pairedWith } from "./superset.js";
 import { KEY, load, loadList, save } from "./storage.js";
 import {
   $, esc, optionsHtml, selectHtml, field, numField, cols, box, muted, ghostBtn, backBtn, wire, addItems, addChoices, sendFile,
@@ -97,6 +98,8 @@ let showMore = false;      // show less common exercises on the list
 let listKind = null;       // the kind of exercise shown on the list (machines, dumbbells...); null means the gym's default
 let showDone = false;      // is the "done today" list open on the exercise list?
 let pickMore = false;      // show less common exercises when picking a superset partner
+let pickOther = false;     // show the other sessions' exercises when picking a superset partner
+let rememberPair = false;  // save the next pair picked from another session
 let panels = [];           // exercises on the logging page: one, or two when supersetting
 let editId = null;         // the exercise being set up
 let flash = "";            // a short message shown once, e.g. "Defaults saved"
@@ -484,7 +487,7 @@ function renderExercise() {
     '<div class="topbar">' + ghostBtn("back", "&larr; " + (single ? "Pick another machine" : "Back to list")) +
     (single ? ghostBtn("superset", "+ Superset") : "") + "</div>" +
     panels.map(panelHtml).join("");
-  wire({ back: goBack, superset: () => { pickMore = false; go("pick"); } });
+  wire({ back: goBack, superset: () => { pickMore = false; pickOther = false; rememberPair = false; go("pick"); } });
   panels.forEach(bindPanel);
 }
 
@@ -502,17 +505,70 @@ function sessionPool() {
   return [...own, ...extra];
 }
 
+// Your saved superset pairs (kept per person; each pair works both ways).
+const pairPrefs = () => getPairs(store, store.currentPerson);
+const savePairs = (prefs) => saveStore(setPairs(store, store.currentPerson, prefs));
+
+// Offers partners for the exercise already on the page: opposite muscles in this session first, then
+// the rest of the session, then (behind a button) other sessions as exceptions you can save as a pair.
 function renderPick() {
-  const onPage = new Set(panels.map((p) => p.ex.id));
-  const choices = sessionPool().filter((e) => !onPage.has(e.id) && !isDoneToday(done, e.id));
-  const { shown, toggle } = commonSplit(choices, pickMore, "pickMore");
+  const first = panels[0].ex;
+  const all = exList();
+  const taken = new Set([...panels.map((p) => p.ex.id), ...all.filter((e) => isDoneToday(done, e.id)).map((e) => e.id)]);
+  const pool = sessionPool();
+  const poolIds = new Set(pool.map((e) => e.id));
+  const g = partnerGroups({ ex: first, pool, others: all.filter((e) => !poolIds.has(e.id)), prefs: pairPrefs(), taken });
+  const rest = commonSplit(g.rest, pickMore, "pickMore");
+  const mine = muscleOf(first);
+  const sub = (e) => {
+    const m = muscleLabel(muscleOf(e));
+    return (g.saved.has(e.id) ? "Your pair" + (m ? " · " : "") : "") + m;
+  };
+  const row = (e, remember) => [
+    esc(e.name) + (sub(e) ? "<small>" + esc(sub(e)) + "</small>" : ""),
+    () => {
+      if (remember && rememberPair) savePairs(addPair(pairPrefs(), first.id, e.id));
+      panels.push(newPanel(e));
+      go("exercise");
+    },
+  ];
+  // Saved pairs for this exercise that can be forgotten.
+  const names = Object.fromEntries(all.map((e) => [e.id, e.name]));
+  const forget = pairedWith(pairPrefs(), first.id).filter((id) => names[id]);
+
   app.innerHTML =
-    backBtn() + timeBar() + "<h2>Add a superset exercise</h2>" +
-    '<div id="pickList"></div>' +
-    (shown.length === 0 ? muted("No other exercises left to add.") : "") +
-    toggle;
-  addItems("pickList", shown.map((e) => [esc(e.name), () => { panels.push(newPanel(e)); go("exercise"); }]));
-  wire({ back: goBack, pickMore: () => { pickMore = !pickMore; render(); } });
+    backBtn() + timeBar() + "<h2>Superset with " + esc(first.name) + "</h2>" +
+    (g.suggested.length
+      ? muted("<strong>" + (mine ? "Opposite to " + esc(muscleLabel(mine).toLowerCase()) + " and your pairs" : "Your pairs") + "</strong>") + '<div id="pickSuggest"></div>'
+      : muted(mine ? "No opposite muscles left in this session." : "No muscle group known for this exercise; showing the whole session.")) +
+    (g.rest.length ? muted("<strong>Rest of " + esc(sessionLabel(session)) + "</strong>") + '<div id="pickList"></div>' + rest.toggle : "") +
+    (g.elsewhere.length
+      ? ghostBtn("pickOther", (pickOther ? "Hide" : "Show") + " other sessions (" + g.elsewhere.length + ")") +
+        (pickOther
+          ? muted("Pick one for this time only, or turn on Remember to pair them every time.") +
+            '<div class="choices fit" id="pickRemember"></div><div id="pickElsewhere"></div>'
+          : "")
+      : "") +
+    (g.suggested.length + g.rest.length + g.elsewhere.length === 0 ? muted("No other exercises left to add.") : "") +
+    (forget.length ? muted("<strong>Saved pairs</strong>") + '<div id="pickForget"></div>' : "");
+
+  if (g.suggested.length) addItems("pickSuggest", g.suggested.map((e) => row(e, false)));
+  if (g.rest.length) addItems("pickList", rest.shown.map((e) => row(e, false)));
+  if (pickOther && g.elsewhere.length) {
+    addChoices("pickRemember", [["Remember this pair", rememberPair, () => { rememberPair = !rememberPair; render(); }]]);
+    addItems("pickElsewhere", g.elsewhere.map((e) => row(e, true)));
+  }
+  if (forget.length) {
+    addItems("pickForget", forget.map((id) => [
+      "Forget " + esc(first.name) + " + " + esc(names[id]),
+      () => { savePairs(removePair(pairPrefs(), first.id, id)); render(); },
+    ]));
+  }
+  wire({
+    back: goBack,
+    pickMore: () => { pickMore = !pickMore; render(); },
+    pickOther: () => { pickOther = !pickOther; render(); },
+  });
 }
 
 // ---------- Set up session: list of machines ----------
