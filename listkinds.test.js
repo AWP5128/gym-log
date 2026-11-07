@@ -47,3 +47,19 @@ test("chooseListKind uses what was picked, then the default, then what is left",
   assert.equal(chooseListKind(present, { machines: 0, dumbbells: 0, barbell: 0, bodyweight: 0 }, null, "barbell"), "barbell");
   assert.equal(chooseListKind([], open, null, null), "machines");
 });
+
+test("Gym settings chips: entries are filtered by kind and counted per kind (hidden ones are not in the counts)", async () => {
+  const { entriesOfKind, kindCountsOfEntries, visibleEntries, hiddenEntries, hideItem } = await import("./gym.js");
+  const st = emptyStore();
+  let g = st.gyms[st.currentGym];
+  const all = visibleEntries(g);
+  const total = Object.values(kindCountsOfEntries(all)).reduce((a, b) => a + b, 0);
+  assert.equal(total, all.length);
+  const stack = all.find(([, i]) => i.type === "stack");
+  const before = kindCountsOfEntries(all).machines;
+  g = hideItem(g, stack[0]);
+  assert.equal(kindCountsOfEntries(visibleEntries(g)).machines, before - 1);
+  assert.deepEqual(entriesOfKind(hiddenEntries(g), "machines").map(([id]) => id), [stack[0]]);
+  assert.deepEqual(entriesOfKind(hiddenEntries(g), "bodyweight"), []);
+  for (const k of LIST_KINDS) assert.ok(entriesOfKind(visibleEntries(g), k.id).every(([, i]) => listKindOf(i) === k.id));
+});

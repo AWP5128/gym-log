@@ -514,6 +514,10 @@ export function kindCounts(list) {
   return out;
 }
 
+// The [id, item] entries of one kind, and the count of each kind, for the Gym settings screen's Equipment chips.
+export const entriesOfKind = (entries, kind) => entries.filter(([, i]) => listKindOf(i) === kind);
+export const kindCountsOfEntries = (entries) => kindCounts(entries.map(([, i]) => i));
+
 // Which kind to show. present = kinds the session has at all; open = exercises still to do per kind (from
 // kindCounts). Tries what was picked, then the gym's default, then the first kind with something left, then
 // any kind the session has.
