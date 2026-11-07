@@ -6,7 +6,7 @@ import {
   gymList, addGym, renameGym, setDefaultGym, setCurrentGym, useDefaultGym,
 } from "./store.js";
 import { exercises } from "./exercises.js";
-import { newGym, makeItem, STARTER_FREE } from "./gym.js";
+import { newGym, makeItem, STARTER_FREE, STARTER_ABS } from "./gym.js";
 
 const legacy = {
   exercises: {
@@ -47,7 +47,7 @@ test("emptyStore has a version, one gym with the built-in equipment and one pers
   assert.equal(STORE_VERSION, 3);
   assert.ok(s.people.awp);
   const gym = s.gyms.main;
-  assert.equal(Object.keys(gym.equipment).length, exercises.length + STARTER_FREE.length);
+  assert.equal(Object.keys(gym.equipment).length, exercises.length + STARTER_FREE.length + STARTER_ABS.length);
   assert.equal(gym.equipment["leg-press"].type, "stack");
   assert.equal(gym.equipment["leg-press"].unit, "lb");
   assert.equal(gym.equipment.deadlift.type, "barbell");
@@ -73,7 +73,7 @@ test("migrateLegacy puts the shared machine data into the first gym's equipment"
   assert.equal(lp.group, "legs");
   assert.equal(s.gyms.main.equipment["pull-up"].name, "Pull-ups (neutral grip)");
   assert.equal(s.gyms.main.equipment["pull-up"].pins, undefined);
-  assert.equal(Object.keys(s.gyms.main.equipment).length, exercises.length + STARTER_FREE.length);
+  assert.equal(Object.keys(s.gyms.main.equipment).length, exercises.length + STARTER_FREE.length + STARTER_ABS.length);
 });
 
 test("migrateLegacy keeps the personal settings separate", () => {
@@ -169,7 +169,7 @@ test("cleanStore upgrades a version 2 store and keeps stacks and personal settin
   assert.equal(lp.name, "Leg Press");
   assert.deepEqual(lp.pins, [10, 20, 35]);
   assert.equal(lp.unit, "lb");
-  assert.equal(Object.keys(s.gyms.main.equipment).length, exercises.length + STARTER_FREE.length);
+  assert.equal(Object.keys(s.gyms.main.equipment).length, exercises.length + STARTER_FREE.length + STARTER_ABS.length);
   assert.equal(s.gyms.main.machines, undefined);
   assert.equal(s.people.awp.gyms.main.machines["leg-press"].notes, "Seat 4");
   assert.equal(old.version, 2);

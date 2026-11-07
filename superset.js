@@ -8,7 +8,8 @@
 export const MUSCLES = {
   biceps: "Biceps", triceps: "Triceps", chest: "Chest", back: "Back", shoulders: "Shoulders",
   "rear-delts": "Rear delts", quads: "Quads", hamstrings: "Hamstrings", glutes: "Glutes",
-  calves: "Calves", abductors: "Hip abductors", adductors: "Hip adductors", abs: "Abs", grip: "Grip",
+  calves: "Calves", abductors: "Hip abductors", adductors: "Hip adductors",
+  "upper-abs": "Upper abs", "lower-abs": "Lower abs", obliques: "Obliques", abs: "Abs (general)", grip: "Grip",
 };
 
 // Muscles that work against each other (either way round).
@@ -25,11 +26,17 @@ export const DEFAULT_MUSCLE = {
   "shoulder-press": "shoulders", "chest-press": "chest", "tricep-dip": "triceps", "bicep-curl": "biceps",
   "tricep-extension": "triceps", "lat-pulldown": "back", "upright-row": "shoulders",
   "farmers-hold": "grip", "delt-fly": "shoulders", "rear-fly": "rear-delts",
+  // Abs: the part each one emphasises (not exclusive). Rectus abdominis works as one muscle, but crunch-type
+  // moves load the upper segments more and leg-raise-type moves the lower ones (Gomirato & Grenier 2023);
+  // the obliques lead the twisting and side-to-side moves.
+  crunch: "upper-abs", "sit-up": "upper-abs", "ab-crunch-machine": "upper-abs",
+  "leg-raise": "lower-abs", "hurdle-tucks": "lower-abs",
+  "leg-overs": "obliques", "bicycle-crunch": "obliques", "rotary-torso": "obliques",
   "dumbbell-curl": "biceps", "hammer-curl": "biceps", "dumbbell-shoulder-press": "shoulders",
   "lateral-raise": "shoulders", "dumbbell-chest-press": "chest", "dumbbell-row": "back",
   "overhead-tricep-extension": "triceps", "goblet-squat": "quads", "dumbbell-lunge": "quads",
-  "dumbbell-rdl": "hamstrings", "dumbbell-step-up": "quads", "weighted-crunch": "abs",
-  "russian-twist": "abs", "dumbbell-side-bend": "abs", "barbell-squat": "quads",
+  "dumbbell-rdl": "hamstrings", "dumbbell-step-up": "quads", "weighted-crunch": "upper-abs",
+  "russian-twist": "obliques", "dumbbell-side-bend": "obliques", "barbell-squat": "quads",
   "barbell-rdl": "hamstrings", "hip-thrust": "glutes", "barbell-bench-press": "chest",
   "overhead-press": "shoulders", "barbell-row": "back", "barbell-curl": "biceps",
 };
@@ -48,7 +55,10 @@ const GUESS = [
   [/adduct/i, "adductors"],
   [/glute|thrust|bridge/i, "glutes"],
   [/quad|squat|leg press|lunge|step-?up/i, "quads"],
-  [/crunch|twist|side bend|sit-?up|plank|abs/i, "abs"],
+  [/twist|side bend|oblique|leg-?overs?|bicycle|rotary/i, "obliques"],
+  [/leg raise|knee raise|hurdle|tuck|reverse crunch|in.?and.?outs?/i, "lower-abs"],
+  [/crunch|sit-?up|abdominal/i, "upper-abs"],
+  [/plank|\babs\b/i, "abs"],
 ];
 
 // The muscle of an exercise (an object with id and name), or null when unknown.

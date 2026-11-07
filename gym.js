@@ -435,6 +435,32 @@ export function seedStarterFree(gym) {
   return { ...gym, equipment, starterFree: true };
 }
 
+// ---------- The starter abs exercises ----------
+// Floor exercises (body weight, reps; an optional added weight) and two machines. Added once to a gym that has
+// equipment already (see seedStarterAbs); a new gym never gets them. Any of them can be hidden. Which part of
+// the abs each one works is in superset.js (DEFAULT_MUSCLE), so it can be changed from the Edit screen.
+const abs = (id, name, type, common = true) => ({ id, name, group: "abs", type, common, ...(type === "bodyweight" ? { min: 0 } : {}) });
+export const STARTER_ABS = [
+  abs("crunch", "Crunch", "bodyweight"),
+  abs("leg-raise", "Leg Raise", "bodyweight"),
+  abs("leg-overs", "Leg-overs", "bodyweight"),
+  abs("hurdle-tucks", "Hurdle Tucks", "bodyweight"),
+  abs("sit-up", "Sit-up", "bodyweight", false),
+  abs("bicycle-crunch", "Bicycle Crunch", "bodyweight", false),
+  abs("ab-crunch-machine", "Abdominal Crunch Machine", "stack"),
+  abs("rotary-torso", "Rotary Torso Machine", "stack", false),
+];
+
+// Adds the starter abs exercises to a gym that already has equipment, once (the gym remembers it with
+// starterAbs). An empty gym is marked without adding anything. Ids the gym already has are left alone.
+export function seedStarterAbs(gym) {
+  if (gym.starterAbs === true) return gym;
+  if (Object.keys(gym.equipment || {}).length === 0) return { ...gym, starterAbs: true };
+  const equipment = { ...gym.equipment };
+  for (const s of STARTER_ABS) if (!equipment[s.id]) equipment[s.id] = makeItem(s);
+  return { ...gym, equipment, starterAbs: true };
+}
+
 // Sets the unit new items of this type will get. Items already in the gym are not changed.
 export const setDefaultUnit = (gym, type, unit) =>
   UNITS.includes(unit) && TYPE_IDS.includes(type) ? { ...gym, units: { ...gym.units, [type]: unit } } : gym;
