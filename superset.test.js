@@ -213,3 +213,20 @@ test("marks live under the person, survive saving settings, and old pairs-only d
   assert.deepEqual(getPairs(old, person), { pairs: [["a", "b"]], suitable: [] });
   assert.ok(isSuitable(getPairs(old, person), "a"));
 });
+
+test("pull-ups count as this session's on both legs and arms days when they are listed as any-day", () => {
+  let p = emptyPairs();
+  for (const id of ["pull-up", "leg-press", "tricep-dip"]) p = setSuitable(p, id, true);
+  const without = pairCandidates({ ex: arms[0], all, prefs: p });
+  assert.ok(without.other.some((e) => e.id === "pull-up"));
+  const withAny = pairCandidates({ ex: arms[0], all, prefs: p, anyDay: ["pull-up"] });
+  assert.deepEqual(withAny.rest.map((e) => e.id), ["pull-up"]);
+  assert.deepEqual(withAny.other.map((e) => e.id), ["leg-press"]);
+  // from the pull-up's own screen, arms exercises are this session's too
+  const fromPull = pairCandidates({ ex: arms[5], all, prefs: setSuitable(p, "bicep-curl", true), anyDay: ["pull-up"] });
+  assert.ok(fromPull.rest.some((e) => e.id === "bicep-curl") && fromPull.rest.some((e) => e.id === "leg-press"));
+  // an abs exercise gets no special treatment
+  const abs = { id: "crunch", name: "Crunch", group: "abs" };
+  const fromAbs = pairCandidates({ ex: abs, all: [...all, abs], prefs: p, anyDay: ["pull-up"] });
+  assert.ok(fromAbs.other.some((e) => e.id === "pull-up"));
+});

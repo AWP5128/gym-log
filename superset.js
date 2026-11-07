@@ -123,11 +123,16 @@ export function setSuitable(prefs, id, on) {
 // Other exercises that could be paired with ex on its Set up screen: only those marked suitable.
 // all: every exercise at the gym. Returns { opposite, rest, other }: opposite muscles first (this session's
 // before other sessions'), then the rest of this session, then other sessions.
-export function pairCandidates({ ex, all = [], prefs = emptyPairs() }) {
+// anyDay: ids of exercises done on both legs and arms days (pull-ups); on a legs or arms day they count as
+// this session's, whichever session they are filed under.
+export function pairCandidates({ ex, all = [], prefs = emptyPairs(), anyDay = [] }) {
   const ok = suitableIds(prefs);
   const mine = muscleOf(ex);
   const list = all.filter((e) => e.id !== ex.id && ok.has(e.id));
-  const same = (e) => e.group === ex.group;
+  const dayGroup = (g) => g === "legs" || g === "arms";
+  const same = (e) => e.group === ex.group
+    || (anyDay.includes(e.id) && dayGroup(ex.group))
+    || (anyDay.includes(ex.id) && dayGroup(e.group));
   const opp = (e) => isOpposite(mine, muscleOf(e));
   return {
     opposite: [...list.filter((e) => opp(e) && same(e)), ...list.filter((e) => opp(e) && !same(e))],

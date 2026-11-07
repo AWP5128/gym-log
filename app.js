@@ -604,7 +604,7 @@ function summary(e, cfg, key) {
 
 function renderSetup() {
   ssDraft = null;
-  const list = exercisesForGroup(session.type, true, exList());
+  const list = sessionPool();   // this session's exercises, plus pull-ups on a legs or arms day
   const key = modeKey();
   const g = globalDefaults(settings);
   app.innerHTML =
@@ -620,7 +620,7 @@ function renderSetup() {
   flash = "";
 
   addItems("list", list.map((e) => [
-    esc(e.name) + "<small>" + esc(summary(e, configFor(settings, e.id), key)) + "</small>",
+    esc(e.name) + "<small>" + esc(summary(e, configFor(settings, e.id), key) + (e.group !== session.type ? " · " + (typeInfo(e.group)?.label ?? e.group) + " exercise, also done on " + typeInfo(session.type).label.toLowerCase() + " days" : "")) + "</small>",
     () => { editId = e.id; go("edit"); },
   ]));
   wire({
@@ -689,7 +689,7 @@ function renderEdit() {
   const drawSuperset = () => {
     const prefs = ssDraft.prefs;
     const on = isSuitable(prefs, e.id);
-    const c = pairCandidates({ ex: e, all: exList(), prefs });
+    const c = pairCandidates({ ex: e, all: exList(), prefs, anyDay: ANY_DAY_SUPERSET });
     const group = (title, list) => list.length
       ? muted("<strong>" + title + "</strong>") + '<div class="ssList"></div>' : "";
     $("ssBody").innerHTML =
@@ -698,7 +698,7 @@ function renderEdit() {
       (on
         ? (c.opposite.length + c.rest.length + c.other.length === 0
             ? muted("No other exercises are marked suitable yet. Mark them on their own Set up screens, then come back to pair them.")
-            : group("Opposite muscles", c.opposite) + group("Rest of " + esc(typeInfo(e.group)?.label ?? "this session"), c.rest) + group("Other sessions", c.other))
+            : group("Opposite muscles", c.opposite) + group("Rest of " + esc((ANY_DAY_SUPERSET.includes(e.id) && hasDayType() ? typeInfo(session.type) : typeInfo(e.group))?.label ?? "this session"), c.rest) + group("Other sessions", c.other))
         : "");
     addChoices("ssSwitch", [["Not for supersets", !on, () => {
       const n = pairedWith(prefs, e.id).length;
