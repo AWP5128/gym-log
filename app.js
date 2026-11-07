@@ -22,7 +22,7 @@ import {
   exportMachines, importMachines, gymList, addGym, renameGym, setDefaultGym, setCurrentGym, useDefaultGym,
 } from "./store.js";
 import { makeBackup, backupFileName, parseBackup, fileKind, dataSummary, describeData, backupAge } from "./backup.js";
-import { MUSCLES, muscleOf, muscleLabel, partnerGroups, getPairs, setPairs, addPair, removePair, pairedWith } from "./superset.js";
+import { MUSCLES, muscleOf, muscleLabel, partnerGroups, pairedPartners, getPairs, setPairs, addPair, removePair, pairedWith, isSuitable, setSuitable, hasPair, pairCandidates } from "./superset.js";
 import { KEY, load, loadList, save } from "./storage.js";
 import {
   $, esc, optionsHtml, selectHtml, field, numField, cols, box, muted, ghostBtn, backBtn, wire, addItems, addChoices, sendFile,
@@ -100,6 +100,8 @@ let showDone = false;      // is the "done today" list open on the exercise list
 let pickMore = false;      // show less common exercises when picking a superset partner
 let pickOther = false;     // show the other sessions' exercises when picking a superset partner
 let rememberPair = false;  // save the next pair picked from another session
+let pickAll = false;       // show every exercise when picking a partner, not only the ones paired with this exercise
+let ssDraft = null;        // superset choices for the exercise on the Set up screen, saved with Save
 let panels = [];           // exercises on the logging page: one, or two when supersetting
 let editId = null;         // the exercise being set up
 let flash = "";            // a short message shown once, e.g. "Defaults saved"
@@ -487,7 +489,7 @@ function renderExercise() {
     '<div class="topbar">' + ghostBtn("back", "&larr; " + (single ? "Pick another machine" : "Back to list")) +
     (single ? ghostBtn("superset", "+ Superset") : "") + "</div>" +
     panels.map(panelHtml).join("");
-  wire({ back: goBack, superset: () => { pickMore = false; pickOther = false; rememberPair = false; go("pick"); } });
+  wire({ back: goBack, superset: () => { pickMore = false; pickOther = false; rememberPair = false; pickAll = false; go("pick"); } });
   panels.forEach(bindPanel);
 }
 
@@ -517,7 +519,22 @@ function renderPick() {
   const taken = new Set([...panels.map((p) => p.ex.id), ...all.filter((e) => isDoneToday(done, e.id)).map((e) => e.id)]);
   const pool = sessionPool();
   const poolIds = new Set(pool.map((e) => e.id));
-  const g = partnerGroups({ ex: first, pool, others: all.filter((e) => !poolIds.has(e.id)), prefs: pairPrefs(), taken });
+  const others = all.filter((e) => !poolIds.has(e.id));
+  const g = partnerGroups({ ex: first, pool, others, prefs: pairPrefs(), taken });
+  const paired = pairedPartners({ ex: first, pool, others, prefs: pairPrefs(), taken });
+  // An exercise with pairs (chosen on its Set up screen) offers just those first; "Show all exercises" opens the rest.
+  if (paired.length > 0 && !pickAll) {
+    app.innerHTML =
+      backBtn() + timeBar() + "<h2>Superset with " + esc(first.name) + "</h2>" +
+      muted("<strong>Your pairs</strong>") + '<div id="pickPairs"></div>' +
+      ghostBtn("pickAll", "Show all exercises");
+    addItems("pickPairs", paired.map((e) => {
+      const m = muscleLabel(muscleOf(e));
+      return [esc(e.name) + (m ? "<small>" + esc(m) + "</small>" : ""), () => { panels.push(newPanel(e)); go("exercise"); }];
+    }));
+    wire({ back: goBack, pickAll: () => { pickAll = true; render(); } });
+    return;
+  }
   const rest = commonSplit(g.rest, pickMore, "pickMore");
   const mine = muscleOf(first);
   const sub = (e) => {
@@ -538,6 +555,7 @@ function renderPick() {
 
   app.innerHTML =
     backBtn() + timeBar() + "<h2>Superset with " + esc(first.name) + "</h2>" +
+    (paired.length ? ghostBtn("pickPairsOnly", "Show only my pairs") : "") +
     (g.suggested.length
       ? muted("<strong>" + (mine ? "Opposite to " + esc(muscleLabel(mine).toLowerCase()) + " and your pairs" : "Your pairs") + "</strong>") + '<div id="pickSuggest"></div>'
       : muted(mine ? "No opposite muscles left in this session." : "No muscle group known for this exercise; showing the whole session.")) +
@@ -568,6 +586,7 @@ function renderPick() {
     back: goBack,
     pickMore: () => { pickMore = !pickMore; render(); },
     pickOther: () => { pickOther = !pickOther; render(); },
+    pickPairsOnly: () => { pickAll = false; render(); },
   });
 }
 
@@ -584,6 +603,7 @@ function summary(e, cfg, key) {
 }
 
 function renderSetup() {
+  ssDraft = null;
   const list = exercisesForGroup(session.type, true, exList());
   const key = modeKey();
   const g = globalDefaults(settings);
@@ -661,7 +681,47 @@ function renderEdit() {
       muted("The warm-up is optional. Leave reps or sets blank to use the defaults.")) +
     field("f_notes", "Notes (seat height, pad position, etc.)", '<textarea class="field" id="f_notes" rows="3">' + esc(cfg.notes) + "</textarea>") +
     muted("Notes are the same for Heavy and Volume days.") +
+    box("Supersets", '<div id="ssBody"></div>') +
     '<button class="primary" id="save">Save</button>';
+
+  // Superset choices are kept in a draft and saved with Save (Back without saving drops them).
+  if (!ssDraft || ssDraft.id !== e.id) ssDraft = { id: e.id, prefs: pairPrefs() };
+  const drawSuperset = () => {
+    const prefs = ssDraft.prefs;
+    const on = isSuitable(prefs, e.id);
+    const c = pairCandidates({ ex: e, all: exList(), prefs });
+    const group = (title, list) => list.length
+      ? muted("<strong>" + title + "</strong>") + '<div class="ssList"></div>' : "";
+    $("ssBody").innerHTML =
+      muted("Mark this exercise as suitable for supersets, then choose what it can be paired with.") +
+      '<div class="choices" id="ssSwitch"></div>' +
+      (on
+        ? (c.opposite.length + c.rest.length + c.other.length === 0
+            ? muted("No other exercises are marked suitable yet. Mark them on their own Set up screens, then come back to pair them.")
+            : group("Opposite muscles", c.opposite) + group("Rest of " + esc(typeInfo(e.group)?.label ?? "this session"), c.rest) + group("Other sessions", c.other))
+        : "");
+    addChoices("ssSwitch", [["Not for supersets", !on, () => {
+      const n = pairedWith(prefs, e.id).length;
+      if (n > 0 && !confirm("Turning this off removes its " + n + (n === 1 ? " pair" : " pairs") + ". Continue?")) return;
+      ssDraft.prefs = setSuitable(prefs, e.id, false);
+      drawSuperset();
+    }], ["Suitable for supersets", on, () => { ssDraft.prefs = setSuitable(prefs, e.id, true); drawSuperset(); }]]);
+    if (!on) return;
+    const lists = [...$("ssBody").querySelectorAll(".ssList")];
+    [c.opposite, c.rest, c.other].filter((l) => l.length).forEach((list, n) => {
+      const el = lists[n];
+      el.id = "ssList" + n;
+      addItems(el.id, list.map((x) => {
+        const paired = hasPair(prefs, e.id, x.id);
+        const m = muscleLabel(muscleOf(x));
+        return [(paired ? "&#10003; " : "") + esc(x.name) + (m ? "<small>" + esc(m) + (paired ? " · paired" : "") + "</small>" : ""), () => {
+          ssDraft.prefs = paired ? removePair(prefs, e.id, x.id) : addPair(prefs, e.id, x.id);
+          drawSuperset();
+        }];
+      }));
+    });
+  };
+  drawSuperset();
 
   wire({
     back: goBack,
@@ -678,6 +738,7 @@ function renderEdit() {
       patch["reps" + key] = wholeOrNull($("f_reps").value);
       patch["sets" + key] = wholeOrNull($("f_sets").value);
       saveSettings(updateExercise(settings, e.id, patch));
+      savePairs(ssDraft.prefs);
       go("setup");
     },
   });

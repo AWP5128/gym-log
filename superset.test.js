@@ -3,6 +3,7 @@ import assert from "node:assert/strict";
 import {
   muscleOf, isOpposite, emptyPairs, cleanPairs, hasPair, addPair, removePair, pairedWith,
   getPairs, setPairs, partnerGroups, DEFAULT_MUSCLE, MUSCLES,
+  suitableIds, isSuitable, setSuitable, pairCandidates, pairedPartners,
 } from "./superset.js";
 import { emptyStore, cleanStore, toLegacySettings, applyLegacySettings } from "./store.js";
 import { exercises } from "./exercises.js";
@@ -46,7 +47,7 @@ test("saved pairs: added once, both ways, removable, tidied", () => {
   assert.equal(addPair(p, "a", "a").pairs.length, 1);
   assert.equal(removePair(p, "b", "a").pairs.length, 0);
   assert.deepEqual(cleanPairs({ pairs: [["a", "b"], ["b", "a"], ["c", "c"], "bad", [1, 2]] }).pairs, [["a", "b"]]);
-  assert.deepEqual(cleanPairs(null), { pairs: [] });
+  assert.deepEqual(cleanPairs(null), { pairs: [], suitable: [] });
 });
 
 const arms = [
@@ -140,4 +141,75 @@ test("the muscle survives saving other settings and copying to another gym", () 
   const to = copyEquipment(store.gyms[store.currentGym], ["bicep-curl"], { name: "Other", units: {}, equipment: {}, weightSets: {} }).gym;
   assert.equal(to.equipment["bicep-curl"].muscle, "chest");
   assert.equal(updateItem(gym, "bicep-curl", { name: "X" }).equipment["bicep-curl"].muscle, "chest");
+});
+
+// ---------- Suitable for supersets (marked on the Set up screen) ----------
+const all = [...arms, ...legs];
+
+test("marks: an exercise is suitable when marked or when it is in a pair", () => {
+  let p = setSuitable(emptyPairs(), "bicep-curl", true);
+  assert.ok(isSuitable(p, "bicep-curl"));
+  assert.ok(!isSuitable(p, "tricep-dip"));
+  p = addPair(p, "pull-up", "leg-press");
+  assert.ok(isSuitable(p, "pull-up") && isSuitable(p, "leg-press"));
+  assert.deepEqual([...suitableIds(p)].sort(), ["bicep-curl", "leg-press", "pull-up"]);
+});
+
+test("turning a mark off removes that exercise's pairs but keeps the others", () => {
+  let p = addPair(addPair(setSuitable(emptyPairs(), "a", true), "a", "b"), "c", "d");
+  p = setSuitable(p, "a", false);
+  assert.ok(!isSuitable(p, "a"));
+  assert.ok(!hasPair(p, "a", "b"));
+  assert.ok(hasPair(p, "c", "d"));
+});
+
+test("pairs and marks survive addPair, removePair and cleaning together", () => {
+  let p = setSuitable(emptyPairs(), "x", true);
+  p = addPair(p, "a", "b");
+  p = removePair(p, "b", "a");
+  assert.deepEqual(p, { pairs: [], suitable: ["x"] });
+  assert.deepEqual(cleanPairs({ suitable: ["x", "x", "", 5], pairs: [] }), { pairs: [], suitable: ["x"] });
+});
+
+test("candidates are only the exercises marked suitable, opposite muscles first", () => {
+  assert.deepEqual(pairCandidates({ ex: arms[0], all, prefs: emptyPairs() }), { opposite: [], rest: [], other: [] });
+  let p = emptyPairs();
+  for (const id of ["tricep-dip", "chest-press", "leg-press", "pull-up", "hamstring-curl"]) p = setSuitable(p, id, true);
+  const c = pairCandidates({ ex: arms[0], all, prefs: p });
+  assert.deepEqual(c.opposite.map((e) => e.id), ["tricep-dip"]);
+  assert.deepEqual(c.rest.map((e) => e.id), ["chest-press"]);
+  assert.deepEqual(c.other.map((e) => e.id), ["pull-up", "leg-press", "hamstring-curl"].filter((id) => all.some((e) => e.id === id)).sort((a, b) => all.findIndex((e) => e.id === a) - all.findIndex((e) => e.id === b)));
+  // the exercise itself is never offered, even if marked
+  p = setSuitable(p, "bicep-curl", true);
+  assert.ok(![...pairCandidates({ ex: arms[0], all, prefs: p }).opposite].some((e) => e.id === "bicep-curl"));
+});
+
+test("a pull-up can be paired with arms and legs: other sessions' marked exercises are offered", () => {
+  let p = emptyPairs();
+  for (const id of ["bicep-curl", "leg-press", "pull-up"]) p = setSuitable(p, id, true);
+  const c = pairCandidates({ ex: arms[5], all, prefs: p });
+  const ids = [...c.opposite, ...c.rest, ...c.other].map((e) => e.id).sort();
+  assert.deepEqual(ids, ["bicep-curl", "leg-press"]);
+});
+
+test("paired partners: only the pairs, opposite muscles first, then this session, then others", () => {
+  let p = emptyPairs();
+  for (const id of ["chest-press", "leg-press", "tricep-dip", "lat-pulldown"]) p = addPair(p, "bicep-curl", id);
+  const g = pairedPartners({ ex: arms[0], pool: arms, others: legs, prefs: p });
+  assert.deepEqual(g.map((e) => e.id), ["tricep-dip", "chest-press", "lat-pulldown", "leg-press"]);
+  // taken ones are left out; no pairs gives an empty list so the screen shows everything as before
+  assert.deepEqual(pairedPartners({ ex: arms[0], pool: arms, others: legs, prefs: p, taken: new Set(["tricep-dip", "leg-press"]) }).map((e) => e.id), ["chest-press", "lat-pulldown"]);
+  assert.deepEqual(pairedPartners({ ex: arms[1], pool: arms, others: legs, prefs: p }).map((e) => e.id), []);
+});
+
+test("marks live under the person, survive saving settings, and old pairs-only data still loads", () => {
+  let store = emptyStore();
+  const person = store.currentPerson;
+  store = setPairs(store, person, setSuitable(addPair(emptyPairs(), "a", "b"), "z", true));
+  store = applyLegacySettings(store, person, store.currentGym, toLegacySettings(store, person, store.currentGym));
+  const back = getPairs(cleanStore(JSON.parse(JSON.stringify(store))), person);
+  assert.deepEqual(back, { pairs: [["a", "b"]], suitable: ["z"] });
+  const old = { ...store, people: { ...store.people, [person]: { ...store.people[person], superset: { pairs: [["a", "b"]] } } } };
+  assert.deepEqual(getPairs(old, person), { pairs: [["a", "b"]], suitable: [] });
+  assert.ok(isSuitable(getPairs(old, person), "a"));
 });

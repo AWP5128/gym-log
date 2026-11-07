@@ -69,19 +69,23 @@ export function isOpposite(a, b) {
 }
 
 // ---------- Pairs you save (per person) ----------
-// prefs = { pairs: [[idA, idB], ...] }. A pair works both ways.
-export const emptyPairs = () => ({ pairs: [] });
+// prefs = { pairs: [[idA, idB], ...], suitable: [id, ...] }. A pair works both ways. "Suitable" is the list
+// of exercises you have marked as fine for supersets on their Set up screen; an exercise that is in a pair
+// counts as suitable too (so pairs saved before the marks existed keep working).
+export const emptyPairs = () => ({ pairs: [], suitable: [] });
 
 const sameIds = (p, a, b) => (p[0] === a && p[1] === b) || (p[0] === b && p[1] === a);
 
 export function cleanPairs(raw) {
-  const out = [];
+  const pairs = [];
   const list = raw && Array.isArray(raw.pairs) ? raw.pairs : [];
   for (const p of list) {
     if (!Array.isArray(p) || typeof p[0] !== "string" || typeof p[1] !== "string" || p[0] === p[1]) continue;
-    if (!out.some((q) => sameIds(q, p[0], p[1]))) out.push([p[0], p[1]]);
+    if (!pairs.some((q) => sameIds(q, p[0], p[1]))) pairs.push([p[0], p[1]]);
   }
-  return { pairs: out };
+  const marks = raw && Array.isArray(raw.suitable) ? raw.suitable : [];
+  const suitable = [...new Set(marks.filter((id) => typeof id === "string" && id))];
+  return { pairs, suitable };
 }
 
 export const hasPair = (prefs, a, b) => cleanPairs(prefs).pairs.some((p) => sameIds(p, a, b));
@@ -89,16 +93,47 @@ export const hasPair = (prefs, a, b) => cleanPairs(prefs).pairs.some((p) => same
 export function addPair(prefs, a, b) {
   const clean = cleanPairs(prefs);
   if (!a || !b || a === b || hasPair(clean, a, b)) return clean;
-  return { pairs: [...clean.pairs, [a, b]] };
+  return { ...clean, pairs: [...clean.pairs, [a, b]] };
 }
 
 export function removePair(prefs, a, b) {
-  return { pairs: cleanPairs(prefs).pairs.filter((p) => !sameIds(p, a, b)) };
+  const clean = cleanPairs(prefs);
+  return { ...clean, pairs: clean.pairs.filter((p) => !sameIds(p, a, b)) };
 }
 
 // The ids saved as partners of one exercise.
 export function pairedWith(prefs, id) {
   return cleanPairs(prefs).pairs.filter((p) => p[0] === id || p[1] === id).map((p) => (p[0] === id ? p[1] : p[0]));
+}
+
+// Suitable for supersets: marked, or already in a pair.
+export function suitableIds(prefs) {
+  const clean = cleanPairs(prefs);
+  return new Set([...clean.suitable, ...clean.pairs.flat()]);
+}
+export const isSuitable = (prefs, id) => suitableIds(prefs).has(id);
+
+// Marks an exercise as suitable, or not. Turning it off also removes its pairs.
+export function setSuitable(prefs, id, on) {
+  const clean = cleanPairs(prefs);
+  if (on) return { ...clean, suitable: [...new Set([...clean.suitable, id])] };
+  return { suitable: clean.suitable.filter((x) => x !== id), pairs: clean.pairs.filter((p) => p[0] !== id && p[1] !== id) };
+}
+
+// Other exercises that could be paired with ex on its Set up screen: only those marked suitable.
+// all: every exercise at the gym. Returns { opposite, rest, other }: opposite muscles first (this session's
+// before other sessions'), then the rest of this session, then other sessions.
+export function pairCandidates({ ex, all = [], prefs = emptyPairs() }) {
+  const ok = suitableIds(prefs);
+  const mine = muscleOf(ex);
+  const list = all.filter((e) => e.id !== ex.id && ok.has(e.id));
+  const same = (e) => e.group === ex.group;
+  const opp = (e) => isOpposite(mine, muscleOf(e));
+  return {
+    opposite: [...list.filter((e) => opp(e) && same(e)), ...list.filter((e) => opp(e) && !same(e))],
+    rest: list.filter((e) => !opp(e) && same(e)),
+    other: list.filter((e) => !opp(e) && !same(e)),
+  };
 }
 
 // A person's saved pairs, and the store with new ones saved (other people and gyms are left alone).
@@ -133,4 +168,15 @@ export function partnerGroups({ ex, pool = [], others = [], prefs = emptyPairs()
     elsewhere: outside.filter((e) => !used.has(e.id)),
     saved,
   };
+}
+
+// The exercises you have paired with ex (and that can be offered now), best first: opposite muscles, then
+// this session's, then other sessions'. Empty when ex has no pairs: the screen then shows everything as before.
+export function pairedPartners({ ex, pool = [], others = [], prefs = emptyPairs(), taken = new Set() }) {
+  const ids = new Set(pairedWith(prefs, ex.id));
+  const poolIds = new Set(pool.map((e) => e.id));
+  const list = [...pool, ...others.filter((e) => !poolIds.has(e.id))].filter((e) => ids.has(e.id) && e.id !== ex.id && !taken.has(e.id));
+  const mine = muscleOf(ex);
+  const rank = (e) => (isOpposite(mine, muscleOf(e)) ? 0 : 2) + (poolIds.has(e.id) ? 0 : 1);
+  return list.map((e, i) => [rank(e), i, e]).sort((a, b) => a[0] - b[0] || a[1] - b[1]).map((x) => x[2]);
 }
