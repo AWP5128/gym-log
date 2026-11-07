@@ -104,3 +104,40 @@ test("saved pairs live under the person and survive the store round trip", () =>
   const again = cleanStore(JSON.parse(JSON.stringify(store)));
   assert.deepEqual(getPairs(again, person).pairs, [["pull-up", "leg-press"]]);
 });
+
+// ---------- Muscle chosen on the Edit item screen ----------
+import { makeItem, editItem, updateItem, copyEquipment, exerciseList } from "./gym.js";
+
+test("an item keeps its own muscle; a blank one is dropped", () => {
+  assert.equal(makeItem({ name: "A", group: "arms", type: "stack", muscle: " chest " }).muscle, "chest");
+  assert.equal("muscle" in makeItem({ name: "A", group: "arms", type: "stack", muscle: "  " }), false);
+  assert.equal("muscle" in makeItem({ name: "A", group: "arms", type: "stack" }), false);
+});
+
+test("editItem sets the muscle, and an empty one goes back to automatic", () => {
+  const gym = emptyStore().gyms[emptyStore().currentGym];
+  let r = editItem(gym, "bicep-curl", { muscle: "chest" });
+  assert.ok(r.ok);
+  assert.equal(r.gym.equipment["bicep-curl"].muscle, "chest");
+  assert.equal(muscleOf(exerciseList(r.gym).find((e) => e.id === "bicep-curl")), "chest");
+  r = editItem(r.gym, "bicep-curl", { muscle: "" });
+  assert.ok(r.ok);
+  assert.equal("muscle" in r.gym.equipment["bicep-curl"], false);
+  assert.equal(muscleOf(exerciseList(r.gym).find((e) => e.id === "bicep-curl")), "biceps");
+  // a patch without a muscle leaves it alone
+  const kept = editItem(editItem(gym, "bicep-curl", { muscle: "chest" }).gym, "bicep-curl", { name: "Curl" });
+  assert.equal(kept.gym.equipment["bicep-curl"].muscle, "chest");
+});
+
+test("the muscle survives saving other settings and copying to another gym", () => {
+  let store = emptyStore();
+  const person = store.currentPerson;
+  const gym = editItem(store.gyms[store.currentGym], "bicep-curl", { muscle: "chest" }).gym;
+  store = { ...store, gyms: { ...store.gyms, [store.currentGym]: gym } };
+  store = applyLegacySettings(store, person, store.currentGym, toLegacySettings(store, person, store.currentGym));
+  assert.equal(store.gyms[store.currentGym].equipment["bicep-curl"].muscle, "chest");
+  assert.equal(cleanStore(JSON.parse(JSON.stringify(store))).gyms[store.currentGym].equipment["bicep-curl"].muscle, "chest");
+  const to = copyEquipment(store.gyms[store.currentGym], ["bicep-curl"], { name: "Other", units: {}, equipment: {}, weightSets: {} }).gym;
+  assert.equal(to.equipment["bicep-curl"].muscle, "chest");
+  assert.equal(updateItem(gym, "bicep-curl", { name: "X" }).equipment["bicep-curl"].muscle, "chest");
+});

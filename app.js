@@ -22,7 +22,7 @@ import {
   exportMachines, importMachines, gymList, addGym, renameGym, setDefaultGym, setCurrentGym, useDefaultGym,
 } from "./store.js";
 import { makeBackup, backupFileName, parseBackup, fileKind, dataSummary, describeData, backupAge } from "./backup.js";
-import { muscleOf, muscleLabel, partnerGroups, getPairs, setPairs, addPair, removePair, pairedWith } from "./superset.js";
+import { MUSCLES, muscleOf, muscleLabel, partnerGroups, getPairs, setPairs, addPair, removePair, pairedWith } from "./superset.js";
 import { KEY, load, loadList, save } from "./storage.js";
 import {
   $, esc, optionsHtml, selectHtml, field, numField, cols, box, muted, ghostBtn, backBtn, wire, addItems, addChoices, sendFile,
@@ -860,7 +860,7 @@ function renderGymEdit() {
       $("edit" + n).onclick = () => {
         const it = g.equipment[id];
         editItemId = id;
-        itemEditDraft = { name: it.name, group: it.group, type: it.type, unit: it.unit, useSet: false };
+        itemEditDraft = { name: it.name, group: it.group, muscle: it.muscle || "", type: it.type, unit: it.unit, useSet: false };
         stackPins = Array.isArray(it.pins) ? [...it.pins] : [];
         go("gymItemEdit");
       };
@@ -956,11 +956,15 @@ function renderGymItemEdit() {
   const stackHtml = !stackItem ? "" :
     stackOk ? "<h2>Stack</h2>" + stackFormHtml(it, it.stackSpec)
     : muted("Save the change of type or unit first, then edit the stack.", "small");
+  const autoMuscle = muscleOf({ id: editItemId, name: d.name });   // what the app picks when none is chosen
   const typeLabelFor = (id) => ({ dumbbell: "Dumbbell exercise", barbell: "Barbell exercise" }[id] ?? typeLabel(id));
   app.innerHTML =
     backBtn("Back without saving") + "<h2>Edit " + esc(it.name) + "</h2>" +
     field("ie_name", "Name", '<input class="field" id="ie_name" type="text" value="' + esc(d.name) + '">') +
-    field("ie_group", "Session", selectHtml("ie_group", optionsHtml(["legs", "arms", "abs"], d.group, (id) => esc(typeInfo(id).label)), "field")) +
+    cols(
+      field("ie_group", "Session", selectHtml("ie_group", optionsHtml(["legs", "arms", "abs"], d.group, (id) => esc(typeInfo(id).label)), "field")),
+      field("ie_muscle", "Muscle", selectHtml("ie_muscle", optionsHtml(["", ...Object.keys(MUSCLES)], d.muscle, (id) => esc(id === "" ? "Auto: " + (muscleLabel(autoMuscle) || "none") : MUSCLES[id])), "field"))) +
+    muted("The muscle is used to suggest opposite-muscle partners for supersets.", "small") +
     (locked
       ? muted("Type and unit can't change because this exercise has logged sets at this gym. Name and session can.", "small")
       : field("ie_type", "Type", selectHtml("ie_type", optionsHtml(TYPES.map((t) => t.id), d.type, (id) => esc(typeLabelFor(id))), "field"))) +
@@ -979,6 +983,7 @@ function renderGymItemEdit() {
   const stackForm = stackOk ? bindStackForm(it) : null;
   $("ie_name").oninput = (ev) => { d.name = ev.target.value; };
   $("ie_group").onchange = (ev) => { d.group = ev.target.value; };
+  $("ie_muscle").onchange = (ev) => { d.muscle = ev.target.value; };
   if (!locked) $("ie_type").onchange = (ev) => { d.type = ev.target.value; d.useSet = false; render(); };
   if (!set && !locked) $("ie_unit").onchange = (ev) => { d.unit = ev.target.value; if (stackItem) render(); };
   wire({
@@ -991,7 +996,7 @@ function renderGymItemEdit() {
       render();
     } } : {}),
     saveItem: () => {
-      const patch = { name: d.name, group: d.group, type: d.type, useSet: d.useSet, ...(set ? {} : { unit: d.unit }) };
+      const patch = { name: d.name, group: d.group, muscle: d.muscle, type: d.type, useSet: d.useSet, ...(set ? {} : { unit: d.unit }) };
       const changes = [d.type !== it.type && "type", d.useSet && "list", !set && !locked && d.unit !== it.unit && "unit"].filter(Boolean);
       if (changes.length > 0 && !confirm("Changing the " + changes.join(" and ") + " restarts this exercise's weight list. Continue?")) return;
       const toSet = SET_TYPES.includes(d.type) && (d.type !== it.type || d.useSet) ? (d.type === "dumbbell" ? "dumbbells" : "barbell") : null;

@@ -2,7 +2,7 @@
 // Everything here is pure (no browser calls) so it can be tested, and it imports nothing from the app.
 //
 // gym  = { name, units: { type: "kg" | "lb" }, equipment: { exerciseId: item } }
-// item = { name, group, type, unit, step, common, min?, pins?, stackSpec?, hidden? }
+// item = { name, group, type, unit, step, common, min?, pins?, stackSpec?, hidden?, muscle? }
 //
 // - Dumbbells and barbells are shared: a gym has weight sets (gym.weightSets, normally "dumbbells" and
 //   "barbell") that hold the unit and the list of weights the gym has. Any number of exercises can use a set
@@ -73,6 +73,7 @@ export function makeItem(spec) {
   if (pins.length > 0) item.pins = pins;
   if (spec.stackSpec && typeof spec.stackSpec === "object") item.stackSpec = spec.stackSpec;
   if (spec.hidden === true) item.hidden = true;
+  if (typeof spec.muscle === "string" && spec.muscle.trim()) item.muscle = spec.muscle.trim();
   if (typeof spec.weightSet === "string" && spec.weightSet) item.weightSet = spec.weightSet;
   return item;
 }
@@ -173,7 +174,7 @@ export function updateItem(gym, id, patch) {
     delete next.min;
   }
   if (String(patch.name ?? "").trim()) next.name = String(patch.name).trim();
-  for (const f of ["step", "pins", "stackSpec", "common", "min", "group", "hidden"]) {
+  for (const f of ["step", "pins", "stackSpec", "common", "min", "group", "hidden", "muscle"]) {
     if (!(f in patch)) continue;
     if (patch[f] == null) delete next[f];
     else next[f] = patch[f];
@@ -182,7 +183,7 @@ export function updateItem(gym, id, patch) {
 }
 
 // Deletes an item for good. The screens use hideItem instead, which can be undone.
-// Edits an item from the Edit item screen: name, session, type, unit, or linking it to the gym's weight set.
+// Edits an item from the Edit item screen: name, session, muscle, type, unit, or linking it to the gym's weight set.
 // Returns { gym, ok, reason } where reason is "" when it worked, or "missing", "blank", "duplicate", "hidden"
 // (the name belongs to another item; existing says which) or "history" (the type or unit cannot change
 // because the item has logged sets at this gym: historyIds is the set of exercise ids with sets there).
@@ -197,6 +198,10 @@ export function editItem(gym, id, patch, historyIds = new Set()) {
   const set = setId ? gym.weightSets?.[setId] : null;
   const next = { ...old, name };
   if (patch.group) next.group = patch.group;
+  if ("muscle" in patch) {
+    if (patch.muscle) next.muscle = String(patch.muscle);
+    else delete next.muscle;   // back to the automatic muscle
+  }
   const wantsLink = !!set && (type !== old.type || patch.useSet === true) && !old.weightSet;
   const typeChanged = type !== old.type;
   const unit = UNITS.includes(patch.unit) ? patch.unit : old.unit;
