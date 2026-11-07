@@ -515,8 +515,9 @@ export function kindCounts(list) {
 }
 
 // A short list shows everything, the less common exercises last, instead of hiding them behind "Show less common".
-// small: the kind has fewer than SMALL_LIST exercises in this session. Returns { shown, hasMore } for a list.
-export const SMALL_LIST = 7;
+// small: the kind has SMALL_LIST (9) or fewer exercises still to do. Returns { shown, hasMore } for a list.
+export const SMALL_LIST = 9;
+export const isSmallList = (count) => count <= SMALL_LIST;
 export function commonFirst(list, expanded, small = false) {
   const common = list.filter((e) => e.common);
   const rest = list.filter((e) => !e.common);

@@ -15,7 +15,7 @@ import { hasExtras, extraOptions, totalWeight, splitFor, savedExtra } from "./ex
 import { buildPins, addPin, removePin, hasPins } from "./stacks.js";
 import {
   exerciseList, stepChoices, defaultStep, TYPES, UNITS, visibleEntries, hiddenEntries, hideItem, restoreItem,
-  setDefaultUnit, addItem, updateItem, editItem, checkName, LIST_KINDS, listKindOf, listDefaultOf, setListDefault, kindCounts, chooseListKind, entriesOfKind, kindCountsOfEntries, SMALL_LIST, commonFirst, hideWeightSet, restoreWeightSet, isSetHidden, hiddenSetIds, weightSetUsers, setWeightSetUnit, updateWeightSet, dumbbellWeights,
+  setDefaultUnit, addItem, updateItem, editItem, checkName, LIST_KINDS, listKindOf, listDefaultOf, setListDefault, kindCounts, chooseListKind, entriesOfKind, kindCountsOfEntries, isSmallList, commonFirst, hideWeightSet, restoreWeightSet, isSetHidden, hiddenSetIds, weightSetUsers, setWeightSetUnit, updateWeightSet, dumbbellWeights,
 } from "./gym.js";
 import {
   STORE_VERSION, DEFAULT_GYM, cleanStore, migrateLegacy, toLegacySettings, applyLegacySettings, supportsWarmup,
@@ -273,7 +273,7 @@ function renderList() {
   const openCounts = kindCounts(open);
   const kind = chooseListKind(present, openCounts, listKind, listDefaultOf(store.gyms[store.currentGym]));
   const openKind = open.filter((e) => listKindOf(e) === kind);
-  const small = all.filter((e) => listKindOf(e) === kind).length < SMALL_LIST;   // counts finished ones too, so the list does not change shape during a workout
+  const small = isSmallList(openKind.length);   // the number the chip shows: finished exercises are not counted
   const { shown, toggle } = commonSplit(openKind, showMore, "more", small);
 
   let message = "";

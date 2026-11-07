@@ -65,9 +65,11 @@ test("Gym settings chips: entries are filtered by kind and counted per kind (hid
 });
 
 test("commonFirst: a small list shows everything with the less common last; a longer one keeps the button", async () => {
-  const { commonFirst, SMALL_LIST } = await import("./gym.js");
+  const { commonFirst, SMALL_LIST, isSmallList } = await import("./gym.js");
   const list = [{ id: "a", common: false }, { id: "b", common: true }, { id: "c", common: false }, { id: "d", common: true }];
-  assert.equal(SMALL_LIST, 7);
+  assert.equal(SMALL_LIST, 9);
+  assert.ok(isSmallList(0) && isSmallList(9));
+  assert.ok(!isSmallList(10));
   const small = commonFirst(list, false, true);
   assert.deepEqual(small.shown.map((e) => e.id), ["b", "d", "a", "c"]);
   assert.equal(small.hasMore, false);
