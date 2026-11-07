@@ -63,3 +63,17 @@ test("Gym settings chips: entries are filtered by kind and counted per kind (hid
   assert.deepEqual(entriesOfKind(hiddenEntries(g), "bodyweight"), []);
   for (const k of LIST_KINDS) assert.ok(entriesOfKind(visibleEntries(g), k.id).every(([, i]) => listKindOf(i) === k.id));
 });
+
+test("commonFirst: a small list shows everything with the less common last; a longer one keeps the button", async () => {
+  const { commonFirst, SMALL_LIST } = await import("./gym.js");
+  const list = [{ id: "a", common: false }, { id: "b", common: true }, { id: "c", common: false }, { id: "d", common: true }];
+  assert.equal(SMALL_LIST, 7);
+  const small = commonFirst(list, false, true);
+  assert.deepEqual(small.shown.map((e) => e.id), ["b", "d", "a", "c"]);
+  assert.equal(small.hasMore, false);
+  const big = commonFirst(list, false, false);
+  assert.deepEqual(big.shown.map((e) => e.id), ["b", "d"]);
+  assert.equal(big.hasMore, true);
+  assert.deepEqual(commonFirst(list, true, false).shown.map((e) => e.id), ["a", "b", "c", "d"]);
+  assert.equal(commonFirst([{ id: "x", common: true }], false, false).hasMore, false);
+});

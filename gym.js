@@ -514,6 +514,16 @@ export function kindCounts(list) {
   return out;
 }
 
+// A short list shows everything, the less common exercises last, instead of hiding them behind "Show less common".
+// small: the kind has fewer than SMALL_LIST exercises in this session. Returns { shown, hasMore } for a list.
+export const SMALL_LIST = 7;
+export function commonFirst(list, expanded, small = false) {
+  const common = list.filter((e) => e.common);
+  const rest = list.filter((e) => !e.common);
+  if (small) return { shown: [...common, ...rest], hasMore: false };
+  return { shown: expanded ? list : common, hasMore: rest.length > 0 };
+}
+
 // The [id, item] entries of one kind, and the count of each kind, for the Gym settings screen's Equipment chips.
 export const entriesOfKind = (entries, kind) => entries.filter(([, i]) => listKindOf(i) === kind);
 export const kindCountsOfEntries = (entries) => kindCounts(entries.map(([, i]) => i));

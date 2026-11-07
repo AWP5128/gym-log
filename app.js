@@ -15,7 +15,7 @@ import { hasExtras, extraOptions, totalWeight, splitFor, savedExtra } from "./ex
 import { buildPins, addPin, removePin, hasPins } from "./stacks.js";
 import {
   exerciseList, stepChoices, defaultStep, TYPES, UNITS, visibleEntries, hiddenEntries, hideItem, restoreItem,
-  setDefaultUnit, addItem, updateItem, editItem, checkName, LIST_KINDS, listKindOf, listDefaultOf, setListDefault, kindCounts, chooseListKind, entriesOfKind, kindCountsOfEntries, hideWeightSet, restoreWeightSet, isSetHidden, hiddenSetIds, weightSetUsers, setWeightSetUnit, updateWeightSet, dumbbellWeights,
+  setDefaultUnit, addItem, updateItem, editItem, checkName, LIST_KINDS, listKindOf, listDefaultOf, setListDefault, kindCounts, chooseListKind, entriesOfKind, kindCountsOfEntries, SMALL_LIST, commonFirst, hideWeightSet, restoreWeightSet, isSetHidden, hiddenSetIds, weightSetUsers, setWeightSetUnit, updateWeightSet, dumbbellWeights,
 } from "./gym.js";
 import {
   STORE_VERSION, DEFAULT_GYM, cleanStore, migrateLegacy, toLegacySettings, applyLegacySettings, supportsWarmup,
@@ -225,12 +225,10 @@ window.addEventListener("popstate", () => {
 });
 
 // The exercises to show now (the common ones until "Show less common" is tapped) and that button.
-function commonSplit(list, expanded, id) {
-  const common = list.filter((e) => e.common);
-  return {
-    shown: expanded ? list : common,
-    toggle: list.length > common.length ? ghostBtn(id, (expanded ? "Hide" : "Show") + " less common") : "",
-  };
+// small: a short list shows everything, less common ones last, with no button.
+function commonSplit(list, expanded, id, small = false) {
+  const { shown, hasMore } = commonFirst(list, expanded, small);
+  return { shown, toggle: hasMore ? ghostBtn(id, (expanded ? "Hide" : "Show") + " less common") : "" };
 }
 
 // ---------- Start screen ----------
@@ -275,7 +273,8 @@ function renderList() {
   const openCounts = kindCounts(open);
   const kind = chooseListKind(present, openCounts, listKind, listDefaultOf(store.gyms[store.currentGym]));
   const openKind = open.filter((e) => listKindOf(e) === kind);
-  const { shown, toggle } = commonSplit(openKind, showMore, "more");
+  const small = all.filter((e) => listKindOf(e) === kind).length < SMALL_LIST;   // counts finished ones too, so the list does not change shape during a workout
+  const { shown, toggle } = commonSplit(openKind, showMore, "more", small);
 
   let message = "";
   if (all.length === 0) message = "No exercises here yet. You will be able to add some in a later step.";
