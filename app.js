@@ -264,9 +264,8 @@ function renderStart() {
 
 // ---------- Exercise list ----------
 function renderList() {
-  const all = exercisesForGroup(session.type, true, exList());
-  // Finished exercises include any pull-ups done as a superset on a legs day.
-  const finished = sessionPool().filter((e) => isDoneToday(done, e.id));
+  const all = sessionPool();   // this session's exercises, plus pull-ups on a legs or arms day
+  const finished = all.filter((e) => isDoneToday(done, e.id));
   const open = all.filter((e) => !isDoneToday(done, e.id));
   // One kind of exercise at a time keeps the list short (machines, dumbbells, barbells, body weight).
   const present = LIST_KINDS.map((k) => k.id).filter((k) => all.some((e) => listKindOf(e) === k));
@@ -620,7 +619,7 @@ function renderSetup() {
   flash = "";
 
   addItems("list", list.map((e) => [
-    esc(e.name) + "<small>" + esc(summary(e, configFor(settings, e.id), key) + (e.group !== session.type ? " · " + (typeInfo(e.group)?.label ?? e.group) + " exercise, also done on " + typeInfo(session.type).label.toLowerCase() + " days" : "")) + "</small>",
+    esc(e.name) + "<small>" + esc(summary(e, configFor(settings, e.id), key)) + "</small>",
     () => { editId = e.id; go("edit"); },
   ]));
   wire({
