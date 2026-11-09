@@ -339,3 +339,22 @@ export function checkV4({ store = null, settings = null, sets = [] } = {}) {
     return { ok: false, problems: ["The check failed: " + (e?.message ?? e)], bytes3: 0, bytes4: 0 };
   }
 }
+
+// ---------- Saving and reading the store as version 4 (step26b) ----------
+// The screens still work on the version 3 shape in memory; what is SAVED under gymlog.store is version 4
+// (the setup only: logged sets stay in gymlog.sets for now).
+// toStoreV4(store) -> the version 4 object to save, or null when the conversion fails (then save the store as it is).
+export function toStoreV4(store) {
+  try {
+    const r = migrateToV4({ store, sets: [] });
+    return r.ok ? r.v4 : null;
+  } catch { return null; }
+}
+
+// readStore(raw) -> the version 3 store the screens use, from saved version 4, 3 or 2 data; null when unreadable.
+export function readStore(raw) {
+  try {
+    if (isObj(raw) && raw.version === SCHEMA_VERSION && isObj(raw.tables)) return cleanStore(fromV4(raw).store);
+    return cleanStore(raw);
+  } catch { return null; }
+}

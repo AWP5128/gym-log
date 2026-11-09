@@ -274,3 +274,30 @@ test("checkV4: a seeded store with sets round trips, and bad data is reported wi
   assert.equal(bad.ok, false);
   assert.equal(checkV4({ store, sets: "nope" }).ok, false);
 });
+
+import { toStoreV4, readStore } from "./schema4.js";
+import { makeBackup, parseBackup } from "./backup.js";
+test("step26b: the store is saved as version 4 and read back the same; version 3 and 2 still read", () => {
+  const s = emptyStore();
+  const v4 = toStoreV4(s);
+  assert.equal(v4.version, 4);
+  assert.deepEqual(readStore(JSON.parse(JSON.stringify(v4))), cleanStore(s));
+  assert.deepEqual(readStore(s), cleanStore(s));
+  assert.equal(readStore({ version: 4 }), null);
+  assert.equal(readStore(null), null);
+  assert.equal(readStore("junk"), null);
+});
+test("step26b: a full backup is written as version 4 and read back; a version 1 backup still reads", () => {
+  const s = emptyStore();
+  const sets = [makeSet({ exerciseId: "leg-press", weight: 100, reps: 5, mode: "heavy", gymId: "main", unit: "lb" })];
+  const b = makeBackup({ store: s, sets });
+  assert.equal(b.version, 2);
+  assert.equal(b.store.version, 4);
+  const r = parseBackup(JSON.stringify(b));
+  assert.equal(r.error, "");
+  assert.deepEqual(r.backup.store, cleanStore(s));
+  assert.equal(r.backup.sets.length, 1);
+  const old = parseBackup(JSON.stringify({ type: "gymlog-backup", version: 1, store: s, sets }));
+  assert.equal(old.error, "");
+  assert.deepEqual(old.backup.store, cleanStore(s));
+});

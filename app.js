@@ -24,7 +24,7 @@ import {
 import { makeBackup, backupFileName, parseBackup, fileKind, dataSummary, describeData, backupAge } from "./backup.js";
 import { MUSCLES, muscleOf, muscleLabel, partnerGroups, pairedPartners, getPairs, setPairs, addPair, removePair, pairedWith, isSuitable, setSuitable, hasPair, pairCandidates } from "./superset.js";
 import { KEY, load, loadList, save } from "./storage.js";
-import { checkV4 } from "./schema4.js";
+import { checkV4, toStoreV4, readStore } from "./schema4.js";
 import {
   $, esc, optionsHtml, selectHtml, field, numField, cols, box, muted, ghostBtn, backBtn, wire, addItems, addChoices, sendFile,
 } from "./ui.js";
@@ -40,14 +40,13 @@ let workout = cleanWorkout(load(KEY.workout, null), Date.now());
 // untouched as a backup. A store saved before gyms had their own equipment (version 2) is upgraded, and a
 // copy of it is kept first under gymlog.beforeGyms.
 const savedStore = load(KEY.store, null);
-let store = cleanStore(savedStore);
-if (!store) {
-  store = migrateLegacy(load(KEY.settings, {}));
-  save(KEY.store, store);
-} else if (savedStore.version !== STORE_VERSION) {
-  if (load(KEY.beforeGyms, null) === null) save(KEY.beforeGyms, savedStore);
-  save(KEY.store, store);
-}
+let store = readStore(savedStore);
+if (!store) store = migrateLegacy(load(KEY.settings, {}));
+else if (savedStore.version === 2 && load(KEY.beforeGyms, null) === null) save(KEY.beforeGyms, savedStore);
+// Step 26: the safety copy of the data as it was before version 4 (kept once), then the store is saved as version 4.
+if (load(KEY.beforeV4, null) === null) save(KEY.beforeV4, { store, sets });
+const persistStore = (st) => save(KEY.store, toStoreV4(st) ?? st);
+if (!savedStore || savedStore.version !== 4) persistStore(store);
 store = useDefaultGym(store);   // every visit starts in the default gym
 
 // Sets logged before gyms existed belong to the first gym, in the unit their exercise used.
@@ -57,10 +56,9 @@ store = useDefaultGym(store);   // every visit starts in the default gym
   if (tagged.some((s, i) => s !== sets[i])) { sets = tagged; save(KEY.sets, sets); }
 }
 
-// Step 26a: a safety copy of the data as it is now (kept once), and a dry run of the version 4 conversion.
+// Step 26a: a dry run of the version 4 conversion.
 // Nothing is changed; a problem only shows in the browser console.
 {
-  if (load(KEY.beforeV4, null) === null) save(KEY.beforeV4, { store, sets });
   const v4 = checkV4({ store, sets });
   (v4.ok ? console.info : console.warn)("Version 4 check:", v4.ok ? "OK" : v4.problems, v4.bytes3 + " -> " + v4.bytes4 + " bytes");
 }
@@ -76,14 +74,14 @@ function saveSettings(next) {
   settings = next;
   exCache = null;
   store = applyLegacySettings(store, store.currentPerson, store.currentGym, settings);
-  save(KEY.store, store);
+  persistStore(store);
 }
 reloadSettings();
 
 // Saves a changed store (gyms, current gym, default gym) and refreshes what the screens read from it.
 function saveStore(next) {
   store = next;
-  save(KEY.store, store);
+  persistStore(store);
   reloadSettings();
 }
 
@@ -1234,7 +1232,7 @@ async function importFile(ev) {
     if (r.error) backupMsg = r.error;
     else {
       store = r.store;
-      save(KEY.store, store);
+      persistStore(store);
       reloadSettings();
       backupMsg = "Added " + r.count + (r.count === 1 ? " machine" : " machines") + " from the file. Your own weights and notes were not changed.";
     }
@@ -1248,7 +1246,7 @@ async function importFile(ev) {
     )) backupMsg = "Restore cancelled.";
     else {
       save(KEY.beforeRestore, { at: new Date().toISOString(), store, sets });   // a safety copy, in case of a mistake
-      save(KEY.store, r.backup.store);
+      persistStore(r.backup.store);
       save(KEY.sets, r.backup.sets);
       alert("Backup restored. The app will now reload.");
       location.reload();
