@@ -94,7 +94,7 @@ test("a fuller store round trips exactly: notes, stacks, muscle, hidden, pairs, 
   const r = migrateToV4({ store: s });
   assert.equal(r.ok, true);
   const back = fromV4(r.v4).store;
-  assert.equal(canon(back), canon(s));
+  assert.equal(canon(withoutEmptyGyms(back)), canon(withoutEmptyGyms(s)));
   assert.deepEqual(back.people.awp.superset, s.people.awp.superset);
   assert.equal(back.gyms.main.equipment["leg-press"].name, "Leg Press");
   assert.equal(back.gyms[s.currentGym].equipment.deadlift.muscle, "glutes");
@@ -275,7 +275,7 @@ test("checkV4: a seeded store with sets round trips, and bad data is reported wi
   assert.equal(checkV4({ store, sets: "nope" }).ok, false);
 });
 
-import { toStoreV4, readStore } from "./schema4.js";
+import { toStoreV4, readStore, withoutEmptyGyms } from "./schema4.js";
 import { makeBackup, parseBackup } from "./backup.js";
 test("step26b: the store is saved as version 4 and read back the same; version 3 and 2 still read", () => {
   const s = emptyStore();
@@ -300,4 +300,13 @@ test("step26b: a full backup is written as version 4 and read back; a version 1 
   const old = parseBackup(JSON.stringify({ type: "gymlog-backup", version: 1, store: s, sets }));
   assert.equal(old.error, "");
   assert.deepEqual(old.backup.store, cleanStore(s));
+});
+
+test("step26c: every person is the owner of every gym, also gyms with no saved setup", () => {
+  const s = addGym(emptyStore(), "Second gym").store;
+  const r = migrateToV4({ store: s });
+  const rows = r.v4.tables.gym_member.filter((m) => m.personId === "awp").map((m) => m.gymId).sort();
+  assert.deepEqual(rows, Object.keys(s.gyms).sort());
+  assert.ok(r.v4.tables.gym_member.every((m) => m.role === "owner" && m.status === "active"));
+  assert.equal(checkV4({ store: s, sets: [] }).ok, true);
 });

@@ -108,12 +108,12 @@ export function migrateToV4({ store = null, settings = null, sets = [] } = {}) {
     }));
   }
 
-  // gym_member: everyone on this phone owns the gyms they have data for
+  // gym_member: everyone on this phone owns every gym in the store
   const orphanSetups = [];
   for (const [personId, p] of people) {
+    for (const gymId of Object.keys(v3.gyms)) t.gym_member.push({ personId, gymId, role: "owner", status: "active", offTypes: [] });
     for (const gymId of Object.keys(isObj(p.gyms) ? p.gyms : {})) {
-      if (!v3.gyms[gymId]) { orphanSetups.push(personId + "/" + gymId); continue; }
-      t.gym_member.push({ personId, gymId, role: "owner", status: "active", offTypes: [] });
+      if (!v3.gyms[gymId]) orphanSetups.push(personId + "/" + gymId);
     }
   }
 
@@ -276,7 +276,7 @@ export function fromV4(v4) {
   }
   const people = {};
   for (const p of t.person) people[p.id] = clean({ name: p.name, defaults: p.defaults, gyms: {}, superset: p.superset });
-  for (const m of t.gym_member) if (people[m.personId]) people[m.personId].gyms[m.gymId] = { machines: {} };
+  for (const m of t.gym_member) if (people[m.personId]) people[m.personId].gyms[m.gymId] ??= { machines: {} };
   const machine = (r) => people[r.personId]?.gyms[r.gymId]?.machines && (people[r.personId].gyms[r.gymId].machines[r.exerciseId] ??= {});
   for (const r of t.personal_setup) {
     const m = machine(r);
@@ -316,6 +316,14 @@ export function fromV4(v4) {
 // JSON text with the keys in order, so two copies that differ only in key order compare equal.
 const canon = (v) => JSON.stringify(v, (_, x) => (isObj(x) ? Object.fromEntries(Object.entries(x).sort(([a], [b]) => (a < b ? -1 : a > b ? 1 : 0))) : x));
 
+// A person's empty per-gym container ({ machines: {} }) means nothing; leave it out so two copies compare equal.
+export function withoutEmptyGyms(store) {
+  const people = Object.fromEntries(Object.entries(store.people || {}).map(([id, p]) => [id, {
+    ...p, gyms: Object.fromEntries(Object.entries(p.gyms || {}).filter(([, g]) => Object.keys(g?.machines || {}).length > 0 || Object.keys(g || {}).some((k) => k !== "machines"))),
+  }]));
+  return { ...store, people };
+}
+
 export function checkV4({ store = null, settings = null, sets = [] } = {}) {
   try {
     const r = migrateToV4({ store, settings, sets });
@@ -326,7 +334,7 @@ export function checkV4({ store = null, settings = null, sets = [] } = {}) {
       sets: sets.filter(validSet),
     };
     const problems = [];
-    if (canon(back.store) !== canon(before.store)) problems.push("The setup did not come back the same.");
+    if (canon(withoutEmptyGyms(back.store)) !== canon(withoutEmptyGyms(before.store))) problems.push("The setup did not come back the same.");
     if (canon(back.sets) !== canon(before.sets))
       problems.push("The logged sets did not come back the same.");
     return {
