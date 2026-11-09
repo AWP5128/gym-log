@@ -8,7 +8,7 @@
 //   Who and where
 //     person          { id, name, defaults, superset? }       defaults = { heavy|volume: { reps, sets, warmupReps } }
 //                                                              superset = { pairs: [[a, b]], suitable: [id] }
-//     gym             { id, name, units, listDefault?, starterFree?, starterAbs? }
+//     gym             { id, name, units, listDefault?, starterFree?, starterAbs?, pullUpsMoved? }
 //     gym_member      { personId, gymId, role, status, offTypes }   offTypes: equipment types switched off
 //     gym_equipment   { gymId, id, exerciseId | null, equipmentTypeId, exerciseTypeId?, name, unit, step?,
 //                       common?, min?, pins?, stackSpec?, hidden?, muscle?, uses?, top? }
@@ -44,8 +44,8 @@ export const TABLES = [
   "personal_setup", "workout", "workout_type", "workout_exercise", "logged_set",
 ];
 
-// Exercises that also appear under another session's list (pull-ups are done on arms days too).
-const ALSO_UNDER = { "pull-up": ["arms"] };
+// Exercises that also appear under another session's list (pull-ups are filed under arms and done alongside legs day).
+const ALSO_UNDER = { "pull-up": ["legs"] };
 const DAY_TYPES = ["heavy", "volume"];
 const SET_PREFIX = "set:";
 
@@ -104,6 +104,7 @@ export function migrateToV4({ store = null, settings = null, sets = [] } = {}) {
   for (const [id, g] of gymEntries) {
     t.gym.push(clean({
       id, name: g.name, units: g.units, listDefault: g.listDefault, starterFree: g.starterFree, starterAbs: g.starterAbs,
+      pullUpsMoved: g.pullUpsMoved,
     }));
   }
 
@@ -256,7 +257,7 @@ export function fromV4(v4) {
   for (const g of t.gym) {
     gyms[g.id] = clean({
       name: g.name, units: g.units, equipment: {}, weightSets: {},
-      starterFree: g.starterFree, starterAbs: g.starterAbs, listDefault: g.listDefault,
+      starterFree: g.starterFree, starterAbs: g.starterAbs, pullUpsMoved: g.pullUpsMoved, listDefault: g.listDefault,
     });
   }
   for (const r of t.gym_equipment) {

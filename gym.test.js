@@ -12,7 +12,7 @@ const builtIn = [
   { id: "leg-press", name: "Leg Press Machine", group: "legs", common: true, unit: "lb", step: 10 },
   { id: "quad-extension", name: "Quad Extension Machine", group: "legs", common: false, unit: "lb", step: 10 },
   { id: "deadlift", name: "Deadlift (barbell)", group: "legs", common: true, unit: "kg", step: 2.5 },
-  { id: "pull-up", name: "Pull-ups (neutral grip)", group: "legs", common: true, unit: "kg", step: 2.5, min: 0 },
+  { id: "pull-up", name: "Pull-ups (neutral grip)", group: "arms", common: true, unit: "kg", step: 2.5, min: 0 },
   { id: "farmers-hold", name: "Farmers Hold (dumbbells)", group: "arms", common: false, unit: "kg", step: 2.5 },
   { id: "treadmill", name: "Treadmill", group: "cardio", common: true, unit: "min", step: 1, kind: "time" },
 ];

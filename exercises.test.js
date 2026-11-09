@@ -23,21 +23,22 @@ test("there are four session types and only abs and cardio have no heavy/volume 
 
 test("legs shows common exercises only by default", () => {
   const ids = exercisesForGroup("legs").map((e) => e.id);
-  assert.equal(ids.length, 7);
+  assert.equal(ids.length, 6);
   assert.ok(ids.includes("deadlift"));
-  assert.ok(ids.includes("pull-up"));
+  assert.ok(!ids.includes("pull-up"));   // pull-ups are an arms exercise, done alongside legs day
   assert.ok(!ids.includes("hamstring-curl"));
 });
 
 test("legs includes less common exercises when asked", () => {
   const ids = exercisesForGroup("legs", true).map((e) => e.id);
-  assert.equal(ids.length, 9);
+  assert.equal(ids.length, 8);
   assert.ok(ids.includes("hamstring-curl"));
 });
 
 test("arms does not include leg exercises", () => {
   const ids = exercisesForGroup("arms", true).map((e) => e.id);
-  assert.equal(ids.length, 10);
+  assert.equal(ids.length, 11);
+  assert.ok(ids.includes("pull-up"));
   assert.ok(!ids.includes("leg-press"));
 });
 

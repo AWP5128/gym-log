@@ -19,7 +19,7 @@
 import { exercises } from "./exercises.js";
 import {
   newGym, makeItem, starterEquipment, withMachineData, updateItem, copyEquipment, uniqueId, DEFAULT_UNITS,
-  ensureWeightSets, seedStarterFree, STARTER_FREE, seedStarterAbs, STARTER_ABS,
+  ensureWeightSets, seedStarterFree, STARTER_FREE, seedStarterAbs, STARTER_ABS, movePullUps,
 } from "./gym.js";
 
 export const STORE_VERSION = 3;
@@ -50,7 +50,7 @@ const STARTER_FREE_BASE = Object.fromEntries(STARTER_FREE.map((x) => [x.id, make
 const STARTER_ABS_BASE = Object.fromEntries(STARTER_ABS.map((x) => [x.id, makeItem(x)]));
 
 // A gym with its dumbbell and barbell sets in place and the starter exercises added.
-const freshGym = (gym) => seedStarterAbs(ensureWeightSets(seedStarterFree(ensureWeightSets(gym))));
+const freshGym = (gym) => movePullUps(seedStarterAbs(ensureWeightSets(seedStarterFree(ensureWeightSets(gym)))));
 
 export function emptyStore() {
   return {
@@ -159,7 +159,7 @@ export function addGym(store, name, { from, ids = [] } = {}) {
   const clean = String(name ?? "").trim();
   if (!clean) return { store, id: null, copied: 0 };
   const id = uniqueId(clean, Object.keys(store.gyms || {}), "gym");
-  let gym = { ...newGym(clean), starterFree: true, starterAbs: true };   // a new gym never gets the starter exercises
+  let gym = { ...newGym(clean), starterFree: true, starterAbs: true, pullUpsMoved: true };   // a new gym never gets the starter exercises
   let copied = 0;
   if (from && store.gyms?.[from]) ({ gym, copied } = copyEquipment(store.gyms[from], ids, gym));
   return { store: { ...store, gyms: { ...store.gyms, [id]: gym } }, id, copied };

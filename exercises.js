@@ -21,7 +21,6 @@ export const exercises = [
   machine("leg-press", "Leg Press Machine", "legs"),
   machine("squat-machine", "Squat Machine", "legs"),
   free("deadlift", "Deadlift (barbell)", "legs"),
-  free("pull-up", "Pull-ups (neutral grip)", "legs", true, { min: 0 }),
   machine("quad-extension", "Quad Extension Machine", "legs", false),
   machine("hamstring-curl", "Hamstring Curl Machine", "legs", false),
 
@@ -32,6 +31,8 @@ export const exercises = [
   machine("bicep-curl", "Bicep Curl Machine", "arms"),
   machine("tricep-extension", "Tricep Extension Machine", "arms"),
   machine("lat-pulldown", "Lat Pull-down", "arms"),
+  // Filed under arms; also done alongside legs day (see ANY_DAY_SUPERSET in app.js).
+  free("pull-up", "Pull-ups (neutral grip)", "arms", true, { min: 0 }),
   machine("upright-row", "Upright Row", "arms"),
   free("farmers-hold", "Farmers Hold (dumbbells)", "arms", false),
   machine("delt-fly", "Delt Fly Machine", "arms", false),

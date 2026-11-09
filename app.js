@@ -265,7 +265,7 @@ function renderStart() {
 // ---------- Exercise list ----------
 function renderList() {
   const all = exercisesForGroup(session.type, true, exList());
-  // Finished exercises include any pull-ups done as a superset on an arms day.
+  // Finished exercises include any pull-ups done as a superset on a legs day.
   const finished = sessionPool().filter((e) => isDoneToday(done, e.id));
   const open = all.filter((e) => !isDoneToday(done, e.id));
   // One kind of exercise at a time keeps the list short (machines, dumbbells, barbells, body weight).
@@ -495,7 +495,7 @@ function renderExercise() {
 
 // ---------- Pick a superset exercise ----------
 // Only this session's exercises (legs on a legs day, arms on an arms day). Pull-ups are the
-// exception: they can also be paired on an arms day.
+// exception: they are filed under arms but are also done, and can be paired, on a legs day.
 const ANY_DAY_SUPERSET = ["pull-up"];
 
 // This session's exercises, plus the any-day ones when the session is legs or arms.

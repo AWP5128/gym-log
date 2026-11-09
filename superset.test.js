@@ -53,7 +53,7 @@ test("saved pairs: added once, both ways, removable, tidied", () => {
 const arms = [
   ex("bicep-curl", "Bicep Curl Machine"), ex("tricep-extension", "Tricep Extension Machine"),
   ex("tricep-dip", "Tricep Dip Machine"), ex("chest-press", "Chest Press Machine"),
-  ex("lat-pulldown", "Lat Pull-down"), ex("pull-up", "Pull-ups", "legs"),
+  ex("lat-pulldown", "Lat Pull-down"), ex("pull-up", "Pull-ups"),
 ];
 const legs = [ex("leg-press", "Leg Press", "legs"), ex("hamstring-curl", "Hamstring Curl", "legs"), ex("quad-extension", "Quad Extension", "legs")];
 
@@ -177,8 +177,8 @@ test("candidates are only the exercises marked suitable, opposite muscles first"
   for (const id of ["tricep-dip", "chest-press", "leg-press", "pull-up", "hamstring-curl"]) p = setSuitable(p, id, true);
   const c = pairCandidates({ ex: arms[0], all, prefs: p });
   assert.deepEqual(c.opposite.map((e) => e.id), ["tricep-dip"]);
-  assert.deepEqual(c.rest.map((e) => e.id), ["chest-press"]);
-  assert.deepEqual(c.other.map((e) => e.id), ["pull-up", "leg-press", "hamstring-curl"].filter((id) => all.some((e) => e.id === id)).sort((a, b) => all.findIndex((e) => e.id === a) - all.findIndex((e) => e.id === b)));
+  assert.deepEqual(c.rest.map((e) => e.id), ["chest-press", "pull-up"]);   // the pull-up is filed under arms
+  assert.deepEqual(c.other.map((e) => e.id), ["leg-press", "hamstring-curl"]);
   // the exercise itself is never offered, even if marked
   p = setSuitable(p, "bicep-curl", true);
   assert.ok(![...pairCandidates({ ex: arms[0], all, prefs: p }).opposite].some((e) => e.id === "bicep-curl"));
@@ -216,15 +216,17 @@ test("marks live under the person, survive saving settings, and old pairs-only d
 
 test("pull-ups count as this session's on both legs and arms days when they are listed as any-day", () => {
   let p = emptyPairs();
-  for (const id of ["pull-up", "leg-press", "tricep-dip"]) p = setSuitable(p, id, true);
-  const without = pairCandidates({ ex: arms[0], all, prefs: p });
+  for (const id of ["pull-up", "hamstring-curl", "tricep-dip"]) p = setSuitable(p, id, true);
+  // on a legs day the pull-up (filed under arms) is an exception unless it is listed as any-day
+  const without = pairCandidates({ ex: legs[0], all, prefs: p });
   assert.ok(without.other.some((e) => e.id === "pull-up"));
-  const withAny = pairCandidates({ ex: arms[0], all, prefs: p, anyDay: ["pull-up"] });
+  const withAny = pairCandidates({ ex: legs[0], all, prefs: p, anyDay: ["pull-up"] });
+  assert.deepEqual(withAny.opposite.map((e) => e.id), ["hamstring-curl"]);
   assert.deepEqual(withAny.rest.map((e) => e.id), ["pull-up"]);
-  assert.deepEqual(withAny.other.map((e) => e.id), ["leg-press"]);
-  // from the pull-up's own screen, arms exercises are this session's too
-  const fromPull = pairCandidates({ ex: arms[5], all, prefs: setSuitable(p, "bicep-curl", true), anyDay: ["pull-up"] });
-  assert.ok(fromPull.rest.some((e) => e.id === "bicep-curl") && fromPull.rest.some((e) => e.id === "leg-press"));
+  assert.deepEqual(withAny.other.map((e) => e.id), ["tricep-dip"]);
+  // from the pull-up's own screen, legs exercises are this session's too
+  const fromPull = pairCandidates({ ex: arms[5], all, prefs: setSuitable(p, "leg-press", true), anyDay: ["pull-up"] });
+  assert.ok(fromPull.rest.some((e) => e.id === "tricep-dip") && fromPull.rest.some((e) => e.id === "leg-press"));
   // an abs exercise gets no special treatment
   const abs = { id: "crunch", name: "Crunch", group: "abs" };
   const fromAbs = pairCandidates({ ex: abs, all: [...all, abs], prefs: p, anyDay: ["pull-up"] });

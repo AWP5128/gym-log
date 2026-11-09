@@ -461,6 +461,19 @@ export function seedStarterAbs(gym) {
   return { ...gym, equipment, starterAbs: true };
 }
 
+// ---------- Pull-ups are filed under arms ----------
+// Pull-ups used to be a legs exercise (they are done alongside legs day). They now belong to arms, so a gym that
+// has a pull-up item still filed under legs is moved once (the gym remembers it with pullUpsMoved, so a later
+// choice of session on the Edit screen is never undone). A gym with no pull-ups is just marked.
+export function movePullUps(gym) {
+  if (gym.pullUpsMoved === true) return gym;
+  const item = gym.equipment?.["pull-up"];
+  if (item && item.group === "legs") {
+    return { ...gym, equipment: { ...gym.equipment, "pull-up": { ...item, group: "arms" } }, pullUpsMoved: true };
+  }
+  return { ...gym, pullUpsMoved: true };
+}
+
 // Sets the unit new items of this type will get. Items already in the gym are not changed.
 export const setDefaultUnit = (gym, type, unit) =>
   UNITS.includes(unit) && TYPE_IDS.includes(type) ? { ...gym, units: { ...gym.units, [type]: unit } } : gym;

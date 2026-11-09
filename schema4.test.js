@@ -191,12 +191,13 @@ test("workout times, session parts and the blank cardio fields", () => {
   assert.equal(t.workout.length, 1);
   assert.equal(t.workout[0].start, "2026-11-01T10:00:00.000Z");
   assert.equal(t.workout[0].end, "2026-11-01T10:40:00.000Z");
-  assert.deepEqual(t.workout_type.map((x) => x.exerciseTypeId).sort(), ["arms", "legs"]);   // pull-up is a legs exercise
+  assert.deepEqual(t.workout_type.map((x) => x.exerciseTypeId).sort(), ["arms", "legs"]);   // leg press is legs; pull-up and curl are arms
   assert.equal(t.workout_exercise.length, 3);
   for (const x of t.workout_exercise) {
     assert.deepEqual([x.distance, x.avgHeartRate, x.zoneMinutes, x.watts, x.level], [null, null, null, null, null]);
   }
-  assert.deepEqual(t.exercise.find((e) => e.id === "pull-up").alsoUnder, ["arms"]);
+  assert.deepEqual(t.exercise.find((e) => e.id === "pull-up").alsoUnder, ["legs"]);
+  assert.equal(t.exercise.find((e) => e.id === "pull-up").exerciseTypeId, "arms");
 });
 
 test("running it twice, or on its own output, gives the same result", () => {
