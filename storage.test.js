@@ -24,6 +24,7 @@ test("the storage names never change", () => {
     lastBackup: "gymlog.lastBackup",
     beforeRestore: "gymlog.beforeRestore",
     beforeGyms: "gymlog.beforeGyms",
+    beforeV4: "gymlog.beforeV4",
   });
 });
 

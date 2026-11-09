@@ -24,6 +24,7 @@ import {
 import { makeBackup, backupFileName, parseBackup, fileKind, dataSummary, describeData, backupAge } from "./backup.js";
 import { MUSCLES, muscleOf, muscleLabel, partnerGroups, pairedPartners, getPairs, setPairs, addPair, removePair, pairedWith, isSuitable, setSuitable, hasPair, pairCandidates } from "./superset.js";
 import { KEY, load, loadList, save } from "./storage.js";
+import { checkV4 } from "./schema4.js";
 import {
   $, esc, optionsHtml, selectHtml, field, numField, cols, box, muted, ghostBtn, backBtn, wire, addItems, addChoices, sendFile,
 } from "./ui.js";
@@ -54,6 +55,14 @@ store = useDefaultGym(store);   // every visit starts in the default gym
   const firstGym = store.gyms[DEFAULT_GYM] || {};
   const tagged = tagSets(sets, DEFAULT_GYM, (id) => firstGym.equipment?.[id]?.unit);
   if (tagged.some((s, i) => s !== sets[i])) { sets = tagged; save(KEY.sets, sets); }
+}
+
+// Step 26a: a safety copy of the data as it is now (kept once), and a dry run of the version 4 conversion.
+// Nothing is changed; a problem only shows in the browser console.
+{
+  if (load(KEY.beforeV4, null) === null) save(KEY.beforeV4, { store, sets });
+  const v4 = checkV4({ store, sets });
+  (v4.ok ? console.info : console.warn)("Version 4 check:", v4.ok ? "OK" : v4.problems, v4.bytes3 + " -> " + v4.bytes4 + " bytes");
 }
 
 // The screens use the current person's and gym's settings in a flat shape. The store is the saved copy.

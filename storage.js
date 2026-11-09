@@ -3,8 +3,9 @@
 
 // The storage names. Never rename these: the saved data lives under them.
 // beforeGyms holds a copy of the version 2 store, kept the first time the app upgrades it to gyms.
+// beforeV4 holds a copy of the store and sets as they were before version 4 (kept once, step26a).
 export const KEY = Object.fromEntries(
-  ["sets", "session", "settings", "done", "workout", "store", "lastBackup", "beforeRestore", "beforeGyms"].map((k) => [k, "gymlog." + k])
+  ["sets", "session", "settings", "done", "workout", "store", "lastBackup", "beforeRestore", "beforeGyms", "beforeV4"].map((k) => [k, "gymlog." + k])
 );
 
 export function load(key, fallback) {

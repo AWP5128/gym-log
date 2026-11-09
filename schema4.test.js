@@ -260,3 +260,17 @@ test("the result is plain data that survives being saved and read back", () => {
   const v4 = migrateToV4({ store: s, sets: sets({ hotel: hotelId }) }).v4;
   assert.equal(canon(JSON.parse(JSON.stringify(v4))), canon(v4));
 });
+
+import { checkV4 } from "./schema4.js";
+test("checkV4: a seeded store with sets round trips, and bad data is reported without throwing", () => {
+  const store = emptyStore();
+  const sets = [makeSet({ exerciseId: "leg-press", weight: 100, reps: 5, mode: "heavy", gymId: "main", unit: "lb" })];
+  const ok = checkV4({ store, sets });
+  assert.deepEqual(ok.problems, []);
+  assert.equal(ok.ok, true);
+  assert.ok(ok.bytes4 > ok.bytes3);
+  assert.equal(checkV4({ store: null, settings: {}, sets: [] }).ok, true);
+  const bad = checkV4({ store: { version: 99 }, sets: [] });
+  assert.equal(bad.ok, false);
+  assert.equal(checkV4({ store, sets: "nope" }).ok, false);
+});

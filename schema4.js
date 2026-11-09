@@ -309,3 +309,33 @@ export function fromV4(v4) {
     }));
   return { store, sets };
 }
+
+// ---------- A dry run on real data (step26a) ----------
+// Converts the data to version 4 and back, and compares with what was saved. Nothing is written.
+// Returns { ok, problems: [text], bytes3, bytes4 }. Never throws.
+// JSON text with the keys in order, so two copies that differ only in key order compare equal.
+const canon = (v) => JSON.stringify(v, (_, x) => (isObj(x) ? Object.fromEntries(Object.entries(x).sort(([a], [b]) => (a < b ? -1 : a > b ? 1 : 0))) : x));
+
+export function checkV4({ store = null, settings = null, sets = [] } = {}) {
+  try {
+    const r = migrateToV4({ store, settings, sets });
+    if (!r.ok) return { ok: false, problems: [r.error], bytes3: 0, bytes4: 0 };
+    const back = fromV4(r.v4);
+    const before = {
+      store: cleanStore(store ?? migrateLegacy(isObj(settings) ? settings : {})),
+      sets: sets.filter(validSet),
+    };
+    const problems = [];
+    if (canon(back.store) !== canon(before.store)) problems.push("The setup did not come back the same.");
+    if (canon(back.sets) !== canon(before.sets))
+      problems.push("The logged sets did not come back the same.");
+    return {
+      ok: problems.length === 0,
+      problems,
+      bytes3: JSON.stringify(before).length,
+      bytes4: JSON.stringify(r.v4).length,
+    };
+  } catch (e) {
+    return { ok: false, problems: ["The check failed: " + (e?.message ?? e)], bytes3: 0, bytes4: 0 };
+  }
+}
