@@ -27,7 +27,7 @@
 //     workout_type    { id, workoutId, exerciseTypeId, dayType, start, end }
 //     workout_exercise{ id, workoutTypeId, exerciseId, distance, avgHeartRate, zoneMinutes, watts, level }
 //                     the cardio fields are blank (null) until there is data
-//     logged_set      { id, seq, personId, workoutExerciseId, exerciseId, gymId, time, weight, reps, minutes, unit, mode }
+//     logged_set      { id (person:time:exercise), seq, personId, workoutExerciseId, exerciseId, gymId, time, weight, reps, minutes, unit, mode }
 //                     seq is the place in the old flat list. A typed-in best from before the app is a manual
 //                     logged_set: { id, personId, gymId, exerciseId, manual: true, weight, reps, time: null }.
 //
@@ -182,6 +182,7 @@ export function migrateToV4({ store = null, settings = null, sets = [] } = {}) {
   const wtypes = new Map();
   const wexes = new Map();
   const loggedSets = [];
+  const setIds = new Map();
   for (const { s, seq } of good) {
     const gymId = s.gymId ?? DEFAULT_GYM;
     note(s.exerciseId, null);
@@ -212,8 +213,12 @@ export function migrateToV4({ store = null, settings = null, sets = [] } = {}) {
         distance: null, avgHeartRate: null, zoneMinutes: null, watts: null, level: null,
       });
     }
+    // a set's id comes from who, when and what, so it stays the same however the list changes and differs between phones
+    const base = v3.currentPerson + ":" + s.time + ":" + s.exerciseId;
+    const dup = setIds.get(base) ?? 0;
+    setIds.set(base, dup + 1);
     loggedSets.push(clean({
-      id: v3.currentPerson + ":set-" + seq, seq, personId: v3.currentPerson, workoutExerciseId: weid, exerciseId: s.exerciseId, gymId, time: s.time,
+      id: dup ? base + "#" + dup : base, seq, personId: v3.currentPerson, workoutExerciseId: weid, exerciseId: s.exerciseId, gymId, time: s.time,
       weight: s.weight, reps: s.reps, minutes: s.minutes, unit: s.unit, mode: s.mode,
     }));
   }
