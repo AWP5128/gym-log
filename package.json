@@ -6,6 +6,7 @@
     "test": "node --test"
   },
   "devDependencies": {
+    "@electric-sql/pglite": "^0.5.16",
     "supabase": "^3.1.0"
   }
 }
