@@ -23,11 +23,11 @@
 //                     a row per person, machine and day type; notes are written on each day-type row;
 //                     a machine with notes only has one row with dayType null
 //   Training log
-//     workout         { id, personId, gymId, date, start, end }        one per gym per day
+//     workout         { id, personId, gymId, date, start, end }        one per person, gym and day; id = "person:gym:date"
 //     workout_type    { id, workoutId, exerciseTypeId, dayType, start, end }
 //     workout_exercise{ id, workoutTypeId, exerciseId, distance, avgHeartRate, zoneMinutes, watts, level }
 //                     the cardio fields are blank (null) until there is data
-//     logged_set      { id, seq, workoutExerciseId, exerciseId, gymId, time, weight, reps, minutes, unit, mode }
+//     logged_set      { id, seq, personId, workoutExerciseId, exerciseId, gymId, time, weight, reps, minutes, unit, mode }
 //                     seq is the place in the old flat list. A typed-in best from before the app is a manual
 //                     logged_set: { id, personId, gymId, exerciseId, manual: true, weight, reps, time: null }.
 //
@@ -186,7 +186,7 @@ export function migrateToV4({ store = null, settings = null, sets = [] } = {}) {
     const gymId = s.gymId ?? DEFAULT_GYM;
     note(s.exerciseId, null);
     const date = ymd(s.time);
-    const wid = gymId + ":" + date;
+    const wid = v3.currentPerson + ":" + gymId + ":" + date;   // person first: ids stay unique when several people share a database
     let w = workouts.get(wid);
     if (!w) {
       w = { id: wid, personId: v3.currentPerson, gymId, date, start: s.time, end: s.time };
@@ -213,7 +213,7 @@ export function migrateToV4({ store = null, settings = null, sets = [] } = {}) {
       });
     }
     loggedSets.push(clean({
-      id: "set-" + seq, seq, workoutExerciseId: weid, exerciseId: s.exerciseId, gymId, time: s.time,
+      id: v3.currentPerson + ":set-" + seq, seq, personId: v3.currentPerson, workoutExerciseId: weid, exerciseId: s.exerciseId, gymId, time: s.time,
       weight: s.weight, reps: s.reps, minutes: s.minutes, unit: s.unit, mode: s.mode,
     }));
   }

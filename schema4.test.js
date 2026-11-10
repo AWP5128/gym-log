@@ -175,8 +175,8 @@ test("sets are grouped into one workout per gym per day, with a session part for
   const v4 = migrateToV4({ store: s, sets: sets({ hotel: hotelId }) }).v4;
   const w = v4.tables.workout;
   // main on 1 Nov, main on 3 Nov (the curl and the old crunch with no gym), the hotel on 3 Nov, main on 4 Nov
-  assert.deepEqual(w.map((x) => x.id).sort(), ["main:2026-11-01", "main:2026-11-03", "main:2026-11-04", hotelId + ":2026-11-03"].sort());
-  const day3 = v4.tables.workout_exercise.filter((x) => x.id.startsWith("main:2026-11-03")).map((x) => x.exerciseId).sort();
+  assert.deepEqual(w.map((x) => x.id).sort(), ["awp:main:2026-11-01", "awp:main:2026-11-03", "awp:main:2026-11-04", "awp:" + hotelId + ":2026-11-03"].sort());
+  const day3 = v4.tables.workout_exercise.filter((x) => x.id.startsWith("awp:main:2026-11-03")).map((x) => x.exerciseId).sort();
   assert.deepEqual(day3, ["bicep-curl", "crunch"]);
 });
 
