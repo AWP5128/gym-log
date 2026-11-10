@@ -348,14 +348,15 @@ export function checkV4({ store = null, settings = null, sets = [] } = {}) {
   }
 }
 
-// ---------- Saving and reading the store as version 4 (step26b) ----------
-// The screens still work on the version 3 shape in memory; what is SAVED under gymlog.store is version 4
-// (the setup only: logged sets stay in gymlog.sets for now).
-// toStoreV4(store) -> the version 4 object to save, or null when the conversion fails (then save the store as it is).
-export function toStoreV4(store) {
+// ---------- Saving and reading the store as version 4 (step26b, sets added in step27a) ----------
+// The screens still work on the version 3 shape in memory; what is SAVED under gymlog.store is version 4.
+// Since step27a the logged sets are saved inside it too (workout, workout_type, workout_exercise, logged_set);
+// setsInTables marks that, so "no sets yet" is not mistaken for "sets not moved yet".
+// toStoreV4(store, sets) -> the version 4 object to save, or null when the conversion fails (then save the store as it is).
+export function toStoreV4(store, sets = []) {
   try {
-    const r = migrateToV4({ store, sets: [] });
-    return r.ok ? r.v4 : null;
+    const r = migrateToV4({ store, sets });
+    return r.ok ? { ...r.v4, setsInTables: true } : null;
   } catch { return null; }
 }
 
@@ -364,5 +365,14 @@ export function readStore(raw) {
   try {
     if (isObj(raw) && raw.version === SCHEMA_VERSION && isObj(raw.tables)) return cleanStore(fromV4(raw).store);
     return cleanStore(raw);
+  } catch { return null; }
+}
+
+// readSets(raw) -> the flat list of logged sets from saved version 4 data, or null when the sets are not
+// in the tables yet (then they are still in the old flat list).
+export function readSets(raw) {
+  try {
+    if (isObj(raw) && raw.version === SCHEMA_VERSION && isObj(raw.tables) && raw.setsInTables === true) return fromV4(raw).sets;
+    return null;
   } catch { return null; }
 }

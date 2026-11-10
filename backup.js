@@ -1,10 +1,11 @@
 // Backup and restore helpers. Pure (no browser calls) so they can be tested.
 import { MACHINES_FILE_TYPE } from "./store.js";
-import { toStoreV4, readStore } from "./schema4.js";
+import { toStoreV4, readStore, readSets } from "./schema4.js";
 
 export const BACKUP_TYPE = "gymlog-backup";
-// Version 1 holds the version 3 store; version 2 holds the version 4 store. Both are read.
-export const BACKUP_VERSION = 2;
+// Version 1 holds the version 3 store and a flat sets list; version 2 the version 4 store and a flat sets list;
+// version 3 the version 4 store with the sets inside its tables (no separate sets list). All are read.
+export const BACKUP_VERSION = 3;
 
 const plural = (n, one, many) => n + " " + (n === 1 ? one : many);
 const validSet = (s) =>
@@ -13,7 +14,8 @@ const validSet = (s) =>
 
 // Everything that is worth keeping: the store (gyms, equipment, settings) and the logged sets.
 export function makeBackup({ store, sets }, now = new Date()) {
-  return { type: BACKUP_TYPE, version: BACKUP_VERSION, createdAt: now.toISOString(), store: toStoreV4(store) ?? store, sets };
+  const v4 = toStoreV4(store, sets);   // null only if the conversion fails: then the old layout is written
+  return { type: BACKUP_TYPE, version: BACKUP_VERSION, createdAt: now.toISOString(), ...(v4 ? { store: v4 } : { store, sets }) };
 }
 
 // kind is "backup" or "machines", e.g. gym-log-backup-2026-10-30.json (local date).
@@ -31,10 +33,10 @@ export function parseBackup(text) {
   try { data = JSON.parse(text); }
   catch { return fail("That is not a valid file."); }
   if (!data || data.type !== BACKUP_TYPE) return fail("That is not a Gym Log backup file.");
-  if (data.version !== 1 && data.version !== BACKUP_VERSION) return fail("This backup was made by a different version of the app.");
+  if (![1, 2, BACKUP_VERSION].includes(data.version)) return fail("This backup was made by a different version of the app.");
   const store = readStore(data.store);
   if (!store) return fail("This backup was made by a different version of the app.");
-  const raw = Array.isArray(data.sets) ? data.sets : [];
+  const raw = readSets(data.store) ?? (Array.isArray(data.sets) ? data.sets : []);
   const sets = raw.filter(validSet);
   return {
     backup: { store, sets, createdAt: typeof data.createdAt === "string" ? data.createdAt : null },

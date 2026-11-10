@@ -24,13 +24,16 @@ import {
 import { makeBackup, backupFileName, parseBackup, fileKind, dataSummary, describeData, backupAge } from "./backup.js";
 import { MUSCLES, muscleOf, muscleLabel, partnerGroups, pairedPartners, getPairs, setPairs, addPair, removePair, pairedWith, isSuitable, setSuitable, hasPair, pairCandidates } from "./superset.js";
 import { KEY, load, loadList, save } from "./storage.js";
-import { checkV4, toStoreV4, readStore } from "./schema4.js";
+import { checkV4, toStoreV4, readStore, readSets } from "./schema4.js";
 import {
   $, esc, optionsHtml, selectHtml, field, numField, cols, box, muted, ghostBtn, backBtn, wire, addItems, addChoices, sendFile,
 } from "./ui.js";
 
 // ---------- Saved data ----------
-let sets = loadList(KEY.sets);
+// Logged sets live inside the saved version 4 data (step27a). The old flat gymlog.sets is only read the first
+// time (before the sets were moved) and is then left alone as a copy.
+const savedStore = load(KEY.store, null);
+let sets = readSets(savedStore) ?? loadList(KEY.sets);
 let done = loadList(KEY.done);       // exercises finished today: { exerciseId, date }
 // The workout timer: started by opening the first exercise, stopped by End workout. A workout
 // left over from an earlier day is dropped.
@@ -39,21 +42,25 @@ let workout = cleanWorkout(load(KEY.workout, null), Date.now());
 // The permanent store. The first time, it is built from the old gymlog.settings data, which is left
 // untouched as a backup. A store saved before gyms had their own equipment (version 2) is upgraded, and a
 // copy of it is kept first under gymlog.beforeGyms.
-const savedStore = load(KEY.store, null);
 let store = readStore(savedStore);
 if (!store) store = migrateLegacy(load(KEY.settings, {}));
 else if (savedStore.version === 2 && load(KEY.beforeGyms, null) === null) save(KEY.beforeGyms, savedStore);
 // Step 26: the safety copy of the data as it was before version 4 (kept once), then the store is saved as version 4.
 if (load(KEY.beforeV4, null) === null) save(KEY.beforeV4, { store, sets });
-const persistStore = (st) => save(KEY.store, toStoreV4(st) ?? st);
-if (!savedStore || savedStore.version !== 4) persistStore(store);
+// If the conversion ever failed, the store and the flat sets are saved the old way so nothing is lost.
+const persistStore = (st) => {
+  const v4 = toStoreV4(st, sets);
+  if (v4) save(KEY.store, v4);
+  else { save(KEY.store, st); save(KEY.sets, sets); }
+};
+if (!savedStore || savedStore.version !== 4 || savedStore.setsInTables !== true) persistStore(store);
 store = useDefaultGym(store);   // every visit starts in the default gym
 
 // Sets logged before gyms existed belong to the first gym, in the unit their exercise used.
 {
   const firstGym = store.gyms[DEFAULT_GYM] || {};
   const tagged = tagSets(sets, DEFAULT_GYM, (id) => firstGym.equipment?.[id]?.unit);
-  if (tagged.some((s, i) => s !== sets[i])) { sets = tagged; save(KEY.sets, sets); }
+  if (tagged.some((s, i) => s !== sets[i])) { sets = tagged; persistStore(store); }
 }
 
 // Step 26a: a dry run of the version 4 conversion.
@@ -440,7 +447,7 @@ function setDone(next) {
 function bindPanel(p, i) {
   const e = p.ex;
   // After the logged sets change: save them, work out the next defaults and redraw.
-  const setsChanged = () => { save(KEY.sets, sets); resetPanel(p); render(); };
+  const setsChanged = () => { persistStore(store); resetPanel(p); render(); };
 
   $("weightSel" + i).onchange = (ev) => {
     const v = Number(ev.target.value);
@@ -1246,8 +1253,8 @@ async function importFile(ev) {
     )) backupMsg = "Restore cancelled.";
     else {
       save(KEY.beforeRestore, { at: new Date().toISOString(), store, sets });   // a safety copy, in case of a mistake
+      sets = r.backup.sets;
       persistStore(r.backup.store);
-      save(KEY.sets, r.backup.sets);
       alert("Backup restored. The app will now reload.");
       location.reload();
       return;

@@ -11,7 +11,7 @@ const setAt = (id, date) => ({ exerciseId: id, weight: 100, reps: 5, time: date.
 
 test("a backup can be written and read back", () => {
   const store = migrateLegacy({ exercises: { "leg-press": { name: "Leg Press", pins: [10, 20], notes: "Seat 4" } } });
-  const sets = [setAt("leg-press", when(2026, 10, 29))];
+  const sets = [{ ...setAt("leg-press", when(2026, 10, 29)), gymId: "main" }];   // the app tags every set with its gym
   const r = parseBackup(JSON.stringify(makeBackup({ store, sets }, when(2026, 10, 30))));
   assert.equal(r.error, "");
   assert.equal(r.dropped, 0);

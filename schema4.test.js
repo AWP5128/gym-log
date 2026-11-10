@@ -291,7 +291,7 @@ test("step26b: a full backup is written as version 4 and read back; a version 1 
   const s = emptyStore();
   const sets = [makeSet({ exerciseId: "leg-press", weight: 100, reps: 5, mode: "heavy", gymId: "main", unit: "lb" })];
   const b = makeBackup({ store: s, sets });
-  assert.equal(b.version, 2);
+  assert.equal(b.version, 3);
   assert.equal(b.store.version, 4);
   const r = parseBackup(JSON.stringify(b));
   assert.equal(r.error, "");
