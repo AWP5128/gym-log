@@ -29,6 +29,7 @@ import { SYNC } from "./config.js";
 import { emptySync } from "./sync.js";
 import { runSync } from "./syncglue.js";
 import { makeRemote } from "./remote.js";
+import { makeAuth, loadClient } from "./auth.js";
 import {
   $, esc, optionsHtml, selectHtml, field, numField, cols, box, muted, ghostBtn, backBtn, wire, addItems, addChoices, sendFile,
 } from "./ui.js";
@@ -1293,7 +1294,8 @@ function renderBackup() {
     box("Import a file",
       muted("A machines file adds machines and leaves your own settings alone. A full backup replaces what is on this phone.", "small") +
       '<button class="secondary" id="importBtn">Choose a file</button>' +
-      '<input type="file" id="importFile" accept=".json,application/json" style="display:none">');
+      '<input type="file" id="importFile" accept=".json,application/json" style="display:none">') +
+    accountBox();
   backupMsg = "";
 
   wire({
@@ -1304,6 +1306,65 @@ function renderBackup() {
     importBtn: () => $("importFile").click(),
   });
   $("importFile").onchange = importFile;
+  wireAccount();
+}
+
+// ---------- Account (step 30b-1) ----------
+// Sign in with an emailed code. Hidden until config.js has the project address and key, so the app looks the same as before.
+// acct.step: "start" (not looked yet), "out" (signed out), "code" (waiting for the emailed number), "in" (signed in).
+const acct = { step: "start", email: "", personId: null, msg: "", busy: false };
+let authApi = null;
+const haveAccount = () => !!(SYNC.url && SYNC.key);
+async function getAuth() {
+  authApi ??= makeAuth({ client: await loadClient({ url: SYNC.url, key: SYNC.key }) });
+  return authApi;
+}
+function accountBox() {
+  if (!haveAccount()) return "";
+  const note = acct.msg ? '<div class="note">' + esc(acct.msg) + "</div>" : "";
+  let inner;
+  if (acct.step === "start") inner = muted("Checking&hellip;");
+  else if (acct.step === "in")
+    inner = muted("Signed in as " + esc(acct.email) + (acct.personId ? " (" + esc(acct.personId) + ")" : "") + ".") +
+      '<button class="secondary" id="acctOut">Sign out</button>';
+  else if (acct.step === "code")
+    inner = muted("A code was emailed to " + esc(acct.email) + ". Type the number here.", "small") +
+      '<input id="acctCode" inputmode="numeric" autocomplete="one-time-code" placeholder="Code">' +
+      '<button class="primary" id="acctVerify"' + (acct.busy ? " disabled" : "") + ">Sign in</button>" +
+      '<button class="faintlink" id="acctBack">Use a different email</button>';
+  else
+    inner = muted("Sign in to keep your data online. Only invited email addresses can sign in.", "small") +
+      '<input id="acctEmail" type="email" autocomplete="email" inputmode="email" placeholder="Email address" value="' + esc(acct.email) + '">' +
+      '<button class="primary" id="acctSend"' + (acct.busy ? " disabled" : "") + ">Email me a code</button>";
+  return box("Account (online)", note + inner);
+}
+function wireAccount() {
+  if (!haveAccount()) return;
+  const redo = () => { if (screen === "backup") render(); };   // only redraw if still on this screen
+  const run = async (fn) => {
+    if (acct.busy) return;
+    acct.busy = true; acct.msg = ""; redo();
+    try { await fn(await getAuth()); } catch (e) { acct.msg = "Sign-in did not work: " + e.message; }
+    acct.busy = false; redo();
+  };
+  if (acct.step === "start") {
+    acct.step = "pending";
+    getAuth().then((a) => a.status()).then((st) => {
+      acct.step = st.signedIn ? "in" : "out"; acct.email = st.email || acct.email; acct.personId = st.personId ?? null; acct.msg = st.problem ?? "";
+    }).catch((e) => { acct.step = "out"; acct.msg = "Sign-in is not available: " + e.message; }).finally(redo);
+  }
+  wire({
+    acctSend: () => { acct.email = $("acctEmail").value.trim(); run(async (a) => {
+      const r = await a.sendCode(acct.email);
+      if (r.ok) acct.step = "code"; else acct.msg = r.error;
+    }); },
+    acctVerify: () => { const code = $("acctCode").value; run(async (a) => {   // read it first: the redraw clears the box
+      const r = await a.verifyCode(acct.email, code);
+      if (r.ok) { acct.step = "in"; acct.personId = r.personId; } else acct.msg = r.error;
+    }); },
+    acctBack: () => { acct.step = "out"; acct.msg = ""; render(); },
+    acctOut: () => run(async (a) => { await a.signOut(); acct.step = "out"; acct.personId = null; }),
+  });
 }
 
 // ---------- Sync (step 29d) ----------

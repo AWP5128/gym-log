@@ -118,3 +118,14 @@ test("the owner adds a person to a gym; only the owner", async () => {
   assert.equal((await rows(db, "fam", "select * from gym")).length, 1);
   await assert.rejects(as(db, "fam", "insert into gym_member (person_id,gym_id,role,status) values ('fam','main','owner','active')"), /row-level security|duplicate/);
 });
+
+test("the public wrappers work for a signed-in person and are closed to anon", async () => {
+  const db = await freshDb();
+  await db.exec(readFileSync("supabase/migrations/20261111110000_public_wrappers.sql", "utf8"));
+  assert.equal((await rows(db, "me", "select public.claim_invite() as p"))[0].p, "awp");
+  await as(db, "me", "select public.create_gym('main','Main')");
+  assert.deepEqual(await rows(db, "me", "select person_id, role from gym_member where gym_id='main'"), [{ person_id: "awp", role: "owner" }]);
+  await assert.rejects(as(db, "anon", "select public.claim_invite()"), /permission denied/);
+  await assert.rejects(as(db, "anon", "select public.create_gym('g','G')"), /permission denied/);
+  await assert.rejects(as(db, "stranger", "select public.claim_invite()"), /No invitation/);
+});
