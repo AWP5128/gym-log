@@ -25,6 +25,10 @@ import { makeBackup, backupFileName, parseBackup, fileKind, dataSummary, describ
 import { MUSCLES, muscleOf, muscleLabel, partnerGroups, pairedPartners, getPairs, setPairs, addPair, removePair, pairedWith, isSuitable, setSuitable, hasPair, pairCandidates } from "./superset.js";
 import { KEY, load, loadList, save } from "./storage.js";
 import { checkV4, toStoreV4, readStore, readSets } from "./schema4.js";
+import { SYNC } from "./config.js";
+import { emptySync } from "./sync.js";
+import { runSync } from "./syncglue.js";
+import { makeRemote } from "./remote.js";
 import {
   $, esc, optionsHtml, selectHtml, field, numField, cols, box, muted, ghostBtn, backBtn, wire, addItems, addChoices, sendFile,
 } from "./ui.js";
@@ -47,11 +51,18 @@ if (!store) store = migrateLegacy(load(KEY.settings, {}));
 else if (savedStore.version === 2 && load(KEY.beforeGyms, null) === null) save(KEY.beforeGyms, savedStore);
 // Step 26: the safety copy of the data as it was before version 4 (kept once), then the store is saved as version 4.
 if (load(KEY.beforeV4, null) === null) save(KEY.beforeV4, { store, sets });
+// Step 29d: sync (off unless config.js says so). dataVersion counts saves, so a sync round that overlapped a save is thrown away.
+let syncState = load(KEY.sync, null) ?? emptySync();
+let syncTimer = null;
+let syncing = false;
+let dataVersion = 0;
 // If the conversion ever failed, the store and the flat sets are saved the old way so nothing is lost.
 const persistStore = (st) => {
   const v4 = toStoreV4(st, sets);
   if (v4) save(KEY.store, v4);
   else { save(KEY.store, st); save(KEY.sets, sets); }
+  dataVersion++;
+  scheduleSync();
 };
 if (!savedStore || savedStore.version !== 4 || savedStore.setsInTables !== true) persistStore(store);
 store = useDefaultGym(store);   // every visit starts in the default gym
@@ -1255,6 +1266,7 @@ async function importFile(ev) {
       save(KEY.beforeRestore, { at: new Date().toISOString(), store, sets });   // a safety copy, in case of a mistake
       sets = r.backup.sets;
       persistStore(r.backup.store);
+      save(KEY.sync, emptySync());   // a restored copy is sent as new data; it never deletes anything online
       alert("Backup restored. The app will now reload.");
       location.reload();
       return;
@@ -1294,8 +1306,43 @@ function renderBackup() {
   $("importFile").onchange = importFile;
 }
 
+// ---------- Sync (step 29d) ----------
+// Does nothing while SYNC.enabled is false. Needs a signed-in person's token; sign-in comes in step 30, so for now there is none.
+const getToken = async () => null;
+function scheduleSync(delay = 3000) {
+  if (!SYNC.enabled || !SYNC.url || !SYNC.key) return;
+  clearTimeout(syncTimer);
+  syncTimer = setTimeout(syncNow, delay);
+}
+async function syncNow() {
+  if (syncing || !navigator.onLine) return;
+  syncing = true;
+  const started = dataVersion;
+  try {
+    const r = await runSync({ store, sets, state: syncState, remote: makeRemote({ url: SYNC.url, key: SYNC.key, getToken }) });
+    if (started !== dataVersion) { scheduleSync(1000); return; }   // something was saved meanwhile: try again
+    syncState = r.state;
+    save(KEY.sync, syncState);
+    if (r.changed) {
+      store = r.store;
+      sets = r.sets;
+      save(KEY.store, toStoreV4(store, sets) ?? store);
+      reloadSettings();
+      render();
+    }
+    console.info("Sync:", r.report);
+  } catch (e) {
+    console.warn("Sync stopped:", e.message);
+  } finally {
+    syncing = false;
+  }
+}
+window.addEventListener("online", () => scheduleSync(500));
+document.addEventListener("visibilitychange", () => { if (!document.hidden) scheduleSync(500); });
+
 armBack();
 render();
+scheduleSync(1500);
 
 // Lets the app open with no signal once it has been loaded once (needs https, so not on a plain LAN address).
 if ("serviceWorker" in navigator) navigator.serviceWorker.register("sw.js").catch(() => {});

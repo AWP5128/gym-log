@@ -23,6 +23,14 @@ const INSERT_ONLY = new Set(["exercise"]);
 
 export const emptySync = () => ({ snapshot: {}, queue: {}, cursor: null });
 
+// A logged set's place in this phone's own list (seq) means nothing to another phone and shifts whenever sets from
+// elsewhere arrive, so it is never synced; the sets are ordered by their time instead.
+export const syncRow = (table, row) => {
+  if (table !== "logged_set" || !("seq" in row)) return row;
+  const { seq, ...rest } = row;
+  return rest;
+};
+
 export function rowKey(table, row) {
   return table + "|" + JSON.stringify(PK[table].map((k) => (k === "dayType" ? row[k] ?? "none" : row[k] ?? null)));
 }
@@ -50,7 +58,8 @@ export function detectChanges(snapshot, tables) {
   const now = {};
   const changes = [];
   for (const table of SYNC_TABLES) {
-    for (const row of tables[table] ?? []) {
+    for (const full of tables[table] ?? []) {
+      const row = syncRow(table, full);
       const key = rowKey(table, row);
       const hash = hashRow(row);
       now[key] = hash;
@@ -93,8 +102,9 @@ export function applyPulled(tables, snapshot, queue, pulled) {
   let count = 0;
   let skipped = 0;
   const touched = new Set();
-  for (const { table, row } of pulled.rows ?? []) {
+  for (const { table, row: got } of pulled.rows ?? []) {
     if (!PK[table]) continue;
+    const row = syncRow(table, got);
     const key = rowKey(table, row);
     if (queue[key]) { skipped++; continue; }
     const hash = hashRow(row);
