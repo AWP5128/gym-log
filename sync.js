@@ -16,6 +16,7 @@ const PK = {
   workout_exercise: ["id"], logged_set: ["id"],
 };
 // equipment_type and exercise_type are fixed lists that only the laptop changes, so they are never synced.
+export const SYNC_PK = PK;
 export const SYNC_TABLES = LOAD_ORDER.filter((t) => PK[t]);
 // An exercise row is only ever added (nobody may change or delete one from a phone).
 const INSERT_ONLY = new Set(["exercise"]);

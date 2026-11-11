@@ -9,13 +9,23 @@ import { updateItem, hideItem, hideWeightSet, addItem } from "./gym.js";
 import { makeSet } from "./log.js";
 import { loadTables, readTables, compareTables, toRows } from "./dbload.js";
 
+// The empty, migrated database is built once per file; each test gets its own quick copy of it.
+let template;
+const opened = [];
+// close every database when the file's tests end, or the test run never finishes
+test.after(async () => { for (const d of opened) await d.close(); if (template) await (await template).close(); });
 async function freshDb() {
+  template ??= (async () => {
   const db = new PGlite();
   await db.exec(`create role anon; create role authenticated; create role service_role; create schema auth;
     create table auth.users (id uuid primary key);
     create function auth.uid() returns uuid language sql stable as $$ select null::uuid $$;
     grant usage on schema public to anon, authenticated;`);
   for (const f of readdirSync("supabase/migrations").sort()) await db.exec(readFileSync("supabase/migrations/" + f, "utf8"));
+  return db;
+  })();
+  const db = await (await template).clone();
+  opened.push(db);
   return db;
 }
 

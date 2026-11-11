@@ -30,7 +30,7 @@ export const LOAD_ORDER = [
   "equipment_type", "exercise_type", "exercise", "person", "gym", "gym_member", "gym_equipment", "personal_setup",
   "workout", "workout_type", "workout_exercise", "logged_set",
 ];
-const snake = (k) => k.replace(/[A-Z]/g, (c) => "_" + c.toLowerCase());
+export const snake = (k) => k.replace(/[A-Z]/g, (c) => "_" + c.toLowerCase());
 const camel = (k) => k.replace(/_([a-z])/g, (_, c) => c.toUpperCase());
 const q = (id) => '"' + id + '"';
 
@@ -40,20 +40,37 @@ const FILL = {
   gym_member: { offTypes: [] }, personal_setup: { dayType: "none" }, logged_set: { manual: false },
 };
 
+// One app row -> a database row (snake_case keys, blanks left out, the fills the database needs).
+export function toDbRow(table, r) {
+  const row = {};
+  for (const k of Object.keys(COLS[table])) {
+    const v = r[k] ?? FILL[table]?.[k];
+    if (v !== undefined && v !== null) row[snake(k)] = v;
+  }
+  return row;
+}
+export const dbColumns = (table) => Object.keys(COLS[table]).map(snake);
+
+// One database row as the web service (PostgREST) returns it -> an app row. Times come back as
+// "2026-11-02T10:00:00+00:00" and are put in the app's own form; blanks and database-only columns are left out.
+export function fromDbRow(table, db) {
+  const o = {};
+  for (const [k, kind] of Object.entries(COLS[table])) {
+    let v = db[snake(k)];
+    if (v === null || v === undefined) continue;
+    if (kind === "s") v = new Date(v).toISOString();
+    if (kind === "n" || kind === "i") v = Number(v);
+    o[k] = v;
+  }
+  if (table === "personal_setup" && o.dayType === "none") delete o.dayType;
+  if (table === "logged_set" && o.manual === false) delete o.manual;
+  return o;
+}
+
 // v4.tables -> { table: [row with snake_case keys] }
 export function toRows(v4) {
   const out = {};
-  for (const table of LOAD_ORDER) {
-    const cols = COLS[table];
-    out[table] = (v4.tables[table] ?? []).map((r) => {
-      const row = {};
-      for (const k of Object.keys(cols)) {
-        const v = r[k] ?? FILL[table]?.[k];
-        if (v !== undefined && v !== null) row[snake(k)] = v;
-      }
-      return row;
-    });
-  }
+  for (const table of LOAD_ORDER) out[table] = (v4.tables[table] ?? []).map((r) => toDbRow(table, r));
   return out;
 }
 

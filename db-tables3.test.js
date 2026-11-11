@@ -7,7 +7,13 @@ import { PGlite } from "@electric-sql/pglite";
 const U = { alice: "00000000-0000-0000-0000-00000000000a", bob: "00000000-0000-0000-0000-00000000000b",
   cara: "00000000-0000-0000-0000-00000000000c", dan: "00000000-0000-0000-0000-00000000000d" };
 
+// The empty, migrated database is built once per file; each test gets its own quick copy of it.
+let template;
+const opened = [];
+// close every database when the file's tests end, or the test run never finishes
+test.after(async () => { for (const d of opened) await d.close(); if (template) await (await template).close(); });
 async function freshDb() {
+  template ??= (async () => {
   const db = new PGlite();
   await db.exec(`
     create role anon; create role authenticated; create role service_role;
@@ -17,6 +23,10 @@ async function freshDb() {
     grant usage on schema public to anon, authenticated;
     insert into auth.users values ${Object.values(U).map((u) => `('${u}')`).join(",")};`);
   for (const f of readdirSync("supabase/migrations").sort()) await db.exec(readFileSync("supabase/migrations/" + f, "utf8"));
+  return db;
+  })();
+  const db = await (await template).clone();
+  opened.push(db);
   await db.exec(`
     insert into equipment_type values ('stack','Stack machine');
     insert into exercise_type values ('legs','Legs','{heavy,volume}'),('cardio','Cardio','{}');
