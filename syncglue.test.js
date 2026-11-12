@@ -57,10 +57,12 @@ const fingerprint = (p) => {
   return m;
 };
 
-test("sync is off in the shipped settings", () => {
+// config.js is public. Sync stays off until step 30b-3, and only the project address and the PUBLISHABLE key may be in it
+// (empty is fine too). A secret key, a legacy JWT key ("eyJ...") or anything else is refused.
+test("sync is off, and config.js holds only a project address and a publishable key", () => {
   assert.equal(SYNC.enabled, false);
-  assert.equal(SYNC.url, "");
-  assert.equal(SYNC.key, "");
+  assert.match(SYNC.url, /^(https:\/\/[a-z0-9]+\.supabase\.co)?$/);
+  assert.match(SYNC.key, /^(sb_publishable_[A-Za-z0-9_-]+)?$/);
 });
 
 test("a set's list position is not synced", () => {
