@@ -1,4 +1,5 @@
-// Step 30b-1: sign-in with an emailed code, then link the sign-in to the invited person.
+// Step 30b-1: first sign-in with a one-time password made by the owner, then link the sign-in to the invited person.
+// (Passkeys, step 30b-2, replace the password afterwards. No email is sent: the free plan's built-in sender cannot be used.)
 // Pure (the Supabase client is passed in), so it can be tested without a network.
 // Nothing here knows your email address: it is typed on the phone and checked by the database's invite table.
 
@@ -10,7 +11,7 @@ export function friendly(message) {
   if (/No invitation/i.test(m)) return "That email address has not been invited.";
   if (/not confirmed/i.test(m)) return "That email address is not confirmed yet. Use the code that was emailed.";
   if (/already linked/i.test(m)) return "That person is already linked to another sign-in.";
-  if (/expired|invalid/i.test(m)) return "That code is wrong or has expired. Ask for a new one.";
+  if (/invalid login|invalid credentials|invalid/i.test(m)) return "That email or one-time password is wrong. Check both.";
   if (/rate limit|too many|seconds/i.test(m)) return "Too many tries. Wait a minute, then try again.";
   if (/network|fetch|failed to/i.test(m)) return "No connection. Try again when you are online.";
   return "Sign-in did not work: " + m;
@@ -28,18 +29,13 @@ export function makeAuth({ client }) {
     return { signedIn: true, email, personId };
   }
 
-  async function sendCode(email) {
+  // First sign-in: the email and the one-time password the owner made in the dashboard (no email is sent anywhere).
+  // Then links the sign-in to the invited person. If the email was not invited, signs straight back out.
+  async function signInFirst(email, password) {
     const e = clean(email);
     if (!e.includes("@")) return { ok: false, error: "Type your email address." };
-    const { error } = await client.auth.signInWithOtp({ email: e, options: { shouldCreateUser: true } });
-    return error ? { ok: false, error: friendly(error.message) } : { ok: true };
-  }
-
-  // Checks the code, then links the sign-in to the invited person. If the email was not invited, signs straight back out.
-  async function verifyCode(email, code) {
-    const token = String(code ?? "").replace(/\s+/g, "");
-    if (!/^\d{6,10}$/.test(token)) return { ok: false, error: "Type the number from the email." };
-    const { error } = await client.auth.verifyOtp({ email: clean(email), token, type: "email" });
+    if (!password) return { ok: false, error: "Type the one-time password." };
+    const { error } = await client.auth.signInWithPassword({ email: e, password: String(password) });
     if (error) return { ok: false, error: friendly(error.message) };
     const { data: personId, error: e2 } = await client.rpc("claim_invite");
     if (e2) {
@@ -50,7 +46,7 @@ export function makeAuth({ client }) {
   }
 
   const signOut = async () => { await client.auth.signOut(); };
-  return { status, sendCode, verifyCode, signOut };
+  return { status, signInFirst, signOut };
 }
 
 // Loads the saved copy of the Supabase library (vendor/supabase.js) on first use and makes a client.

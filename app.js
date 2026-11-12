@@ -1310,8 +1310,8 @@ function renderBackup() {
 }
 
 // ---------- Account (step 30b-1) ----------
-// Sign in with an emailed code. Hidden until config.js has the project address and key, so the app looks the same as before.
-// acct.step: "start" (not looked yet), "out" (signed out), "code" (waiting for the emailed number), "in" (signed in).
+// First sign-in with the one-time password the owner made. Hidden until config.js has the project address and key, so the app looks the same as before.
+// acct.step: "start" (not looked yet), "out" (signed out), "in" (signed in).
 const acct = { step: "start", email: "", personId: null, msg: "", busy: false };
 let authApi = null;
 const haveAccount = () => !!(SYNC.url && SYNC.key);
@@ -1327,15 +1327,11 @@ function accountBox() {
   else if (acct.step === "in")
     inner = muted("Signed in as " + esc(acct.email) + (acct.personId ? " (" + esc(acct.personId) + ")" : "") + ".") +
       '<button class="secondary" id="acctOut">Sign out</button>';
-  else if (acct.step === "code")
-    inner = muted("A code was emailed to " + esc(acct.email) + ". Type the number here.", "small") +
-      '<input id="acctCode" inputmode="numeric" autocomplete="one-time-code" placeholder="Code">' +
-      '<button class="primary" id="acctVerify"' + (acct.busy ? " disabled" : "") + ">Sign in</button>" +
-      '<button class="faintlink" id="acctBack">Use a different email</button>';
   else
-    inner = muted("Sign in to keep your data online. Only invited email addresses can sign in.", "small") +
-      '<input id="acctEmail" type="email" autocomplete="email" inputmode="email" placeholder="Email address" value="' + esc(acct.email) + '">' +
-      '<button class="primary" id="acctSend"' + (acct.busy ? " disabled" : "") + ">Email me a code</button>";
+    inner = muted("First time here? Type your email and the one-time password you were given. Only invited people can sign in.", "small") +
+      '<input id="acctEmail" type="email" autocomplete="username" inputmode="email" placeholder="Email address" value="' + esc(acct.email) + '">' +
+      '<input id="acctPass" type="password" autocomplete="current-password" placeholder="One-time password">' +
+      '<button class="primary" id="acctIn"' + (acct.busy ? " disabled" : "") + ">Sign in</button>";
   return box("Account (online)", note + inner);
 }
 function wireAccount() {
@@ -1354,15 +1350,10 @@ function wireAccount() {
     }).catch((e) => { acct.step = "out"; acct.msg = "Sign-in is not available: " + e.message; }).finally(redo);
   }
   wire({
-    acctSend: () => { acct.email = $("acctEmail").value.trim(); run(async (a) => {
-      const r = await a.sendCode(acct.email);
-      if (r.ok) acct.step = "code"; else acct.msg = r.error;
-    }); },
-    acctVerify: () => { const code = $("acctCode").value; run(async (a) => {   // read it first: the redraw clears the box
-      const r = await a.verifyCode(acct.email, code);
+    acctIn: () => { acct.email = $("acctEmail").value.trim(); const pw = $("acctPass").value; run(async (a) => {   // read both first: the redraw clears the boxes
+      const r = await a.signInFirst(acct.email, pw);
       if (r.ok) { acct.step = "in"; acct.personId = r.personId; } else acct.msg = r.error;
     }); },
-    acctBack: () => { acct.step = "out"; acct.msg = ""; render(); },
     acctOut: () => run(async (a) => { await a.signOut(); acct.step = "out"; acct.personId = null; }),
   });
 }
