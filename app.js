@@ -1309,10 +1309,10 @@ function renderBackup() {
   wireAccount();
 }
 
-// ---------- Account (step 30b-1) ----------
-// First sign-in with the one-time password the owner made. Hidden until config.js has the project address and key, so the app looks the same as before.
+// ---------- Account (steps 30b-1 and 30b-2) ----------
+// First sign-in with the one-time password the owner made, then a passkey (Face ID or PIN). Hidden until config.js has the project address and key, so the app looks the same as before.
 // acct.step: "start" (not looked yet), "out" (signed out), "in" (signed in).
-const acct = { step: "start", email: "", personId: null, msg: "", busy: false };
+const acct = { step: "start", email: "", personId: null, msg: "", busy: false, passkeys: null, viaPasskey: false };
 let authApi = null;
 const haveAccount = () => !!(SYNC.url && SYNC.key);
 async function getAuth() {
@@ -1326,9 +1326,14 @@ function accountBox() {
   if (acct.step === "start") inner = muted("Checking&hellip;");
   else if (acct.step === "in")
     inner = muted("Signed in as " + esc(acct.email) + (acct.personId ? " (" + esc(acct.personId) + ")" : "") + ".") +
+      (acct.passkeys > 0 ? muted("Passkeys on this account: " + acct.passkeys + ".", "small") :
+        muted("Add a passkey so next time you only need Face ID or your PIN.", "small") + '<button class="primary" id="acctAdd"' + (acct.busy ? " disabled" : "") + ">Add a passkey</button>") +
+      (acct.viaPasskey && acct.passkeys > 0 ?
+        muted("Your passkey worked. You can now replace the one-time password with a random one nobody knows.", "small") + '<button class="secondary" id="acctRetire"' + (acct.busy ? " disabled" : "") + ">Retire one-time password</button>" : "") +
       '<button class="secondary" id="acctOut">Sign out</button>';
   else
-    inner = muted("First time here? Type your email and the one-time password you were given. Only invited people can sign in.", "small") +
+    inner = '<button class="primary" id="acctPk"' + (acct.busy ? " disabled" : "") + ">Sign in with passkey</button>" +
+      muted("First time here? Type your email and the one-time password you were given. Only invited people can sign in.", "small") +
       '<input id="acctEmail" type="email" autocomplete="username" inputmode="email" placeholder="Email address" value="' + esc(acct.email) + '">' +
       '<input id="acctPass" type="password" autocomplete="current-password" placeholder="One-time password">' +
       '<button class="primary" id="acctIn"' + (acct.busy ? " disabled" : "") + ">Sign in</button>";
@@ -1347,14 +1352,27 @@ function wireAccount() {
     acct.step = "pending";
     getAuth().then((a) => a.status()).then((st) => {
       acct.step = st.signedIn ? "in" : "out"; acct.email = st.email || acct.email; acct.personId = st.personId ?? null; acct.msg = st.problem ?? "";
+      return st.signedIn ? getAuth().then((a) => a.passkeyCount()).then((n) => { acct.passkeys = n; }) : null;
     }).catch((e) => { acct.step = "out"; acct.msg = "Sign-in is not available: " + e.message; }).finally(redo);
   }
   wire({
     acctIn: () => { acct.email = $("acctEmail").value.trim(); const pw = $("acctPass").value; run(async (a) => {   // read both first: the redraw clears the boxes
       const r = await a.signInFirst(acct.email, pw);
-      if (r.ok) { acct.step = "in"; acct.personId = r.personId; } else acct.msg = r.error;
+      if (r.ok) { acct.step = "in"; acct.personId = r.personId; acct.viaPasskey = false; acct.passkeys = await a.passkeyCount(); } else acct.msg = r.error;
     }); },
-    acctOut: () => run(async (a) => { await a.signOut(); acct.step = "out"; acct.personId = null; }),
+    acctPk: () => run(async (a) => {
+      const r = await a.signInPasskey();
+      if (r.ok) { acct.step = "in"; acct.personId = r.personId; acct.email = r.email || acct.email; acct.viaPasskey = true; acct.passkeys = await a.passkeyCount(); acct.msg = r.problem ?? ""; }
+      else acct.msg = r.error;
+    }),
+    acctAdd: () => run(async (a) => {
+      const r = await a.addPasskey();
+      if (r.ok) { acct.passkeys = await a.passkeyCount(); if (acct.passkeys === null) acct.passkeys = 1; acct.msg = "Passkey added. Sign out and try Sign in with passkey to prove it works."; }
+      else acct.msg = r.error;
+    }),
+    acctRetire: () => { if (!confirm("Replace the one-time password with a random one? Afterwards only your passkey signs you in on any device. A lost phone then needs a new one-time password from the dashboard.")) return;
+      run(async (a) => { const r = await a.retirePassword(); if (r.ok) acct.viaPasskey = false; acct.msg = r.ok ? "The one-time password is retired." : r.error; }); },
+    acctOut: () => run(async (a) => { await a.signOut(); acct.step = "out"; acct.personId = null; acct.viaPasskey = false; acct.passkeys = null; }),
   });
 }
 
