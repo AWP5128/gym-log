@@ -1,10 +1,10 @@
 // Lets Gym Log open with no signal. Files are fetched fresh when the network answers
 // (so updates arrive straight away) and the saved copy is used when it does not.
-const CACHE = "gymlog-v7";
+const CACHE = "gymlog-v8";
 const FILES = [
   "./", "./index.html", "./app.js", "./ui.js", "./storage.js",
   "./exercises.js", "./settings.js", "./defaults.js", "./log.js", "./timer.js",
-  "./extras.js", "./stacks.js", "./store.js", "./backup.js", "./gym.js", "./superset.js", "./schema4.js",
+  "./extras.js", "./stacks.js", "./store.js", "./backup.js", "./gym.js", "./superset.js", "./schema4.js", "./cardio.js",
   "./config.js", "./dbload.js", "./sync.js", "./remote.js", "./syncglue.js", "./auth.js", "./vendor/supabase.js",
   "./manifest.webmanifest", "./icon-192.png", "./icon-512.png", "./apple-touch-icon.png",
 ];

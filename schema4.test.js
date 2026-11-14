@@ -73,7 +73,7 @@ test("the seeded gym comes across item for item and is small", () => {
   const store = cleanStore(emptyStore());
   const r = migrateToV4({ store, sets: [] });
   assert.equal(r.report.items, Object.keys(store.gyms.main.equipment).length);
-  assert.equal(r.report.items, 48);
+  assert.equal(r.report.items, 51);
   assert.equal(canon(fromV4(r.v4).store), canon(store));
   assert.ok(JSON.stringify(r.v4).length < 60000);
 });

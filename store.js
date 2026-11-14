@@ -19,7 +19,7 @@
 import { exercises } from "./exercises.js";
 import {
   newGym, makeItem, starterEquipment, withMachineData, updateItem, copyEquipment, uniqueId, DEFAULT_UNITS,
-  ensureWeightSets, seedStarterFree, STARTER_FREE, seedStarterAbs, STARTER_ABS, movePullUps,
+  ensureWeightSets, seedStarterFree, STARTER_FREE, seedStarterAbs, STARTER_ABS, seedStarterCardio, STARTER_CARDIO, movePullUps,
 } from "./gym.js";
 
 export const STORE_VERSION = 3;
@@ -49,8 +49,11 @@ const STARTER_FREE_BASE = Object.fromEntries(STARTER_FREE.map((x) => [x.id, make
 // The starter abs exercises as built in.
 const STARTER_ABS_BASE = Object.fromEntries(STARTER_ABS.map((x) => [x.id, makeItem(x)]));
 
+// The starter cardio machines as built in.
+const STARTER_CARDIO_BASE = Object.fromEntries(STARTER_CARDIO.map((x) => [x.id, makeItem(x)]));
+
 // A gym with its dumbbell and barbell sets in place and the starter exercises added.
-const freshGym = (gym) => movePullUps(seedStarterAbs(ensureWeightSets(seedStarterFree(ensureWeightSets(gym)))));
+const freshGym = (gym) => movePullUps(seedStarterCardio(seedStarterAbs(ensureWeightSets(seedStarterFree(ensureWeightSets(gym))))));
 
 export function emptyStore() {
   return {
@@ -87,7 +90,7 @@ function overrides(item, base = {}) {
 }
 
 // What an item is compared with: its built-in exercise, or the exercise you added.
-const baseFor = (id, custom = []) => STARTER[id] || STARTER_FREE_BASE[id] || STARTER_ABS_BASE[id] || custom.find((c) => c.id === id) || {};
+const baseFor = (id, custom = []) => STARTER[id] || STARTER_FREE_BASE[id] || STARTER_ABS_BASE[id] || STARTER_CARDIO_BASE[id] || custom.find((c) => c.id === id) || {};
 
 // An item for an id that is not built in (an exercise you added), from its shared fields.
 function newItem(id, shared, custom) {
@@ -159,7 +162,7 @@ export function addGym(store, name, { from, ids = [] } = {}) {
   const clean = String(name ?? "").trim();
   if (!clean) return { store, id: null, copied: 0 };
   const id = uniqueId(clean, Object.keys(store.gyms || {}), "gym");
-  let gym = { ...newGym(clean), starterFree: true, starterAbs: true, pullUpsMoved: true };   // a new gym never gets the starter exercises
+  let gym = { ...newGym(clean), starterFree: true, starterAbs: true, starterCardio: true, pullUpsMoved: true };   // a new gym never gets the starter exercises
   let copied = 0;
   if (from && store.gyms?.[from]) ({ gym, copied } = copyEquipment(store.gyms[from], ids, gym));
   return { store: { ...store, gyms: { ...store.gyms, [id]: gym } }, id, copied };

@@ -8,10 +8,10 @@
 //   Who and where
 //     person          { id, name, defaults, superset? }       defaults = { heavy|volume: { reps, sets, warmupReps } }
 //                                                              superset = { pairs: [[a, b]], suitable: [id] }
-//     gym             { id, name, units, listDefault?, starterFree?, starterAbs?, pullUpsMoved? }
+//     gym             { id, name, units, listDefault?, starterFree?, starterAbs?, starterCardio?, pullUpsMoved? }
 //     gym_member      { personId, gymId, role, status, offTypes }   offTypes: equipment types switched off
 //     gym_equipment   { gymId, id, exerciseId | null, equipmentTypeId, exerciseTypeId?, name, unit, step?,
-//                       common?, min?, pins?, stackSpec?, hidden?, muscle?, uses?, top? }
+//                       common?, min?, pins?, stackSpec?, hidden?, muscle?, uses?, top?, watts? }
 //                     one row per gym and exercise; the gym's Dumbbells and Barbell are rows too (id "set:dumbbells",
 //                     exerciseId null) and an exercise points to its set with `uses` (the set's id, without "set:")
 //   What
@@ -26,7 +26,8 @@
 //     workout         { id, personId, gymId, date, start, end }        one per person, gym and day; id = "person:gym:date"
 //     workout_type    { id, workoutId, exerciseTypeId, dayType, start, end }
 //     workout_exercise{ id, workoutTypeId, exerciseId, distance, avgHeartRate, zoneMinutes, watts, level }
-//                     the cardio fields are blank (null) until there is data
+//                     the cardio fields are blank (null) until there is data. A cardio entry is one logged_set (minutes) per
+//                     machine per day, and its distance (METRES, whatever unit the machine shows) and average watts sit here
 //     logged_set      { id (person:time:exercise), seq, personId, workoutExerciseId, exerciseId, gymId, time, weight, reps, minutes, unit, mode }
 //                     seq is the place in the old flat list. A typed-in best from before the app is a manual
 //                     logged_set: { id, personId, gymId, exerciseId, manual: true, weight, reps, time: null }.
@@ -36,7 +37,7 @@
 
 import { cleanStore, migrateLegacy, DEFAULT_GYM, DEFAULT_PERSON } from "./store.js";
 import { exercises as BUILT_IN, sessionTypes } from "./exercises.js";
-import { TYPES, STARTER_FREE, STARTER_ABS } from "./gym.js";
+import { TYPES, STARTER_FREE, STARTER_ABS, STARTER_CARDIO } from "./gym.js";
 
 export const SCHEMA_VERSION = 4;
 export const TABLES = [
@@ -62,7 +63,7 @@ const ymd = (iso) => {
 
 // What the built-in lists say about an exercise id: its name and session.
 const KNOWN = new Map();
-for (const e of [...BUILT_IN, ...STARTER_FREE, ...STARTER_ABS]) KNOWN.set(e.id, { name: e.name, group: e.group });
+for (const e of [...BUILT_IN, ...STARTER_FREE, ...STARTER_ABS, ...STARTER_CARDIO]) KNOWN.set(e.id, { name: e.name, group: e.group });
 
 // ---------- Version 3 (+ sets) to version 4 ----------
 // input: { store, settings, sets }. store is the saved gymlog.store (or null); settings is the old
@@ -104,7 +105,7 @@ export function migrateToV4({ store = null, settings = null, sets = [] } = {}) {
   for (const [id, g] of gymEntries) {
     t.gym.push(clean({
       id, name: g.name, units: g.units, listDefault: g.listDefault, starterFree: g.starterFree, starterAbs: g.starterAbs,
-      pullUpsMoved: g.pullUpsMoved,
+      starterCardio: g.starterCardio, pullUpsMoved: g.pullUpsMoved,
     }));
   }
 
@@ -129,7 +130,7 @@ export function migrateToV4({ store = null, settings = null, sets = [] } = {}) {
       t.gym_equipment.push(clean({
         gymId, id, exerciseId: id, equipmentTypeId: it.type, exerciseTypeId: it.group, name: it.name,
         unit: it.unit, step: it.step, common: it.common, min: it.min, pins: it.pins, stackSpec: it.stackSpec,
-        hidden: it.hidden, muscle: it.muscle, uses: it.weightSet,
+        hidden: it.hidden, muscle: it.muscle, uses: it.weightSet, watts: it.watts,
       }));
     }
     for (const [id, ws] of Object.entries(g.weightSets || {})) {
@@ -210,7 +211,9 @@ export function migrateToV4({ store = null, settings = null, sets = [] } = {}) {
     if (!wexes.has(weid)) {
       wexes.set(weid, {
         id: weid, workoutTypeId: wtid, exerciseId: s.exerciseId,
-        distance: null, avgHeartRate: null, zoneMinutes: null, watts: null, level: null,
+        // a cardio entry (one per machine per day) keeps its distance (metres) and watts here; weights have none
+        distance: Number.isFinite(s.distance) ? s.distance : null, avgHeartRate: null, zoneMinutes: null,
+        watts: Number.isFinite(s.watts) ? s.watts : null, level: null,
       });
     }
     // a set's id comes from who, when and what, so it stays the same however the list changes and differs between phones
@@ -262,7 +265,7 @@ export function fromV4(v4) {
   for (const g of t.gym) {
     gyms[g.id] = clean({
       name: g.name, units: g.units, equipment: {}, weightSets: {},
-      starterFree: g.starterFree, starterAbs: g.starterAbs, pullUpsMoved: g.pullUpsMoved, listDefault: g.listDefault,
+      starterFree: g.starterFree, starterAbs: g.starterAbs, starterCardio: g.starterCardio, pullUpsMoved: g.pullUpsMoved, listDefault: g.listDefault,
     });
   }
   for (const r of t.gym_equipment) {
@@ -275,7 +278,7 @@ export function fromV4(v4) {
     } else {
       gym.equipment[r.exerciseId] = clean({
         name: r.name, group: r.exerciseTypeId, type: r.equipmentTypeId, unit: r.unit, step: r.step, common: r.common,
-        min: r.min, pins: r.pins, stackSpec: r.stackSpec, hidden: r.hidden, muscle: r.muscle, weightSet: r.uses,
+        min: r.min, pins: r.pins, stackSpec: r.stackSpec, hidden: r.hidden, muscle: r.muscle, weightSet: r.uses, watts: r.watts,
       });
     }
   }
@@ -307,9 +310,12 @@ export function fromV4(v4) {
     gyms,
     people,
   };
+  const cardio = new Map(t.workout_exercise.map((w) => [w.id, w]));
+  const finite = (v) => (Number.isFinite(v) ? v : undefined);
   const sets = t.logged_set.filter((r) => !r.manual).sort((a, b) => a.seq - b.seq)
     .map((r) => clean({
-      exerciseId: r.exerciseId, time: r.time, weight: r.weight, reps: r.reps, minutes: r.minutes, unit: r.unit,
+      exerciseId: r.exerciseId, time: r.time, weight: r.weight, reps: r.reps, minutes: r.minutes,
+      distance: finite(cardio.get(r.workoutExerciseId)?.distance), watts: finite(cardio.get(r.workoutExerciseId)?.watts), unit: r.unit,
       mode: r.mode, gymId: r.gymId,
     }));
   return { store, sets };

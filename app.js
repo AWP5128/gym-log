@@ -4,7 +4,7 @@ import { sessionTypes, exercisesForGroup } from "./exercises.js";
 import { emptySettings, configFor, updateExercise, toNumber, manualPb } from "./settings.js";
 import { effectiveConfig, globalDefaults, updateGlobalDefaults, warmupReps, ownWarmupReps } from "./defaults.js";
 import {
-  makeSet, todaysSets, defaultsFor, removeLastSet, weightOptions, setsForGym, tagSets,
+  makeSet, todaysSets, defaultsFor, removeLastSet, weightOptions, setsForGym, tagSets, setsForExercise,
   isDoneToday, markDone, unmarkDone, personalBests, hasGymBest, describeBest, weightCaption, newBestLevel, idsWithHistory,
 } from "./log.js";
 import {
@@ -12,9 +12,13 @@ import {
   runMachines, endWorkout, cleanWorkout,
 } from "./timer.js";
 import { hasExtras, extraOptions, totalWeight, splitFor, savedExtra } from "./extras.js";
+import {
+  isCardio, isCardioSet, makeCardioSet, todaysEntries, describeEntry, entryBoxes, makeMinutes, splitMinutes, describeTime,
+  cardioBests, newCardioBests, bestLines, newBestLines,
+} from "./cardio.js";
 import { buildPins, addPin, removePin, hasPins } from "./stacks.js";
 import {
-  exerciseList, stepChoices, defaultStep, TYPES, UNITS, visibleEntries, hiddenEntries, hideItem, restoreItem,
+  exerciseList, stepChoices, defaultStep, TYPES, UNITS, GYM_DISTANCE_UNITS, DISTANCE_UNITS, unitsFor, visibleEntries, hiddenEntries, hideItem, restoreItem,
   setDefaultUnit, addItem, updateItem, editItem, checkName, LIST_KINDS, listKindOf, listDefaultOf, setListDefault, kindCounts, chooseListKind, entriesOfKind, kindCountsOfEntries, isSmallList, commonFirst, hideWeightSet, restoreWeightSet, isSetHidden, hiddenSetIds, weightSetUsers, setWeightSetUnit, updateWeightSet, dumbbellWeights,
 } from "./gym.js";
 import {
@@ -323,7 +327,8 @@ function renderList() {
   if (showDone) {
     addItems("doneList", finished.map((e) => {
       const n = todaysSets(gymSets(), e.id).length;
-      return ["&#10003; " + esc(e.name) + "<small>" + n + (n === 1 ? " set" : " sets") + " &middot; tap to view or reopen</small>", () => openExercise(e)];
+      const what = isCardio(e) ? (n === 1 ? " session" : " sessions") : n === 1 ? " set" : " sets";
+      return ["&#10003; " + esc(e.name) + "<small>" + n + what + " &middot; tap to view or reopen</small>", () => openExercise(e)];
     }));
   }
   wire({
@@ -370,6 +375,7 @@ function resetPanel(p) {
 }
 
 function newPanel(e) {
+  if (isCardio(e)) return newCardioPanel(e);
   const p = { ex: e, weight: 0, reps: 5 };
   resetPanel(p);
   return p;
@@ -406,6 +412,7 @@ const newBestHtml = (p) => p.pb
   : "";
 
 function panelHtml(p, i) {
+  if (isCardio(p.ex)) return cardioPanelHtml(p, i);
   const e = p.ex;
   const cfg = cfgFor(e);
   const key = modeKey();
@@ -457,6 +464,7 @@ function setDone(next) {
 }
 
 function bindPanel(p, i) {
+  if (isCardio(p.ex)) return bindCardioPanel(p, i);
   const e = p.ex;
   // After the logged sets change: save them, work out the next defaults and redraw.
   const setsChanged = () => { persistStore(store); resetPanel(p); render(); };
@@ -508,11 +516,89 @@ function bindPanel(p, i) {
   }, i);
 }
 
+// ---------- Cardio machines on the logging page ----------
+// One entry per machine per day: minutes and seconds, the distance in the machine's unit and (optionally) average
+// watts. Distances are saved in metres. Undo puts the entry back in the boxes so it can be corrected and logged again.
+// For a cardio machine the "working" setting on its Set up screen is the target time in minutes (workVolume).
+function newCardioPanel(e) {
+  const target = configFor(settings, e.id).workVolume;
+  const history = setsForExercise(sets, e.id).filter(isCardioSet);
+  const { min, sec } = splitMinutes(target ?? (history.length > 0 ? history[history.length - 1].minutes : 20));
+  return { ex: e, min, sec, distance: "", watts: "", pb: null };
+}
+
+const distanceLabel = (unit) => (unit === "m" ? "Distance (metres)" : unit === "mi" ? "Distance (miles)" : "Distance (km)");
+
+function cardioPanelHtml(p, i) {
+  const e = p.ex;
+  const cfg = configFor(settings, e.id);
+  const today = todaysEntries(gymSets(), e.id);
+  const showWatts = e.watts !== false;
+  const lines = bestLines(cardioBests(sets, e.id, store.currentGym), showWatts);
+  const bests = '<div class="muted small" style="margin-top:8px">' +
+    (lines.length > 0 ? lines.map(([label, text]) => "<div>" + esc(label) + ' <b style="color:#eee">' + esc(text) + "</b></div>").join("") : "<div>No personal best yet</div>") + "</div>";
+  const notes = cfg.notes ? '<div class="note">' + esc(cfg.notes).replace(/\n/g, "<br>") + "</div>" : "";
+  const logged = today.length > 0;
+  const inputs = cols(numField("cMin" + i, "Minutes", p.min), numField("cSec" + i, "Seconds", p.sec)) +
+    (showWatts ? cols(numField("cDist" + i, distanceLabel(e.unit), p.distance), numField("cWatts" + i, "Avg watts (optional)", p.watts))
+               : numField("cDist" + i, distanceLabel(e.unit), p.distance));
+  const newBest = (p.pb || []).map((t) => '<div class="finished" style="margin-top:8px">&#9733; ' + esc(t) + "</div>").join("");
+  const finishHtml = isDoneToday(done, e.id)
+    ? '<div class="finished">&#10003; Finished for today</div><button class="outline" id="reopen' + i + '">Reopen exercise</button>'
+    : logged ? '<button class="primary" id="finish' + i + '" style="margin-top:12px">Finish exercise</button>' : "";
+  return '<div class="card"><div class="cardhead"><strong>' + esc(e.name) + "</strong>" +
+    '<span class="tm cardtime" data-t="m:' + esc(e.id) + '">' + formatTime(machineElapsed(workout, e.id, Date.now())) + "</span>" +
+    (panels.length > 1 ? '<button class="link" id="remove' + i + '">Remove</button>' : "") + "</div>" +
+    notes + bests +
+    (logged
+      ? '<div class="muted small" style="margin-top:10px">Logged today: ' + esc(describeEntry(today[today.length - 1], e.unit)) +
+        ' <button class="link" id="undo' + i + '">Undo</button></div>' + newBest
+      : inputs + '<div class="logrow"><span class="progress">' + (showWatts ? "Watts are optional" : "") + '</span><button class="primary" id="logBtn' + i + '">Log session</button></div>') +
+    finishHtml + "</div>";
+}
+
+function bindCardioPanel(p, i) {
+  const e = p.ex;
+  for (const [key, id] of [["min", "cMin"], ["sec", "cSec"], ["distance", "cDist"], ["watts", "cWatts"]]) {
+    const el = $(id + i);
+    if (el) el.oninput = (ev) => { p[key] = ev.target.value; };
+  }
+  wire({
+    logBtn: () => {
+      if (todaysEntries(gymSets(), e.id).length > 0) return;
+      const minutes = makeMinutes(toNumber(p.min), toNumber(p.sec));
+      const distance = toNumber(p.distance);
+      if (minutes === null) { alert("Enter the time."); return; }
+      if (distance === null || distance <= 0) { alert("Enter the distance."); return; }
+      const entry = makeCardioSet({ exerciseId: e.id, minutes, distance, unit: e.unit, watts: e.watts === false ? undefined : toNumber(p.watts), gymId: store.currentGym });
+      p.pb = newBestLines(newCardioBests(cardioBests(sets, e.id, store.currentGym), entry));   // judged before the entry is saved
+      sets.push(entry);
+      persistStore(store);
+      render();
+    },
+    undo: () => {
+      const entry = todaysEntries(gymSets(), e.id).pop();
+      Object.assign(p, entry ? entryBoxes(entry, e.unit) : {}, { pb: null });
+      sets = removeLastSet(sets, e.id, store.currentGym);
+      persistStore(store);
+      render();
+    },
+    finish: () => {
+      setDone(markDone(done, e.id));
+      showDone = false;
+      panels.splice(i, 1);
+      go(panels.length === 0 ? "list" : "exercise");
+    },
+    reopen: () => { setDone(unmarkDone(done, e.id)); render(); },
+    remove: () => { panels.splice(i, 1); go("exercise"); },
+  }, i);
+}
+
 function renderExercise() {
   const single = panels.length === 1;
   app.innerHTML =
     '<div class="topbar">' + ghostBtn("back", "&larr; " + (single ? "Pick another machine" : "Back to list")) +
-    (single ? ghostBtn("superset", "+ Superset") : "") + "</div>" +
+    (single && !isCardio(panels[0].ex) ? ghostBtn("superset", "+ Superset") : "") + "</div>" +
     panels.map(panelHtml).join("");
   wire({ back: goBack, superset: () => { pickMore = false; pickOther = false; rememberPair = false; pickAll = false; go("pick"); } });
   panels.forEach(bindPanel);
@@ -540,7 +626,7 @@ const savePairs = (prefs) => saveStore(setPairs(store, store.currentPerson, pref
 // the rest of the session, then (behind a button) other sessions as exceptions you can save as a pair.
 function renderPick() {
   const first = panels[0].ex;
-  const all = exList();
+  const all = exList().filter((e) => !isCardio(e));   // cardio machines are not paired
   const taken = new Set([...panels.map((p) => p.ex.id), ...all.filter((e) => isDoneToday(done, e.id)).map((e) => e.id)]);
   const pool = sessionPool();
   const poolIds = new Set(pool.map((e) => e.id));
@@ -617,6 +703,7 @@ function renderPick() {
 
 // ---------- Set up session: list of machines ----------
 function summary(e, cfg, key) {
+  if (isCardio(e)) return cfg.workVolume !== null ? "Target " + describeTime(cfg.workVolume) : "No target time";
   const v = (k) => cfg[k + key];
   const parts = [
     v("start") !== null && "Warm-up " + v("start") + " " + e.unit,
@@ -634,12 +721,12 @@ function renderSetup() {
   const g = globalDefaults(settings);
   app.innerHTML =
     backBtn() + timeBar() + "<h2>Set up " + esc(sessionLabel(session)) + "</h2>" +
-    box("Defaults for every machine · " + key + " day",
+    (session.type === "cardio" ? "" : box("Defaults for every machine · " + key + " day",
       cols(numField("g_reps", "Reps", g["reps" + key]), numField("g_sets", "Sets", g["sets" + key])) +
       '<button class="secondary" id="saveDefaults" style="margin-top:12px">Save defaults</button>' +
       (flash ? muted(flash) : "") +
-      (hasDayType() ? "" : muted(esc(typeInfo(session.type).label) + " uses the Volume day defaults."))) +
-    muted("Tap a machine to give it its own weights, reps or sets.") +
+      (hasDayType() ? "" : muted(esc(typeInfo(session.type).label) + " uses the Volume day defaults.")))) +
+    muted(session.type === "cardio" ? "Tap a machine to set its target time." : "Tap a machine to give it its own weights, reps or sets.") +
     '<div id="list"></div>' +
     (list.length === 0 ? muted("No exercises here yet. You will be able to add some in a later step.") : "");
   flash = "";
@@ -664,8 +751,30 @@ function renderSetup() {
 // ---------- Set up session: one machine (personal settings) ----------
 // Name and stack are set on the Gym screen (Edit). This screen is just for you: warm-up and working
 // weights and reps, and notes (the same notes for Heavy and Volume days).
+// A cardio machine's Set up screen: the target time the log card starts with, and notes.
+function renderEditCardio(e) {
+  const cfg = configFor(settings, e.id);
+  const t = splitMinutes(cfg.workVolume);
+  const has = cfg.workVolume !== null;
+  app.innerHTML =
+    backBtn("Back without saving") + timeBar() + "<h2>" + esc(e.name) + "</h2>" +
+    box("Target time for you",
+      cols(numField("f_tmin", "Minutes", has ? t.min : ""), numField("f_tsec", "Seconds", has && t.sec > 0 ? t.sec : "")) +
+      muted("The log card starts with this time. Leave it blank to start from your last session.")) +
+    field("f_notes", "Notes (seat height, level, etc.)", '<textarea class="field" id="f_notes" rows="3">' + esc(cfg.notes) + "</textarea>") +
+    '<button class="primary" id="save">Save</button>';
+  wire({
+    back: goBack,
+    save: () => {
+      saveSettings(updateExercise(settings, e.id, { notes: $("f_notes").value, workVolume: makeMinutes(toNumber($("f_tmin").value), toNumber($("f_tsec").value)) }));
+      go("setup");
+    },
+  });
+}
+
 function renderEdit() {
   const e = exList().find((x) => x.id === editId);
+  if (isCardio(e)) return renderEditCardio(e);
   const cfg = configFor(settings, e.id);
   const eff = effectiveConfig(settings, e.id);   // what this machine uses right now
   const key = modeKey();
@@ -714,7 +823,7 @@ function renderEdit() {
   const drawSuperset = () => {
     const prefs = ssDraft.prefs;
     const on = isSuitable(prefs, e.id);
-    const c = pairCandidates({ ex: e, all: exList(), prefs, anyDay: ANY_DAY_SUPERSET });
+    const c = pairCandidates({ ex: e, all: exList().filter((x) => !isCardio(x)), prefs, anyDay: ANY_DAY_SUPERSET });
     const group = (title, list) => list.length
       ? muted("<strong>" + title + "</strong>") + '<div class="ssList"></div>' : "";
     $("ssBody").innerHTML =
@@ -909,7 +1018,7 @@ function renderGymEdit() {
   const groups = TYPES.filter((t) => kindInfo.types.includes(t.id))
     .map((t) => [listLabel(t), inKind.filter(([, i]) => i.type === t.id)]).filter(([, list]) => list.length > 0);
   const unitsPart = () => box("Units",
-    muted("The unit new equipment of each kind starts in. The dumbbells and barbell have their own units: tap Edit on them under Free weights.", "small") +
+    muted("The unit new equipment of each kind starts in. The dumbbells and barbell have their own units: tap Edit on them under Free weights. For cardio it also changes the cross trainer and bike (the rowing machine stays in metres).", "small") +
     TYPES.filter((t) => !SET_TYPES.includes(t.id)).map((t) =>
       '<div class="cardhead" style="margin-top:10px"><div>' + esc(t.label) + "</div>" +
       '<div class="choices sm" id="unit_' + t.id + '"></div></div>').join(""));
@@ -956,14 +1065,14 @@ function renderGymEdit() {
     addChoices("gsKinds", LIST_KINDS.map((k) => [k.label + " " + counts[k.id], kind === k.id, () => { saveGym(gymId, setListDefault(g, k.id)); render(); }]));
   }
   for (const t of gsTab === "units" ? TYPES.filter((x) => !SET_TYPES.includes(x.id)) : []) {
-    addChoices("unit_" + t.id, UNITS.map((u) => [u, g.units?.[t.id] === u, () => { saveGym(gymId, setDefaultUnit(g, t.id, u)); render(); }]));
+    addChoices("unit_" + t.id, (t.id === "cardio" ? GYM_DISTANCE_UNITS : UNITS).map((u) => [u, g.units?.[t.id] === u, () => { saveGym(gymId, setDefaultUnit(g, t.id, u)); render(); }]));
   }
   buttons.forEach(([id, kind], n) => {
     if (kind === "hide") {
       $("edit" + n).onclick = () => {
         const it = g.equipment[id];
         editItemId = id;
-        itemEditDraft = { name: it.name, group: it.group, muscle: it.muscle || "", type: it.type, unit: it.unit, useSet: false };
+        itemEditDraft = { name: it.name, group: it.group, muscle: it.muscle || "", type: it.type, unit: it.unit, useSet: false, watts: it.watts !== false };
         stackPins = Array.isArray(it.pins) ? [...it.pins] : [];
         go("gymItemEdit");
       };
@@ -1001,16 +1110,22 @@ function renderGymItemAdd() {
     backBtn("Back without adding") + "<h2>Add equipment</h2>" +
     field("ia_name", "Name", '<input class="field" id="ia_name" type="text" placeholder="e.g. Chest Press" value="' + esc(d.name) + '">') +
     field("ia_type", "Type", selectHtml("ia_type", optionsHtml(TYPES.map((t) => t.id), d.type, (id) => esc(addLabel[id] ?? typeLabel(id))), "field")) +
-    field("ia_group", "Session", selectHtml("ia_group", optionsHtml(["legs", "arms", "abs"], d.group, (id) => esc(typeInfo(id).label)), "field")) +
+    (d.type === "cardio" ? "" : field("ia_group", "Session", selectHtml("ia_group", optionsHtml(["legs", "arms", "abs"], d.group, (id) => esc(typeInfo(id).label)), "field"))) +
+    (d.type === "cardio" ? muted("Cardio machines log time, distance and optional watts. They appear under Cardio.", "small") : "") +
     (set
       ? muted("Uses this gym's " + esc(set.name) + " list (" + set.unit + "). Change the list with Edit on the gym screen.", "small")
-      : field("ia_unit", "Unit", selectHtml("ia_unit", optionsHtml(UNITS, d.unit), "field"))) +
+      : field("ia_unit", "Unit", selectHtml("ia_unit", optionsHtml(unitsFor(d.type), d.unit), "field"))) +
     (d.type === "stack" ? muted("Set up the stack with Edit on the machine once it is added.", "small") : "") +
     '<button class="primary" id="addBtn">Add</button>';
 
   $("ia_name").oninput = (ev) => { d.name = ev.target.value; };
-  $("ia_type").onchange = (ev) => { d.type = ev.target.value; d.unit = g.units?.[d.type] ?? d.unit; render(); };
-  $("ia_group").onchange = (ev) => { d.group = ev.target.value; };
+  $("ia_type").onchange = (ev) => {
+    d.type = ev.target.value;
+    d.unit = g.units?.[d.type] ?? d.unit;
+    d.group = d.type === "cardio" ? "cardio" : d.group === "cardio" ? "legs" : d.group;
+    render();
+  };
+  if ($("ia_group")) $("ia_group").onchange = (ev) => { d.group = ev.target.value; };
   if (!set) $("ia_unit").onchange = (ev) => { d.unit = ev.target.value; render(); };
   wire({
     back: goBack,
@@ -1044,10 +1159,39 @@ function renderGymItemAdd() {
 
 // Edits one item: its name and session always; its type and unit only while it has no logged sets at this gym.
 // A dumbbell or barbell exercise takes its weights and unit from the gym's list for it.
+// Edits a cardio machine: its name, distance unit (km, miles or metres; always changeable because distances are saved in
+// metres) and whether it records watts.
+function renderGymItemEditCardio(g, it) {
+  const d = itemEditDraft;
+  app.innerHTML =
+    backBtn("Back without saving") + "<h2>Edit " + esc(it.name) + "</h2>" +
+    field("ie_name", "Name", '<input class="field" id="ie_name" type="text" value="' + esc(d.name) + '">') +
+    field("ie_unit", "Distance unit", selectHtml("ie_unit", optionsHtml(DISTANCE_UNITS, d.unit, (u) => ({ km: "km", mi: "miles", m: "metres" }[u])), "field")) +
+    muted("Distances are saved in metres, so changing the unit never changes your history.", "small") +
+    "<label>Watts</label>" + '<div class="choices" id="ieWatts"></div>' +
+    muted("Watts are never required when you log a session.", "small") +
+    '<button class="primary" id="saveItem">Save</button>';
+  $("ie_name").oninput = (ev) => { d.name = ev.target.value; };
+  $("ie_unit").onchange = (ev) => { d.unit = ev.target.value; };
+  addChoices("ieWatts", [["Record watts", d.watts !== false, () => { d.watts = true; render(); }], ["No watts", d.watts === false, () => { d.watts = false; render(); }]]);
+  wire({
+    back: goBack,
+    saveItem: () => {
+      const r = editItem(g, editItemId, { name: d.name, unit: d.unit, watts: d.watts });
+      if (r.reason === "blank") { alert("Enter a name for the equipment."); return; }
+      if (r.reason === "duplicate" || r.reason === "hidden") { alert("This gym already has \"" + g.equipment[r.existing].name + "\" (" + (r.reason === "hidden" ? "hidden" : "in use") + ")."); return; }
+      saveGym(gymId, r.gym);
+      flash = "Saved " + d.name.trim();
+      goBack();
+    },
+  });
+}
+
 function renderGymItemEdit() {
   const g = store.gyms[gymId];
   const it = g?.equipment?.[editItemId];
   if (!it) return go("gymEdit");
+  if (it.type === "cardio") return renderGymItemEditCardio(g, it);
   const d = itemEditDraft;
   const locked = idsWithHistory(sets, gymId).has(editItemId);
   const setId = SET_TYPES.includes(d.type) ? (d.type === "dumbbell" ? "dumbbells" : "barbell") : null;
@@ -1071,7 +1215,7 @@ function renderGymItemEdit() {
     muted("The muscle is used to suggest opposite-muscle partners for supersets.", "small") +
     (locked
       ? muted("Type and unit can't change because this exercise has logged sets at this gym. Name and session can.", "small")
-      : field("ie_type", "Type", selectHtml("ie_type", optionsHtml(TYPES.map((t) => t.id), d.type, (id) => esc(typeLabelFor(id))), "field"))) +
+      : field("ie_type", "Type", selectHtml("ie_type", optionsHtml(TYPES.filter((t) => t.id !== "cardio").map((t) => t.id), d.type, (id) => esc(typeLabelFor(id))), "field"))) +
     (set
       ? muted(linked || d.type !== it.type
           ? "Uses this gym's " + esc(set.name) + " list (" + set.unit + "). Change the list with Edit on the gym screen."

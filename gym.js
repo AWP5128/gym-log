@@ -25,9 +25,17 @@ export const TYPES = [
   { id: "barbell", label: "Barbell" },
   { id: "plate", label: "Plate-loaded machine" },
   { id: "bodyweight", label: "Body weight" },
+  { id: "cardio", label: "Cardio machine" },
 ];
 const TYPE_IDS = TYPES.map((t) => t.id);
-export const DEFAULT_UNITS = { stack: "lb", dumbbell: "kg", barbell: "kg", plate: "kg", bodyweight: "kg" };
+export const DEFAULT_UNITS = { stack: "lb", dumbbell: "kg", barbell: "kg", plate: "kg", bodyweight: "kg", cardio: "km" };
+
+// Cardio machines log a distance, not a weight: the unit is km or mi (the gym's setting, chosen per machine) or m
+// (the rowing machine). Logged distances are saved in metres whatever the unit, so changing a machine's unit is
+// always safe, even with history. Every other type uses kg or lb.
+export const GYM_DISTANCE_UNITS = ["km", "mi"];
+export const DISTANCE_UNITS = ["km", "mi", "m"];
+export const unitsFor = (type) => (type === "cardio" ? DISTANCE_UNITS : UNITS);
 
 export const round2 = (n) => Math.round(n * 100) / 100;
 const ladder = (step, count) => Array.from({ length: count }, (_, i) => round2(step * (i + 1)));
@@ -59,7 +67,7 @@ export const defaultStep = (type, unit) => START_STEP[type]?.[unit] ?? 1;
 // A tidy item from loose data (unknown fields are dropped, missing ones filled in).
 export function makeItem(spec) {
   const type = TYPE_IDS.includes(spec.type) ? spec.type : "stack";
-  const unit = UNITS.includes(spec.unit) ? spec.unit : DEFAULT_UNITS[type];
+  const unit = unitsFor(type).includes(spec.unit) ? spec.unit : DEFAULT_UNITS[type];
   const item = {
     name: String(spec.name ?? "").trim(),
     group: spec.group,
@@ -73,6 +81,7 @@ export function makeItem(spec) {
   if (pins.length > 0) item.pins = pins;
   if (spec.stackSpec && typeof spec.stackSpec === "object") item.stackSpec = spec.stackSpec;
   if (spec.hidden === true) item.hidden = true;
+  if (type === "cardio" && spec.watts === false) item.watts = false;   // a cardio machine records watts unless this says no
   if (typeof spec.muscle === "string" && spec.muscle.trim()) item.muscle = spec.muscle.trim();
   if (typeof spec.weightSet === "string" && spec.weightSet) item.weightSet = spec.weightSet;
   return item;
@@ -166,7 +175,7 @@ export function updateItem(gym, id, patch) {
     next.type = patch.type;
     if (!(Array.isArray(old.pins) && old.pins.length > 0)) next.step = defaultStep(next.type, next.unit);
   }
-  if (UNITS.includes(patch.unit) && patch.unit !== old.unit) {
+  if (unitsFor(next.type).includes(patch.unit) && patch.unit !== old.unit) {
     next.unit = patch.unit;
     next.step = defaultStep(next.type, patch.unit);
     delete next.pins;
@@ -178,6 +187,10 @@ export function updateItem(gym, id, patch) {
     if (!(f in patch)) continue;
     if (patch[f] == null) delete next[f];
     else next[f] = patch[f];
+  }
+  if ("watts" in patch) {
+    if (patch.watts === false) next.watts = false;
+    else delete next.watts;
   }
   return { ...gym, equipment: { ...gym.equipment, [id]: makeItem(next) } };
 }
@@ -204,10 +217,15 @@ export function editItem(gym, id, patch, historyIds = new Set()) {
   }
   const wantsLink = !!set && (type !== old.type || patch.useSet === true) && !old.weightSet;
   const typeChanged = type !== old.type;
-  const unit = UNITS.includes(patch.unit) ? patch.unit : old.unit;
+  if ("watts" in patch && old.type === "cardio") {
+    if (patch.watts === false) next.watts = false;
+    else delete next.watts;
+  }
+  const unit = unitsFor(type).includes(patch.unit) ? patch.unit : old.unit;
   const unitChanged = !old.weightSet && !wantsLink && unit !== old.unit;
   const linkUnitChanged = wantsLink && set.unit !== old.unit;
-  if ((typeChanged || unitChanged || linkUnitChanged) && historyIds.has(id)) return { gym, ok: false, reason: "history", existing: null };
+  const cardioUnitOnly = old.type === "cardio" && !typeChanged;   // distances are saved in metres, so a cardio unit can always change
+  if (!cardioUnitOnly && (typeChanged || unitChanged || linkUnitChanged) && historyIds.has(id)) return { gym, ok: false, reason: "history", existing: null };
   if (typeChanged) {
     next.type = type;
     delete next.weightSet;
@@ -461,6 +479,28 @@ export function seedStarterAbs(gym) {
   return { ...gym, equipment, starterAbs: true };
 }
 
+// ---------- The starter cardio machines ----------
+// Cross trainer, stationary bike and rowing machine. Added once to a gym that has equipment already (see
+// seedStarterCardio); a new gym never gets them. Any of them can be hidden. The bike and cross trainer take the
+// gym's cardio unit (km or mi); the rowing machine logs in metres.
+const cardio = (id, name, unit) => ({ id, name, group: "cardio", type: "cardio", common: true, ...(unit ? { unit } : {}) });
+export const STARTER_CARDIO = [
+  cardio("cross-trainer", "Cross Trainer"),
+  cardio("stationary-bike", "Stationary Bike"),
+  cardio("rowing-machine", "Rowing Machine", "m"),
+];
+
+// Adds the starter cardio machines to a gym that already has equipment, once (the gym remembers it with
+// starterCardio). An empty gym is marked without adding anything. Ids the gym already has are left alone.
+export function seedStarterCardio(gym) {
+  if (gym.starterCardio === true) return gym;
+  if (Object.keys(gym.equipment || {}).length === 0) return { ...gym, starterCardio: true };
+  const unit = GYM_DISTANCE_UNITS.includes(gym.units?.cardio) ? gym.units.cardio : DEFAULT_UNITS.cardio;
+  const equipment = { ...gym.equipment };
+  for (const s of STARTER_CARDIO) if (!equipment[s.id]) equipment[s.id] = makeItem({ ...s, unit: s.unit ?? unit });
+  return { ...gym, equipment, starterCardio: true };
+}
+
 // ---------- Pull-ups are filed under arms ----------
 // Pull-ups used to be a legs exercise (they are done alongside legs day). They now belong to arms, so a gym that
 // has a pull-up item still filed under legs is moved once (the gym remembers it with pullUpsMoved, so a later
@@ -475,8 +515,18 @@ export function movePullUps(gym) {
 }
 
 // Sets the unit new items of this type will get. Items already in the gym are not changed.
-export const setDefaultUnit = (gym, type, unit) =>
-  UNITS.includes(unit) && TYPE_IDS.includes(type) ? { ...gym, units: { ...gym.units, [type]: unit } } : gym;
+// For cardio machines the gym's unit is km or mi, and it also moves the machines that are in km or mi (the rowing
+// machine stays in metres): distances are saved in metres, so no history is affected.
+export function setDefaultUnit(gym, type, unit) {
+  if (!TYPE_IDS.includes(type) || !(type === "cardio" ? GYM_DISTANCE_UNITS : UNITS).includes(unit)) return gym;
+  let next = { ...gym, units: { ...gym.units, [type]: unit } };
+  if (type === "cardio") {
+    for (const [id, i] of Object.entries(next.equipment || {})) {
+      if (i.type === "cardio" && i.unit !== "m" && i.unit !== unit) next = updateItem(next, id, { unit });
+    }
+  }
+  return next;
+}
 
 // Copies the chosen items from one gym into another, keeping their ids. Items already in the
 // other gym are skipped unless overwrite is true. Equipment data only; nothing personal.
@@ -507,11 +557,11 @@ export function copyEquipment(from, ids, to, { overwrite = false } = {}) {
 }
 
 // ---------- The kinds of exercise list ----------
-// The exercise list shows one kind at a time so it is short: machines (stack and plate-loaded), dumbbells,
+// The exercise list shows one kind at a time so it is short: machines (stack, plate-loaded and cardio), dumbbells,
 // barbells or body weight. Each gym has a default kind (gym.listDefault); an exercise without a type counts
 // as a machine.
 export const LIST_KINDS = [
-  { id: "machines", label: "Machines", types: ["stack", "plate"] },
+  { id: "machines", label: "Machines", types: ["stack", "plate", "cardio"] },
   { id: "dumbbells", label: "Dumbbells", types: ["dumbbell"] },
   { id: "barbell", label: "Barbells", types: ["barbell"] },
   { id: "bodyweight", label: "Body weight", types: ["bodyweight"] },
