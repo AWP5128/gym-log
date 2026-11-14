@@ -3,7 +3,7 @@ import assert from "node:assert/strict";
 import {
   toMetres, fromMetres, describeDistance, makeMinutes, splitMinutes, describeTime, speedKmh, describeSpeed, describeWatts,
   makeCardioSet, todaysEntries, describeEntry, entryBoxes, cardioBests, newCardioBests, bestLines, newBestLines, isCardioSet,
-  clockText, startFromText, endOf, chooseDuration, chooseStart,
+  clockText, startFromText, endOf, chooseDuration, chooseStart, setSpeed,
 } from "./cardio.js";
 import { startWorkout, runMachines, machineStart, machineElapsed, cleanWorkout } from "./timer.js";
 import {
@@ -234,4 +234,13 @@ test("start and end survive the version 4 tables and back; older entries have no
   assert.equal(we.end, "2026-11-14T07:40:00.000Z");
   assert.equal(r.v4.tables.workout_exercise.find((w) => w.exerciseId === "cross-trainer").start, null);
   assert.deepEqual(fromV4(r.v4).sets, sets);
+});
+
+test("an entry can be made without a distance: no speed, no best, no distance saved", () => {
+  const e = makeCardioSet({ exerciseId: "bike", minutes: 20, distance: null, unit: "km", gymId: "g1", now: new Date(2026, 10, 14, 8, 0) });
+  assert.equal("distance" in e, false);
+  assert.equal(setSpeed(e), null);
+  assert.equal(describeEntry(e, "km").includes("km"), false);
+  assert.deepEqual(newCardioBests({ gym: { speed: 20, watts: null }, ever: { speed: 20, watts: null } }, e), { speed: null, watts: null });
+  assert.equal(entryBoxes(e, "km").distance, "");
 });

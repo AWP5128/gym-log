@@ -2,7 +2,7 @@ import { test } from "node:test";
 import assert from "node:assert/strict";
 import {
   formatTime, startWorkout, isRunning, workoutElapsed, machineElapsed,
-  runMachines, endWorkout, cleanWorkout,
+  runMachines, endWorkout, cleanWorkout, isStopped, stopMachine, restartMachine,
 } from "./timer.js";
 
 const T0 = new Date(2026, 9, 27, 18, 0, 0).getTime();   // 27 Oct 2026, 18:00:00
@@ -77,4 +77,26 @@ test("cleanWorkout repairs damaged machine entries", () => {
   const w = cleanWorkout({ start: T0, machines: { a: { ms: "x" }, b: null } }, T0);
   assert.deepEqual(w.machines, { a: { ms: 0, since: null }, b: { ms: 0, since: null } });
   assert.equal(w.end, null);
+});
+test("Stop freezes a machine's time and Restart takes it back", () => {
+  let w = workoutWith([["bike"], 0]);
+  w = stopMachine(w, "bike", T0 + sec(90));
+  assert.equal(isStopped(w, "bike"), true);
+  assert.equal(counted(w, "bike", 90), 90);
+  // leaving and coming back does not run a stopped machine
+  w = runMachines(w, [], T0 + sec(100));
+  assert.equal(counted(w, "bike", 500), 90);
+  // the stop survives a save and load
+  assert.equal(isStopped(cleanWorkout(JSON.parse(JSON.stringify(w)), T0 + sec(100)), "bike"), true);
+  // Restart: the clock carries on from 90 s
+  w = restartMachine(w, "bike");
+  assert.equal(isStopped(w, "bike"), false);
+  w = runMachines(w, ["bike"], T0 + sec(200));
+  assert.equal(counted(w, "bike", 210), 100);
+});
+
+test("Stop on an unknown machine changes nothing", () => {
+  const w = startWorkout(T0);
+  assert.deepEqual(stopMachine(w, "nope", T0), w);
+  assert.deepEqual(restartMachine(w, "nope"), w);
 });

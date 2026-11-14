@@ -33,6 +33,25 @@ export function machineElapsed(workout, exerciseId, now = Date.now()) {
   return m ? m.ms + (m.since !== null ? now - m.since : 0) : 0;
 }
 
+// Cardio: Stop pauses a machine's clock for good (until Restart) and remembers when, so the duration is fixed while
+// the distance and watts are typed in. A stopped machine is not started again by runMachines callers that leave it out.
+export const isStopped = (workout, exerciseId) => Number.isFinite(workout?.machines?.[exerciseId]?.stopped);
+
+export function stopMachine(workout, exerciseId, now = Date.now()) {
+  const m = workout.machines[exerciseId];
+  if (!m) return workout;
+  const ms = m.ms + (m.since !== null ? now - m.since : 0);
+  return { ...workout, machines: { ...workout.machines, [exerciseId]: { ...m, ms, since: null, stopped: now } } };
+}
+
+// Takes the stop back: the clock carries on from the time it showed (the next runMachines starts it).
+export function restartMachine(workout, exerciseId) {
+  const m = workout.machines[exerciseId];
+  if (!m || !isStopped(workout, exerciseId)) return workout;
+  const { stopped, ...rest } = m;
+  return { ...workout, machines: { ...workout.machines, [exerciseId]: rest } };
+}
+
 // Returns a new workout in which exactly the machines in ids are running.
 // Machines that were running and are not in ids are paused, keeping their time.
 export function runMachines(workout, ids, now = Date.now()) {
@@ -59,7 +78,7 @@ export function cleanWorkout(raw, now = Date.now()) {
   const machines = Object.fromEntries(
     Object.entries(stored).map(([id, m]) => [
       id,
-      { ms: isNum(m?.ms) && m.ms > 0 ? m.ms : 0, since: isNum(m?.since) ? m.since : null, ...(isNum(m?.first) ? { first: m.first } : {}) },
+      { ms: isNum(m?.ms) && m.ms > 0 ? m.ms : 0, since: isNum(m?.since) ? m.since : null, ...(isNum(m?.first) ? { first: m.first } : {}), ...(isNum(m?.stopped) ? { stopped: m.stopped } : {}) },
     ])
   );
   return { start: raw.start, end: isNum(raw.end) ? raw.end : null, machines };

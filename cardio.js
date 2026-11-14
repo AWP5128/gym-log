@@ -106,7 +106,8 @@ export const describeSpeed = (kmh) => two(kmh) + " km/h (" + two(kmh / KM_PER_MI
 export const describeWatts = (w) => Math.round(w) + " W";
 
 // ---------- Entries ----------
-// A cardio entry. distance is typed in the machine's unit; watts is optional (blank or 0 leaves it out).
+// A cardio entry. distance is typed in the machine's unit and may be left out (then there is no speed or best);
+// watts is optional (blank or 0 leaves it out).
 export function makeCardioSet({ exerciseId, minutes, distance, unit, watts, gymId, start, now = new Date() }) {
   const from = start ?? new Date(now.getTime() - Math.round(minutes * 60000));
   return {
@@ -115,7 +116,7 @@ export function makeCardioSet({ exerciseId, minutes, distance, unit, watts, gymI
     start: from.toISOString(),
     end: endOf(from, minutes).toISOString(),
     minutes,
-    distance: toMetres(distance, unit),
+    ...(Number.isFinite(distance) && distance > 0 ? { distance: toMetres(distance, unit) } : {}),   // may be left out
     ...(Number.isFinite(watts) && watts > 0 ? { watts: Math.round(watts) } : {}),
     ...(gymId ? { gymId } : {}),
   };

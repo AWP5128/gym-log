@@ -8,7 +8,7 @@ import {
   isDoneToday, markDone, unmarkDone, personalBests, hasGymBest, describeBest, weightCaption, newBestLevel, idsWithHistory,
 } from "./log.js";
 import {
-  formatTime, startWorkout, isRunning, workoutElapsed, machineElapsed, machineStart,
+  formatTime, startWorkout, isRunning, workoutElapsed, machineElapsed, machineStart, isStopped, stopMachine, restartMachine,
   runMachines, endWorkout, cleanWorkout,
 } from "./timer.js";
 import { hasExtras, extraOptions, totalWeight, splitFor, savedExtra } from "./extras.js";
@@ -169,7 +169,7 @@ function wholeOrNull(text) {
 // finished. Times come from the clock, so they stay right when the phone sleeps.
 function syncTimers() {
   const want = (screen === "exercise" || screen === "pick")
-    ? panels.filter((p) => !isDoneToday(done, p.ex.id)).map((p) => p.ex.id)
+    ? panels.filter((p) => !isDoneToday(done, p.ex.id) && !isStopped(workout, p.ex.id)).map((p) => p.ex.id)
     : [];
   if (want.length > 0 && !isRunning(workout)) workout = startWorkout(Date.now());
   if (!isRunning(workout)) return;
@@ -519,20 +519,24 @@ function bindPanel(p, i) {
 // ---------- Cardio machines on the logging page ----------
 // One entry per machine per day: a start time, a duration, the distance in the machine's unit and (optionally) average
 // watts. The machine's own clock starts when the machine is opened: that moment is the default start and the clock's
-// time when End is pressed is the default duration. The Start box and the Minutes and Seconds boxes override them (the
-// user may forget to start or stop). The end time is start + duration, worked out and stored. Distances are saved in
-// metres. Undo puts the entry back in the boxes so it can be corrected and ended again. The "working" setting on a
-// cardio machine's Set up screen is a target time in minutes (workVolume), shown on the card as a reminder.
+// time when Stop is pressed is the default duration. The Start box and the Minutes and Seconds boxes override them (the
+// user may forget to start or stop). The end time is start + duration, worked out and stored. Stop freezes the clock
+// (it stays stopped even if you leave the page) so the distance and watts can be typed in afterwards; Finish then saves
+// the entry and finishes the exercise, and is highlighted once a distance is in. A distance may be left out after a
+// warning (no speed or best then). Restart takes a Stop back. Distances are saved in metres. Undo puts the entry back in
+// the boxes so it can be corrected and finished again. The "working" setting on a cardio machine's Set up screen is a
+// target time in minutes (workVolume), shown on the card as a reminder.
 function newCardioPanel(e) {
   return { ex: e, min: "", sec: "", distance: "", watts: "", pb: null };   // startText stays undefined until the user edits the start
 }
 
-// "End: 07:42" once a duration is typed; until then the clock decides it when End is pressed.
+// "End: 07:42" once the duration is known (typed, or the clock is stopped); until then Stop decides it.
 function cardioEndText(p) {
-  const typed = chooseDuration(toNumber(p.min), toNumber(p.sec), 0);
-  if (!typed) return "End: set when you press End";
-  const start = chooseStart({ text: p.startText, timerStart: machineStart(workout, p.ex.id), minutes: typed.minutes });
-  return start ? "End: " + clockText(endOf(start, typed.minutes)) : "End: check the start time";
+  const stopped = isStopped(workout, p.ex.id);
+  const d = chooseDuration(toNumber(p.min), toNumber(p.sec), stopped ? machineElapsed(workout, p.ex.id, Date.now()) : 0);
+  if (!d) return "End: set when you press Stop";
+  const start = chooseStart({ text: p.startText, timerStart: machineStart(workout, p.ex.id), minutes: d.minutes });
+  return start ? "End: " + clockText(endOf(start, d.minutes)) : "End: check the start time";
 }
 
 const distanceLabel = (unit) => (unit === "m" ? "Distance (metres)" : unit === "mi" ? "Distance (miles)" : "Distance (km)");
@@ -557,9 +561,14 @@ function cardioPanelHtml(p, i) {
     (showWatts ? cols(numField("cDist" + i, distanceLabel(e.unit), p.distance), numField("cWatts" + i, "Avg watts (optional)", p.watts))
                : numField("cDist" + i, distanceLabel(e.unit), p.distance));
   const newBest = (p.pb || []).map((t) => '<div class="finished" style="margin-top:8px">&#9733; ' + esc(t) + "</div>").join("");
+  const stopped = isStopped(workout, e.id);
+  const ready = toNumber(p.distance) > 0;
   const finishHtml = isDoneToday(done, e.id)
     ? '<div class="finished">&#10003; Finished for today</div><button class="outline" id="reopen' + i + '">Reopen exercise</button>'
-    : logged ? '<button class="primary" id="finish' + i + '" style="margin-top:12px">Finish exercise</button>' : "";
+    : "";
+  const buttons = stopped
+    ? '<div class="logrow"><button class="link" id="restart' + i + '">Restart</button><button class="' + (ready ? "primary" : "outline") + '" id="finishCardio' + i + '">Finish</button></div>'
+    : '<div class="logrow"><span class="progress">Add distance and watts after Stop</span><button class="primary" id="stop' + i + '">Stop</button></div>';
   return '<div class="card"><div class="cardhead"><strong>' + esc(e.name) + "</strong>" +
     '<span class="tm cardtime" data-t="m:' + esc(e.id) + '">' + formatTime(machineElapsed(workout, e.id, Date.now())) + "</span>" +
     (panels.length > 1 ? '<button class="link" id="remove' + i + '">Remove</button>' : "") + "</div>" +
@@ -567,7 +576,7 @@ function cardioPanelHtml(p, i) {
     (logged
       ? '<div class="muted small" style="margin-top:10px">Logged today: ' + esc(describeEntry(today[today.length - 1], e.unit)) +
         ' <button class="link" id="undo' + i + '">Undo</button></div>' + newBest
-      : inputs + '<div class="logrow"><span class="progress">' + (showWatts ? "Watts are optional" : "") + '</span><button class="primary" id="logBtn' + i + '">End</button></div>') +
+      : inputs + buttons) +
     finishHtml + "</div>";
 }
 
@@ -575,24 +584,43 @@ function bindCardioPanel(p, i) {
   const e = p.ex;
   for (const [key, id] of [["min", "cMin"], ["sec", "cSec"], ["distance", "cDist"], ["watts", "cWatts"]]) {
     const el = $(id + i);
-    if (el) el.oninput = (ev) => { p[key] = ev.target.value; if (key === "min" || key === "sec") showEnd(); };
+    if (el) el.oninput = (ev) => {
+      p[key] = ev.target.value;
+      if (key === "min" || key === "sec") showEnd();
+      const btn = $("finishCardio" + i);
+      if (key === "distance" && btn) btn.className = toNumber(p.distance) > 0 ? "primary" : "outline";   // highlight once a distance is in
+    };
   }
   const showEnd = () => { const el = $("cEnd" + i); if (el) el.textContent = cardioEndText(p); };
   if ($("cStart" + i)) $("cStart" + i).oninput = (ev) => { p.startText = ev.target.value; showEnd(); };
   wire({
-    logBtn: () => {
+    stop: () => {
+      const now = Date.now();
+      if (chooseDuration(toNumber(p.min), toNumber(p.sec), machineElapsed(workout, e.id, now)) === null) { alert("The clock has not started: type the minutes."); return; }
+      workout = stopMachine(workout, e.id, now);
+      save(KEY.workout, workout);
+      render();
+    },
+    restart: () => {
+      workout = restartMachine(workout, e.id);
+      save(KEY.workout, workout);
+      render();
+    },
+    finishCardio: () => {
       if (todaysEntries(gymSets(), e.id).length > 0) return;
       const now = new Date();
       const duration = chooseDuration(toNumber(p.min), toNumber(p.sec), machineElapsed(workout, e.id, now.getTime()));
-      const distance = toNumber(p.distance);
       if (duration === null) { alert("Enter the time."); return; }
       const start = chooseStart({ text: p.startText, timerStart: machineStart(workout, e.id), minutes: duration.minutes, now });
       if (start === null) { alert("Enter the start time, like 07:30."); return; }
-      if (distance === null || distance <= 0) { alert("Enter the distance."); return; }
-      const entry = makeCardioSet({ exerciseId: e.id, minutes: duration.minutes, distance, unit: e.unit, watts: e.watts === false ? undefined : toNumber(p.watts), gymId: store.currentGym, start, now });
+      const distance = toNumber(p.distance);
+      const hasDistance = distance !== null && distance > 0;
+      if (!hasDistance && !confirm("No distance entered, so no speed or new best. Finish without it?")) return;
+      const entry = makeCardioSet({ exerciseId: e.id, minutes: duration.minutes, distance: hasDistance ? distance : null, unit: e.unit, watts: e.watts === false ? undefined : toNumber(p.watts), gymId: store.currentGym, start, now });
       p.pb = newBestLines(newCardioBests(cardioBests(sets, e.id, store.currentGym), entry));   // judged before the entry is saved
       sets.push(entry);
       persistStore(store);
+      setDone(markDone(done, e.id));   // Finish also finishes the exercise; the card stays up to show the new best
       render();
     },
     undo: () => {
@@ -600,13 +628,8 @@ function bindCardioPanel(p, i) {
       Object.assign(p, entry ? entryBoxes(entry, e.unit) : {}, { pb: null });   // the old start and duration come back as overrides
       sets = removeLastSet(sets, e.id, store.currentGym);
       persistStore(store);
+      setDone(unmarkDone(done, e.id));   // back to the stopped card: fix the details and Finish again
       render();
-    },
-    finish: () => {
-      setDone(markDone(done, e.id));
-      showDone = false;
-      panels.splice(i, 1);
-      go(panels.length === 0 ? "list" : "exercise");
     },
     reopen: () => { setDone(unmarkDone(done, e.id)); render(); },
     remove: () => { panels.splice(i, 1); go("exercise"); },
