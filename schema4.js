@@ -25,9 +25,10 @@
 //   Training log
 //     workout         { id, personId, gymId, date, start, end }        one per person, gym and day; id = "person:gym:date"
 //     workout_type    { id, workoutId, exerciseTypeId, dayType, start, end }
-//     workout_exercise{ id, workoutTypeId, exerciseId, distance, avgHeartRate, zoneMinutes, watts, level }
+//     workout_exercise{ id, workoutTypeId, exerciseId, distance, avgHeartRate, zoneMinutes, watts, level, start, end }
 //                     the cardio fields are blank (null) until there is data. A cardio entry is one logged_set (minutes) per
-//                     machine per day, and its distance (METRES, whatever unit the machine shows) and average watts sit here
+//                     machine per day, and its distance (METRES, whatever unit the machine shows), average watts and its
+//                     start and end times (end = start + the duration, which is the logged_set's minutes) sit here
 //     logged_set      { id (person:time:exercise), seq, personId, workoutExerciseId, exerciseId, gymId, time, weight, reps, minutes, unit, mode }
 //                     seq is the place in the old flat list. A typed-in best from before the app is a manual
 //                     logged_set: { id, personId, gymId, exerciseId, manual: true, weight, reps, time: null }.
@@ -214,6 +215,7 @@ export function migrateToV4({ store = null, settings = null, sets = [] } = {}) {
         // a cardio entry (one per machine per day) keeps its distance (metres) and watts here; weights have none
         distance: Number.isFinite(s.distance) ? s.distance : null, avgHeartRate: null, zoneMinutes: null,
         watts: Number.isFinite(s.watts) ? s.watts : null, level: null,
+        start: typeof s.start === "string" ? s.start : null, end: typeof s.end === "string" ? s.end : null,
       });
     }
     // a set's id comes from who, when and what, so it stays the same however the list changes and differs between phones
@@ -315,7 +317,8 @@ export function fromV4(v4) {
   const sets = t.logged_set.filter((r) => !r.manual).sort((a, b) => a.seq - b.seq)
     .map((r) => clean({
       exerciseId: r.exerciseId, time: r.time, weight: r.weight, reps: r.reps, minutes: r.minutes,
-      distance: finite(cardio.get(r.workoutExerciseId)?.distance), watts: finite(cardio.get(r.workoutExerciseId)?.watts), unit: r.unit,
+      distance: finite(cardio.get(r.workoutExerciseId)?.distance), watts: finite(cardio.get(r.workoutExerciseId)?.watts),
+      start: cardio.get(r.workoutExerciseId)?.start ?? undefined, end: cardio.get(r.workoutExerciseId)?.end ?? undefined, unit: r.unit,
       mode: r.mode, gymId: r.gymId,
     }));
   return { store, sets };

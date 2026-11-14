@@ -1,8 +1,12 @@
 // Cardio machines (cross trainer, bike, rowing machine): one entry per machine per day with the time, the distance and
 // (optionally) the average watts. Pure (no browser calls) so it can be tested.
 //
-// A cardio entry is a logged set { exerciseId, time, minutes, distance, watts?, gymId } where
-//   minutes  the time in minutes (seconds are a fraction: 32 min 20 s is 32.3333)
+// A cardio entry is a logged set { exerciseId, time, start, end, minutes, distance, watts?, gymId } where
+//   time     when it was logged (the End button)
+//   start    when the session started: the machine's clock first started, unless the user overrode it
+//   minutes  the DURATION in minutes (seconds are a fraction: 32 min 20 s is 32.3333): the machine's clock when End was
+//            pressed, unless the user typed one
+//   end      start + duration, worked out and stored (never typed)
 //   distance METRES, whatever unit the machine shows (km, mi or m), so changing a machine's unit never touches history
 //   watts    average watts, left out when it was not noted
 // Speed is worked out (km/h from distance and time) and is what the personal best is judged on, with watts. Bests are
@@ -58,6 +62,38 @@ export function describeTime(minutes) {
   return sec === 0 ? min + " min" : min === 0 ? sec + " s" : min + " min " + sec + " s";
 }
 
+// ---------- Start, duration and end ----------
+const pad2 = (n) => String(n).padStart(2, "0");
+// "07:05" for the Start box (local time).
+export const clockText = (date) => pad2(date.getHours()) + ":" + pad2(date.getMinutes());
+// "07:05" from the Start box as today's date at that time, or null when it is not a time. A time later than now
+// means the session began before midnight, so it is yesterday's.
+export function startFromText(text, now = new Date()) {
+  const m = /^(\d{1,2}):(\d{2})$/.exec(String(text ?? "").trim());
+  if (!m || Number(m[1]) > 23 || Number(m[2]) > 59) return null;
+  const d = new Date(now.getFullYear(), now.getMonth(), now.getDate(), Number(m[1]), Number(m[2]));
+  return d.getTime() > now.getTime() ? new Date(d.getTime() - 86400000) : d;
+}
+// end = start + duration
+export const endOf = (start, minutes) => new Date(start.getTime() + Math.round(minutes * 60000));
+
+// The duration of a session: what the user typed in the Minutes and Seconds boxes, otherwise the machine's clock
+// (milliseconds). null when there is neither (under a second on the clock and nothing typed).
+export function chooseDuration(min, sec, timerMs) {
+  const typed = makeMinutes(min, sec);
+  if (typed !== null) return { minutes: typed, source: "typed" };
+  const secs = Math.round((timerMs || 0) / 1000);
+  return secs > 0 ? { minutes: round(secs / 60, 4), source: "timer" } : null;
+}
+
+// The start of a session as a Date: the Start box if the user changed it (text; null when it is not a time),
+// otherwise when the machine's clock first started (milliseconds), otherwise the duration before now.
+export function chooseStart({ text, timerStart, minutes, now = new Date() }) {
+  if (text !== undefined) return startFromText(text, now);
+  if (Number.isFinite(timerStart)) return new Date(timerStart);
+  return new Date(now.getTime() - Math.round(minutes * 60000));
+}
+
 // ---------- Speed ----------
 // km/h from a distance in metres and a time in minutes, or null when either is missing.
 export function speedKmh(metres, minutes) {
@@ -71,10 +107,13 @@ export const describeWatts = (w) => Math.round(w) + " W";
 
 // ---------- Entries ----------
 // A cardio entry. distance is typed in the machine's unit; watts is optional (blank or 0 leaves it out).
-export function makeCardioSet({ exerciseId, minutes, distance, unit, watts, gymId, now = new Date() }) {
+export function makeCardioSet({ exerciseId, minutes, distance, unit, watts, gymId, start, now = new Date() }) {
+  const from = start ?? new Date(now.getTime() - Math.round(minutes * 60000));
   return {
     exerciseId,
     time: now.toISOString(),
+    start: from.toISOString(),
+    end: endOf(from, minutes).toISOString(),
     minutes,
     distance: toMetres(distance, unit),
     ...(Number.isFinite(watts) && watts > 0 ? { watts: Math.round(watts) } : {}),
@@ -86,15 +125,19 @@ export function makeCardioSet({ exerciseId, minutes, distance, unit, watts, gymI
 export const todaysEntries = (allSets, exerciseId, now = new Date()) =>
   setsForExercise(allSets, exerciseId).filter((s) => isCardioSet(s) && new Date(s.time).toDateString() === now.toDateString());
 
-// One line for a logged entry: "32 min 20 s · 12.50 km (7.77 mi) · 23.20 km/h (14.42 mph) · 150 W".
+// One line for a logged entry: "07:10-07:42 · 32 min 20 s · 12.50 km (7.77 mi) · 23.20 km/h (14.42 mph) · 150 W".
 export function describeEntry(s, unit) {
   const speed = setSpeed(s);
-  return [describeTime(s.minutes), s.distance > 0 ? describeDistance(s.distance, unit) : "", speed !== null ? describeSpeed(speed) : "", s.watts > 0 ? describeWatts(s.watts) : ""]
+  const span = s.start && s.end ? clockText(new Date(s.start)) + "-" + clockText(new Date(s.end)) : "";
+  return [span, describeTime(s.minutes), s.distance > 0 ? describeDistance(s.distance, unit) : "", speed !== null ? describeSpeed(speed) : "", s.watts > 0 ? describeWatts(s.watts) : ""]
     .filter(Boolean).join(" · ");
 }
 
 // What an entry would be as typed (for putting an undone entry back in the boxes).
-export const entryBoxes = (s, unit) => ({ ...splitMinutes(s.minutes), distance: s.distance > 0 ? fromMetres(s.distance, unit) : "", watts: s.watts > 0 ? s.watts : "" });
+export const entryBoxes = (s, unit) => ({
+  ...splitMinutes(s.minutes), distance: s.distance > 0 ? fromMetres(s.distance, unit) : "", watts: s.watts > 0 ? s.watts : "",
+  ...(s.start ? { startText: clockText(new Date(s.start)) } : {}),
+});
 
 // ---------- Personal bests ----------
 // The best speed (km/h) and best watts in a list of entries; null where there is none.

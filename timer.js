@@ -2,8 +2,9 @@
 //
 // A workout is { start, end, machines } with times in milliseconds (Date.now()).
 // end is null while the workout is running. machines holds one entry per exercise:
-// { ms, since } where ms is the time already counted and since is the moment the
-// machine's clock was last started (null when it is paused).
+// { ms, since, first } where ms is the time already counted, since is the moment the
+// machine's clock was last started (null when it is paused) and first is the moment it
+// was first started today (a cardio entry's default start time).
 // Elapsed times are worked out from the clock, so they stay right when the phone sleeps.
 
 const isNum = Number.isFinite;
@@ -21,6 +22,12 @@ export const isRunning = (workout) => !!workout && workout.end === null;
 export const workoutElapsed = (workout, now = Date.now()) =>
   workout ? (workout.end ?? now) - workout.start : 0;
 
+// The moment a machine's clock was first started today, or null if it has not been.
+export const machineStart = (workout, exerciseId) => {
+  const first = workout?.machines?.[exerciseId]?.first;
+  return Number.isFinite(first) ? first : null;
+};
+
 export function machineElapsed(workout, exerciseId, now = Date.now()) {
   const m = workout && workout.machines[exerciseId];
   return m ? m.ms + (m.since !== null ? now - m.since : 0) : 0;
@@ -31,11 +38,11 @@ export function machineElapsed(workout, exerciseId, now = Date.now()) {
 export function runMachines(workout, ids, now = Date.now()) {
   const machines = {};
   for (const [id, m] of Object.entries(workout.machines)) {
-    machines[id] = m.since !== null && !ids.includes(id) ? { ms: m.ms + (now - m.since), since: null } : { ...m };
+    machines[id] = m.since !== null && !ids.includes(id) ? { ...m, ms: m.ms + (now - m.since), since: null } : { ...m };
   }
   for (const id of ids) {
     const m = machines[id] || { ms: 0, since: null };
-    machines[id] = m.since === null ? { ms: m.ms, since: now } : m;
+    machines[id] = m.since === null ? { ...m, ms: m.ms, since: now, first: m.first ?? now } : { ...m, first: m.first ?? m.since };
   }
   return { ...workout, machines };
 }
@@ -52,7 +59,7 @@ export function cleanWorkout(raw, now = Date.now()) {
   const machines = Object.fromEntries(
     Object.entries(stored).map(([id, m]) => [
       id,
-      { ms: isNum(m?.ms) && m.ms > 0 ? m.ms : 0, since: isNum(m?.since) ? m.since : null },
+      { ms: isNum(m?.ms) && m.ms > 0 ? m.ms : 0, since: isNum(m?.since) ? m.since : null, ...(isNum(m?.first) ? { first: m.first } : {}) },
     ])
   );
   return { start: raw.start, end: isNum(raw.end) ? raw.end : null, machines };

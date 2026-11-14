@@ -3,7 +3,9 @@ import assert from "node:assert/strict";
 import {
   toMetres, fromMetres, describeDistance, makeMinutes, splitMinutes, describeTime, speedKmh, describeSpeed, describeWatts,
   makeCardioSet, todaysEntries, describeEntry, entryBoxes, cardioBests, newCardioBests, bestLines, newBestLines, isCardioSet,
+  clockText, startFromText, endOf, chooseDuration, chooseStart,
 } from "./cardio.js";
+import { startWorkout, runMachines, machineStart, machineElapsed, cleanWorkout } from "./timer.js";
 import {
   STARTER_CARDIO, seedStarterCardio, newGym, makeItem, setDefaultUnit, editItem, exerciseList, listKindOf, hideItem, TYPES,
 } from "./gym.js";
@@ -53,9 +55,13 @@ test("an entry keeps metres, and watts only when given", () => {
   const b = makeCardioSet({ exerciseId: "rowing-machine", minutes: 8, distance: 2000, unit: "m", watts: NaN, gymId: "main", now: at("2026-11-14T09:00:00Z") });
   assert.equal(b.distance, 2000);
   assert.ok(!("watts" in b));
-  assert.equal(describeEntry(a, "km"), "30 min · 12.50 km (7.77 mi) · 25.00 km/h (15.53 mph) · 150 W");
-  assert.deepEqual(entryBoxes(a, "km"), { min: 30, sec: 0, distance: 12.5, watts: 150 });
-  assert.deepEqual(entryBoxes(a, "mi"), { min: 30, sec: 0, distance: 7.77, watts: 150 });
+  const clock = (iso) => clockText(new Date(iso));
+  assert.equal(describeEntry(a, "km"), clock(a.start) + "-" + clock(a.end) + " · 30 min · 12.50 km (7.77 mi) · 25.00 km/h (15.53 mph) · 150 W");
+  assert.deepEqual(entryBoxes(a, "km"), { min: 30, sec: 0, distance: 12.5, watts: 150, startText: clock(a.start) });
+  assert.equal(entryBoxes(a, "mi").distance, 7.77);
+  const bare = { exerciseId: "x", time: a.time, minutes: 30, distance: 12500, watts: 150 };   // an entry from before step 33
+  assert.equal(describeEntry(bare, "km"), "30 min · 12.50 km (7.77 mi) · 25.00 km/h (15.53 mph) · 150 W");
+  assert.deepEqual(entryBoxes(bare, "km"), { min: 30, sec: 0, distance: 12.5, watts: 150 });
 });
 
 test("bests are per machine: speed and watts, best here and best ever", () => {
@@ -160,4 +166,72 @@ test("cardio entries and the watts switch survive the version 4 tables and back"
   assert.equal(back.store.gyms.main.equipment["cross-trainer"].watts, false);
   assert.equal(back.store.gyms.main.starterCardio, true);
   assert.equal(checkV4({ store, sets }).ok, true);
+});
+
+// ---------- Step 33: start, duration and end ----------
+test("the Start box reads a time as today, or yesterday when it is later than now", () => {
+  const now = new Date(2026, 10, 14, 8, 0);
+  assert.equal(clockText(startFromText("07:05", now)), "07:05");
+  assert.equal(startFromText("07:05", now).getDate(), 14);
+  assert.equal(startFromText("23:50", now).getDate(), 13);   // before midnight
+  assert.equal(startFromText("7:5", now), null);
+  assert.equal(startFromText("25:00", now), null);
+  assert.equal(startFromText("", now), null);
+  assert.equal(clockText(new Date(2026, 10, 14, 9, 5)), "09:05");
+});
+
+test("the duration is the clock unless the user typed one; the start is the clock's first start unless edited", () => {
+  assert.deepEqual(chooseDuration(null, null, 1_935_000), { minutes: 32.25, source: "timer" });
+  assert.deepEqual(chooseDuration(30, null, 1_935_000), { minutes: 30, source: "typed" });
+  assert.deepEqual(chooseDuration(null, 45, 0), { minutes: 0.75, source: "typed" });
+  assert.equal(chooseDuration(null, null, 400), null);   // under a second and nothing typed
+  assert.equal(chooseDuration(0, 0, 0), null);
+  const now = new Date(2026, 10, 14, 8, 0);
+  const first = new Date(2026, 10, 14, 7, 10).getTime();
+  assert.equal(chooseStart({ text: undefined, timerStart: first, minutes: 30, now }).getTime(), first);
+  assert.equal(clockText(chooseStart({ text: "07:00", timerStart: first, minutes: 30, now })), "07:00");   // an edit wins
+  assert.equal(chooseStart({ text: "nope", timerStart: first, minutes: 30, now }), null);
+  assert.equal(chooseStart({ text: undefined, timerStart: null, minutes: 30, now }).getTime(), now.getTime() - 30 * 60000);
+  assert.equal(endOf(new Date(first), 32.25).getTime(), first + 1_935_000);
+});
+
+test("an entry stores start and end, and end is always start + duration", () => {
+  const now = new Date(2026, 10, 14, 8, 0);
+  const start = new Date(2026, 10, 14, 7, 10);
+  const e = makeCardioSet({ exerciseId: "stationary-bike", minutes: 32.25, distance: 12.5, unit: "km", gymId: "main", start, now });
+  assert.equal(e.start, start.toISOString());
+  assert.equal(new Date(e.end) - new Date(e.start), 32.25 * 60000);
+  assert.equal(e.time, now.toISOString());   // when it was logged
+  const forgot = makeCardioSet({ exerciseId: "stationary-bike", minutes: 20, distance: 5, unit: "km", gymId: "main", now });   // no start given
+  assert.equal(new Date(forgot.end).getTime(), now.getTime());
+});
+
+test("a machine's clock remembers when it first started, across pauses", () => {
+  const T0 = new Date(2026, 10, 14, 7, 10).getTime();
+  let w = startWorkout(T0 - 5000);
+  assert.equal(machineStart(w, "stationary-bike"), null);
+  w = runMachines(w, ["stationary-bike"], T0);
+  assert.equal(machineStart(w, "stationary-bike"), T0);
+  w = runMachines(w, ["cross-trainer"], T0 + 60_000);   // leave the bike
+  w = runMachines(w, ["stationary-bike"], T0 + 120_000);   // come back
+  assert.equal(machineStart(w, "stationary-bike"), T0);   // still the first start
+  assert.equal(machineElapsed(w, "stationary-bike", T0 + 180_000), 120_000);   // 60 s before leaving + 60 s since returning
+  const back = cleanWorkout(JSON.parse(JSON.stringify(w)), T0 + 200_000);
+  assert.equal(machineStart(back, "stationary-bike"), T0);   // survives being saved and read
+  assert.equal(machineStart(cleanWorkout({ start: T0, end: null, machines: { a: { ms: 5, since: null } } }, T0), "a"), null);
+});
+
+test("start and end survive the version 4 tables and back; older entries have none", () => {
+  const store = cleanStore(emptyStore());
+  const start = new Date("2026-11-14T07:10:00.000Z");
+  const e1 = makeCardioSet({ exerciseId: "stationary-bike", minutes: 30, distance: 12.5, unit: "km", watts: 150, gymId: "main", start, now: new Date("2026-11-14T07:42:00.000Z") });
+  const old = { exerciseId: "cross-trainer", time: "2026-11-13T08:00:00.000Z", minutes: 20, distance: 5000, gymId: "main" };
+  const sets = [old, e1];
+  const r = migrateToV4({ store, sets });
+  assert.equal(r.ok, true);
+  const we = r.v4.tables.workout_exercise.find((w) => w.exerciseId === "stationary-bike");
+  assert.equal(we.start, "2026-11-14T07:10:00.000Z");
+  assert.equal(we.end, "2026-11-14T07:40:00.000Z");
+  assert.equal(r.v4.tables.workout_exercise.find((w) => w.exerciseId === "cross-trainer").start, null);
+  assert.deepEqual(fromV4(r.v4).sets, sets);
 });

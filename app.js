@@ -8,13 +8,13 @@ import {
   isDoneToday, markDone, unmarkDone, personalBests, hasGymBest, describeBest, weightCaption, newBestLevel, idsWithHistory,
 } from "./log.js";
 import {
-  formatTime, startWorkout, isRunning, workoutElapsed, machineElapsed,
+  formatTime, startWorkout, isRunning, workoutElapsed, machineElapsed, machineStart,
   runMachines, endWorkout, cleanWorkout,
 } from "./timer.js";
 import { hasExtras, extraOptions, totalWeight, splitFor, savedExtra } from "./extras.js";
 import {
   isCardio, isCardioSet, makeCardioSet, todaysEntries, describeEntry, entryBoxes, makeMinutes, splitMinutes, describeTime,
-  cardioBests, newCardioBests, bestLines, newBestLines,
+  cardioBests, newCardioBests, bestLines, newBestLines, clockText, chooseDuration, chooseStart, endOf,
 } from "./cardio.js";
 import { buildPins, addPin, removePin, hasPins } from "./stacks.js";
 import {
@@ -517,14 +517,22 @@ function bindPanel(p, i) {
 }
 
 // ---------- Cardio machines on the logging page ----------
-// One entry per machine per day: minutes and seconds, the distance in the machine's unit and (optionally) average
-// watts. Distances are saved in metres. Undo puts the entry back in the boxes so it can be corrected and logged again.
-// For a cardio machine the "working" setting on its Set up screen is the target time in minutes (workVolume).
+// One entry per machine per day: a start time, a duration, the distance in the machine's unit and (optionally) average
+// watts. The machine's own clock starts when the machine is opened: that moment is the default start and the clock's
+// time when End is pressed is the default duration. The Start box and the Minutes and Seconds boxes override them (the
+// user may forget to start or stop). The end time is start + duration, worked out and stored. Distances are saved in
+// metres. Undo puts the entry back in the boxes so it can be corrected and ended again. The "working" setting on a
+// cardio machine's Set up screen is a target time in minutes (workVolume), shown on the card as a reminder.
 function newCardioPanel(e) {
-  const target = configFor(settings, e.id).workVolume;
-  const history = setsForExercise(sets, e.id).filter(isCardioSet);
-  const { min, sec } = splitMinutes(target ?? (history.length > 0 ? history[history.length - 1].minutes : 20));
-  return { ex: e, min, sec, distance: "", watts: "", pb: null };
+  return { ex: e, min: "", sec: "", distance: "", watts: "", pb: null };   // startText stays undefined until the user edits the start
+}
+
+// "End: 07:42" once a duration is typed; until then the clock decides it when End is pressed.
+function cardioEndText(p) {
+  const typed = chooseDuration(toNumber(p.min), toNumber(p.sec), 0);
+  if (!typed) return "End: set when you press End";
+  const start = chooseStart({ text: p.startText, timerStart: machineStart(workout, p.ex.id), minutes: typed.minutes });
+  return start ? "End: " + clockText(endOf(start, typed.minutes)) : "End: check the start time";
 }
 
 const distanceLabel = (unit) => (unit === "m" ? "Distance (metres)" : unit === "mi" ? "Distance (miles)" : "Distance (km)");
@@ -539,7 +547,13 @@ function cardioPanelHtml(p, i) {
     (lines.length > 0 ? lines.map(([label, text]) => "<div>" + esc(label) + ' <b style="color:#eee">' + esc(text) + "</b></div>").join("") : "<div>No personal best yet</div>") + "</div>";
   const notes = cfg.notes ? '<div class="note">' + esc(cfg.notes).replace(/\n/g, "<br>") + "</div>" : "";
   const logged = today.length > 0;
-  const inputs = cols(numField("cMin" + i, "Minutes", p.min), numField("cSec" + i, "Seconds", p.sec)) +
+  const startVal = p.startText ?? clockText(new Date(machineStart(workout, e.id) ?? Date.now()));
+  const target = cfg.workVolume !== null && cfg.workVolume !== undefined ? '<div class="muted small">Target ' + esc(describeTime(cfg.workVolume)) + "</div>" : "";
+  const inputs = target +
+    field("cStart" + i, "Start", '<input class="field" id="cStart' + i + '" type="time" value="' + esc(startVal) + '">') +
+    cols(numField("cMin" + i, "Minutes", p.min, "timer"), numField("cSec" + i, "Seconds", p.sec, "timer")) +
+    '<div class="muted small" id="cEnd' + i + '">' + esc(cardioEndText(p)) + "</div>" +
+    '<div class="muted small" style="margin-bottom:8px">Start and time come from the machine clock. Type over them if you forgot to start or stop.</div>' +
     (showWatts ? cols(numField("cDist" + i, distanceLabel(e.unit), p.distance), numField("cWatts" + i, "Avg watts (optional)", p.watts))
                : numField("cDist" + i, distanceLabel(e.unit), p.distance));
   const newBest = (p.pb || []).map((t) => '<div class="finished" style="margin-top:8px">&#9733; ' + esc(t) + "</div>").join("");
@@ -553,7 +567,7 @@ function cardioPanelHtml(p, i) {
     (logged
       ? '<div class="muted small" style="margin-top:10px">Logged today: ' + esc(describeEntry(today[today.length - 1], e.unit)) +
         ' <button class="link" id="undo' + i + '">Undo</button></div>' + newBest
-      : inputs + '<div class="logrow"><span class="progress">' + (showWatts ? "Watts are optional" : "") + '</span><button class="primary" id="logBtn' + i + '">Log session</button></div>') +
+      : inputs + '<div class="logrow"><span class="progress">' + (showWatts ? "Watts are optional" : "") + '</span><button class="primary" id="logBtn' + i + '">End</button></div>') +
     finishHtml + "</div>";
 }
 
@@ -561,16 +575,21 @@ function bindCardioPanel(p, i) {
   const e = p.ex;
   for (const [key, id] of [["min", "cMin"], ["sec", "cSec"], ["distance", "cDist"], ["watts", "cWatts"]]) {
     const el = $(id + i);
-    if (el) el.oninput = (ev) => { p[key] = ev.target.value; };
+    if (el) el.oninput = (ev) => { p[key] = ev.target.value; if (key === "min" || key === "sec") showEnd(); };
   }
+  const showEnd = () => { const el = $("cEnd" + i); if (el) el.textContent = cardioEndText(p); };
+  if ($("cStart" + i)) $("cStart" + i).oninput = (ev) => { p.startText = ev.target.value; showEnd(); };
   wire({
     logBtn: () => {
       if (todaysEntries(gymSets(), e.id).length > 0) return;
-      const minutes = makeMinutes(toNumber(p.min), toNumber(p.sec));
+      const now = new Date();
+      const duration = chooseDuration(toNumber(p.min), toNumber(p.sec), machineElapsed(workout, e.id, now.getTime()));
       const distance = toNumber(p.distance);
-      if (minutes === null) { alert("Enter the time."); return; }
+      if (duration === null) { alert("Enter the time."); return; }
+      const start = chooseStart({ text: p.startText, timerStart: machineStart(workout, e.id), minutes: duration.minutes, now });
+      if (start === null) { alert("Enter the start time, like 07:30."); return; }
       if (distance === null || distance <= 0) { alert("Enter the distance."); return; }
-      const entry = makeCardioSet({ exerciseId: e.id, minutes, distance, unit: e.unit, watts: e.watts === false ? undefined : toNumber(p.watts), gymId: store.currentGym });
+      const entry = makeCardioSet({ exerciseId: e.id, minutes: duration.minutes, distance, unit: e.unit, watts: e.watts === false ? undefined : toNumber(p.watts), gymId: store.currentGym, start, now });
       p.pb = newBestLines(newCardioBests(cardioBests(sets, e.id, store.currentGym), entry));   // judged before the entry is saved
       sets.push(entry);
       persistStore(store);
@@ -578,7 +597,7 @@ function bindCardioPanel(p, i) {
     },
     undo: () => {
       const entry = todaysEntries(gymSets(), e.id).pop();
-      Object.assign(p, entry ? entryBoxes(entry, e.unit) : {}, { pb: null });
+      Object.assign(p, entry ? entryBoxes(entry, e.unit) : {}, { pb: null });   // the old start and duration come back as overrides
       sets = removeLastSet(sets, e.id, store.currentGym);
       persistStore(store);
       render();
@@ -760,7 +779,7 @@ function renderEditCardio(e) {
     backBtn("Back without saving") + timeBar() + "<h2>" + esc(e.name) + "</h2>" +
     box("Target time for you",
       cols(numField("f_tmin", "Minutes", has ? t.min : ""), numField("f_tsec", "Seconds", has && t.sec > 0 ? t.sec : "")) +
-      muted("The log card starts with this time. Leave it blank to start from your last session.")) +
+      muted("Shown on the log card as your target. The machine's clock sets the actual time.")) +
     field("f_notes", "Notes (seat height, level, etc.)", '<textarea class="field" id="f_notes" rows="3">' + esc(cfg.notes) + "</textarea>") +
     '<button class="primary" id="save">Save</button>';
   wire({
