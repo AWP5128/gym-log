@@ -35,7 +35,7 @@ import { runSync } from "./syncglue.js";
 import { makeRemote } from "./remote.js";
 import { makeAuth, loadClient } from "./auth.js";
 import {
-  $, esc, optionsHtml, selectHtml, field, numField, cols, box, muted, ghostBtn, backBtn, wire, addItems, addChoices, sendFile,
+  $, esc, optionsHtml, selectHtml, field, numField, cols, box, muted, ghostBtn, backBtn, wire, addItems, addChoices, sendFile, formHtml, bindForm,
 } from "./ui.js";
 
 // ---------- Saved data ----------
@@ -1197,27 +1197,18 @@ function renderGymItemAdd() {
   if (!g) return go("gyms");
   const d = itemDraft;
   const set = setIdFor(d.type) ? g.weightSets?.[setIdFor(d.type)] : null;
-  app.innerHTML =
-    backBtn("Back without adding") + "<h2>Add equipment</h2>" +
-    field("ia_name", "Name", '<input class="field" id="ia_name" type="text" placeholder="e.g. Chest Press" value="' + esc(d.name) + '">') +
-    field("ia_type", "Type", selectHtml("ia_type", optionsHtml(TYPES.map((t) => t.id), d.type, (id) => esc(typeInfoOf(id).addLabel ?? typeLabel(id))), "field")) +
-    (d.type === "cardio" ? "" : field("ia_group", "Session", selectHtml("ia_group", optionsHtml(["legs", "arms", "abs"], d.group, (id) => esc(typeInfo(id).label)), "field"))) +
-    (d.type === "cardio" ? muted("Cardio machines log time, distance and optional watts. They appear under Cardio.", "small") : "") +
-    (set
-      ? muted("Uses this gym's " + esc(set.name) + " list (" + set.unit + "). Change the list with Edit on the gym screen.", "small")
-      : field("ia_unit", "Unit", selectHtml("ia_unit", optionsHtml(unitsFor(d.type), d.unit), "field"))) +
-    (d.type === "stack" ? muted("Set up the stack with Edit on the machine once it is added.", "small") : "") +
-    '<button class="primary" id="addBtn">Add</button>';
-
-  $("ia_name").oninput = (ev) => { d.name = ev.target.value; };
-  $("ia_type").onchange = (ev) => {
-    d.type = ev.target.value;
-    d.unit = g.units?.[d.type] ?? d.unit;
-    d.group = d.type === "cardio" ? "cardio" : d.group === "cardio" ? "legs" : d.group;
-    render();
-  };
-  if ($("ia_group")) $("ia_group").onchange = (ev) => { d.group = ev.target.value; };
-  if (!set) $("ia_unit").onchange = (ev) => { d.unit = ev.target.value; render(); };
+  const fields = [
+    { key: "name", label: "Name", type: "text", placeholder: "e.g. Chest Press" },
+    { key: "type", label: "Type", type: "select", redraw: true, options: TYPES.map((t) => [t.id, t.addLabel ?? typeLabel(t.id)]),
+      onChange: (x) => { x.unit = g.units?.[x.type] ?? x.unit; x.group = x.type === "cardio" ? "cardio" : x.group === "cardio" ? "legs" : x.group; } },
+    { key: "group", label: "Session", type: "select", show: (x) => x.type !== "cardio", options: ["legs", "arms", "abs"].map((id) => [id, typeInfo(id).label]) },
+    { type: "note", show: (x) => x.type === "cardio", text: "Cardio machines log time, distance and optional watts. They appear under Cardio." },
+    { type: "note", show: () => !!set, text: () => "Uses this gym's " + set.name + " list (" + set.unit + "). Change the list with Edit on the gym screen." },
+    { key: "unit", label: "Unit", type: "select", redraw: true, show: () => !set, options: (x) => unitsFor(x.type).map((u) => [u, u]) },
+    { type: "note", show: (x) => x.type === "stack", text: "Set up the stack with Edit on the machine once it is added." },
+  ];
+  app.innerHTML = backBtn("Back without adding") + "<h2>Add equipment</h2>" + formHtml(fields, d, "ia_") + '<button class="primary" id="addBtn">Add</button>';
+  bindForm(fields, d, render, "ia_");
   wire({
     back: goBack,
     addBtn: () => {
@@ -1254,17 +1245,15 @@ function renderGymItemAdd() {
 // metres) and whether it records watts.
 function renderGymItemEditCardio(g, it) {
   const d = itemEditDraft;
-  app.innerHTML =
-    backBtn("Back without saving") + "<h2>Edit " + esc(it.name) + "</h2>" +
-    field("ie_name", "Name", '<input class="field" id="ie_name" type="text" value="' + esc(d.name) + '">') +
-    field("ie_unit", "Distance unit", selectHtml("ie_unit", optionsHtml(DISTANCE_UNITS, d.unit, (u) => ({ km: "km", mi: "miles", m: "metres" }[u])), "field")) +
-    muted("Distances are saved in metres, so changing the unit never changes your history.", "small") +
-    "<label>Watts</label>" + '<div class="choices" id="ieWatts"></div>' +
-    muted("Watts are never required when you log a session.", "small") +
-    '<button class="primary" id="saveItem">Save</button>';
-  $("ie_name").oninput = (ev) => { d.name = ev.target.value; };
-  $("ie_unit").onchange = (ev) => { d.unit = ev.target.value; };
-  addChoices("ieWatts", [["Record watts", d.watts !== false, () => { d.watts = true; render(); }], ["No watts", d.watts === false, () => { d.watts = false; render(); }]]);
+  const fields = [
+    { key: "name", label: "Name", type: "text" },
+    { key: "unit", label: "Distance unit", type: "select", options: DISTANCE_UNITS.map((u) => [u, { km: "km", mi: "miles", m: "metres" }[u]]) },
+    { type: "note", text: "Distances are saved in metres, so changing the unit never changes your history." },
+    { key: "watts", label: "Watts", type: "choice", options: [[true, "Record watts"], [false, "No watts"]], isActive: (x, v) => (x.watts !== false) === v },
+    { type: "note", text: "Watts are never required when you log a session." },
+  ];
+  app.innerHTML = backBtn("Back without saving") + "<h2>Edit " + esc(it.name) + "</h2>" + formHtml(fields, d, "ie_") + '<button class="primary" id="saveItem">Save</button>';
+  bindForm(fields, d, render, "ie_");
   wire({
     back: goBack,
     saveItem: () => {
