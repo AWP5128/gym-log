@@ -780,9 +780,15 @@ function renderSetup() {
   const never = neverNow();
   const normal = list.filter((e) => !never[e.id]);
   const hiddenHere = list.filter((e) => never[e.id]);
-  // Never use a whole kind of exercise here (not for the cardio list): every exercise of that kind in this gym
-  const kindable = exList().filter((e) => !isCardio(e));
-  const kinds = session.type === "cardio" ? [] : LIST_KINDS.filter((k) => kindable.some((e) => listKindOf(e) === k.id));
+  // Never use a whole group here: Machines, Dumbbells, Barbells, Body weight (legs and arms exercises), Abs, Cardio.
+  // Each chip marks every exercise of the group that this gym has now.
+  const all = exList();
+  const isAbs = (e) => e.group === "abs" && !isCardio(e);
+  const groups = [
+    ...LIST_KINDS.map((k) => ({ label: k.label, ids: all.filter((e) => !isAbs(e) && !isCardio(e) && listKindOf(e) === k.id).map((e) => e.id) })),
+    { label: "Abs", ids: all.filter(isAbs).map((e) => e.id) },
+    { label: "Cardio", ids: all.filter(isCardio).map((e) => e.id) },
+  ].filter((g) => g.ids.length > 0);
   const key = modeKey();
   const g = globalDefaults(settings);
   app.innerHTML =
@@ -793,7 +799,7 @@ function renderSetup() {
       (flash ? muted(flash) : "") +
       (hasDayType() ? "" : muted(esc(typeInfo(session.type).label) + " uses the Volume day defaults.")))) +
     muted(session.type === "cardio" ? "Tap a machine to set its target time." : "Tap a machine to give it its own weights, reps or sets.") +
-    (kinds.length > 0 ? box("Never use at this gym", '<div class="choices sm fit" id="neverKinds"></div>' + muted("Hides a whole kind from all your lists here. Single exercises can be set on their own screens.")) : "") +
+    (groups.length > 0 ? box("Never use at this gym", '<div class="choices sm fit" id="neverKinds"></div>' + muted("Hides a whole group from all your lists here. Single exercises can be set on their own screens.")) : "") +
     '<div id="list"></div>' +
     (list.length === 0 ? muted("No exercises here yet. You will be able to add some in a later step.") : "") +
     (hiddenHere.length > 0 ? "<h2>Never used here (" + hiddenHere.length + ")</h2>" + '<div id="neverList"></div>' : "");
@@ -805,11 +811,10 @@ function renderSetup() {
   ];
   addItems("list", normal.map(rowFor));
   if (hiddenHere.length > 0) addItems("neverList", hiddenHere.map(rowFor));
-  if (kinds.length > 0) {
-    addChoices("neverKinds", kinds.map((k) => {
-      const ids = kindable.filter((e) => listKindOf(e) === k.id).map((e) => e.id);
-      const on = ids.every((id) => never[id]);
-      return [k.label, on, () => { saveStore(setNever(store, store.currentPerson, store.currentGym, ids, !on)); render(); }];
+  if (groups.length > 0) {
+    addChoices("neverKinds", groups.map((g) => {
+      const on = g.ids.every((id) => never[id]);
+      return [g.label, on, () => { saveStore(setNever(store, store.currentPerson, store.currentGym, g.ids, !on)); render(); }];
     }));
   }
   wire({
