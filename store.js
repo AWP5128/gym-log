@@ -321,6 +321,32 @@ export function setNever(store, personId, gymId, ids, on) {
   };
 }
 
+// Normal / Rare / Never (personal, per gym). Normal = the main list, Rare = under "Show less common", Never = hidden.
+// An exercise starts as Normal, or Rare if the built-in data marks it less common (common: false); only a choice that
+// differs from that is saved, in people[person].gyms[gym].use = { exerciseId: "normal" | "rare" } (Never is in `never`).
+export const useIds = (store, personId, gymId) => store.people?.[personId]?.gyms?.[gymId]?.use || {};
+export const defaultUse = (exercise) => (exercise?.common === false ? "rare" : "normal");
+export const useOf = (store, personId, gymId, exercise) =>
+  isNever(store, personId, gymId, exercise.id) ? "never" : useIds(store, personId, gymId)[exercise.id] || defaultUse(exercise);
+
+// Returns a new store with the exercise set to "normal", "rare" or "never" for this person at this gym.
+export function setUse(store, personId, gymId, exercise, state) {
+  const person = store.people?.[personId] || { name: personId, gyms: {} };
+  const { never: oldNever, use: oldUse, ...rest } = person.gyms?.[gymId] || {};
+  const never = { ...(oldNever || {}) };
+  const use = { ...(oldUse || {}) };
+  delete never[exercise.id];
+  delete use[exercise.id];
+  if (state === "never") never[exercise.id] = true;
+  else if (state !== defaultUse(exercise) && (state === "normal" || state === "rare")) use[exercise.id] = state;
+  return {
+    ...store,
+    people: { ...store.people, [personId]: { ...person, gyms: { ...person.gyms, [gymId]: {
+      ...rest, machines: rest.machines || {}, ...(Object.keys(never).length > 0 ? { never } : {}), ...(Object.keys(use).length > 0 ? { use } : {}),
+    } } } },
+  };
+}
+
 // ---------- Sharing the machine list ----------
 // Only the shared fields (name, step, stack): no weights, reps or notes. Machines that are
 // exactly as built in are left out.

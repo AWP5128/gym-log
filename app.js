@@ -23,7 +23,7 @@ import {
 } from "./gym.js";
 import {
   STORE_VERSION, DEFAULT_GYM, cleanStore, migrateLegacy, toLegacySettings, applyLegacySettings, supportsWarmup,
-  exportMachines, importMachines, gymList, addGym, renameGym, setDefaultGym, setCurrentGym, useDefaultGym, neverIds, setNever,
+  exportMachines, importMachines, gymList, addGym, renameGym, setDefaultGym, setCurrentGym, useDefaultGym, neverIds, setNever, useIds, useOf, setUse,
 } from "./store.js";
 import { makeBackup, backupFileName, parseBackup, fileKind, dataSummary, describeData, backupAge } from "./backup.js";
 import { MUSCLES, muscleOf, muscleLabel, partnerGroups, pairedPartners, getPairs, setPairs, addPair, removePair, pairedWith, isSuitable, setSuitable, hasPair, pairCandidates } from "./superset.js";
@@ -131,7 +131,7 @@ let pickMore = false;      // show less common exercises when picking a superset
 let pickOther = false;     // show the other sessions' exercises when picking a superset partner
 let rememberPair = false;  // save the next pair picked from another session
 let pickAll = false;       // show every exercise when picking a partner, not only the ones paired with this exercise
-let neverDraft = null;     // "never used here" choice for the exercise on its Set up screen, saved with Save
+let neverDraft = null;     // Normal / Rare / Never choice for the exercise on its Set up screen, saved with Save
 let ssDraft = null;        // superset choices for the exercise on the Set up screen, saved with Save
 let panels = [];           // exercises on the logging page: one, or two when supersetting
 let editId = null;         // the exercise being set up
@@ -295,7 +295,7 @@ function renderStart() {
 
 // ---------- Exercise list ----------
 function renderList() {
-  const all = sessionPool().filter(inLists);   // this session's exercises, plus pull-ups on a legs or arms day
+  const all = sessionPool().filter(inLists).map(personal);   // this session's exercises, plus pull-ups on a legs or arms day
   const finished = all.filter((e) => isDoneToday(done, e.id));
   const open = all.filter((e) => !isDoneToday(done, e.id));
   // One kind of exercise at a time keeps the list short (machines, dumbbells, barbells, body weight).
@@ -664,18 +664,21 @@ function sessionPool() {
 // "Never used here" (personal, per gym): left out of the lists and the superset picker, unless already done today.
 const neverNow = () => neverIds(store, store.currentPerson, store.currentGym);
 const inLists = (e) => !neverNow()[e.id] || isDoneToday(done, e.id);
+// Rare (under "Show less common") or Normal (main list) as this person has set it; otherwise the exercise's own default.
+const personal = (e) => { const u = useIds(store, store.currentPerson, store.currentGym)[e.id]; return u ? { ...e, common: u === "normal" } : e; };
 
-// The "At this gym" choice on an exercise's Set up screen: Normal or Never use. Saved with Save.
-function neverBoxHtml() { return box("At this gym", '<div class="choices" id="neverSw"></div>' + muted("Never use hides it from all your lists here. The gym keeps it.")); }
+// The "At this gym" choice on an exercise's Set up screen: Normal, Rare or Never. Saved with Save.
+function neverBoxHtml() { return box("At this gym", '<div class="choices" id="neverSw"></div>' + muted("Rare goes under Show less common. Never hides it from all your lists here. The gym keeps it.")); }
 function bindNever(e) {
-  if (!neverDraft || neverDraft.id !== e.id) neverDraft = { id: e.id, on: neverNow()[e.id] === true };
+  if (!neverDraft || neverDraft.id !== e.id) neverDraft = { id: e.id, state: useOf(store, store.currentPerson, store.currentGym, e) };
   const draw = () => {
     $("neverSw").innerHTML = "";
-    addChoices("neverSw", [["Normal", !neverDraft.on, () => { neverDraft.on = false; draw(); }], ["Never use", neverDraft.on, () => { neverDraft.on = true; draw(); }]]);
+    addChoices("neverSw", [["Normal", "normal"], ["Rare", "rare"], ["Never", "never"]].map(([label, state]) =>
+      [label, neverDraft.state === state, () => { neverDraft.state = state; draw(); }]));
   };
   draw();
 }
-const saveNever = (e) => { if (neverDraft?.id === e.id) saveStore(setNever(store, store.currentPerson, store.currentGym, [e.id], neverDraft.on)); };
+const saveNever = (e) => { if (neverDraft?.id === e.id) saveStore(setUse(store, store.currentPerson, store.currentGym, e, neverDraft.state)); };
 
 // Your saved superset pairs (kept per person; each pair works both ways).
 const pairPrefs = () => getPairs(store, store.currentPerson);
@@ -685,9 +688,9 @@ const savePairs = (prefs) => saveStore(setPairs(store, store.currentPerson, pref
 // the rest of the session, then (behind a button) other sessions as exceptions you can save as a pair.
 function renderPick() {
   const first = panels[0].ex;
-  const all = exList().filter((e) => !isCardio(e) && inLists(e));   // cardio machines are not paired
+  const all = exList().filter((e) => !isCardio(e) && inLists(e)).map(personal);   // cardio machines are not paired
   const taken = new Set([...panels.map((p) => p.ex.id), ...all.filter((e) => isDoneToday(done, e.id)).map((e) => e.id)]);
-  const pool = sessionPool().filter(inLists);
+  const pool = sessionPool().filter(inLists).map(personal);
   const poolIds = new Set(pool.map((e) => e.id));
   const others = all.filter((e) => !poolIds.has(e.id));
   const g = partnerGroups({ ex: first, pool, others, prefs: pairPrefs(), taken });
@@ -784,8 +787,9 @@ function renderSetup() {
   // Each chip marks every exercise of the group that this gym has now.
   const all = exList();
   const isAbs = (e) => e.group === "abs" && !isCardio(e);
+  const SHORT = { machines: "Machine", dumbbells: "Dumbbell", barbell: "Barbell", bodyweight: "Bodyweight" };   // short, so the chips fit a phone
   const groups = [
-    ...LIST_KINDS.map((k) => ({ label: k.label, ids: all.filter((e) => !isAbs(e) && !isCardio(e) && listKindOf(e) === k.id).map((e) => e.id) })),
+    ...LIST_KINDS.map((k) => ({ label: SHORT[k.id] || k.label, ids: all.filter((e) => !isAbs(e) && !isCardio(e) && listKindOf(e) === k.id).map((e) => e.id) })),
     { label: "Abs", ids: all.filter(isAbs).map((e) => e.id) },
     { label: "Cardio", ids: all.filter(isCardio).map((e) => e.id) },
   ].filter((g) => g.ids.length > 0);
@@ -799,14 +803,14 @@ function renderSetup() {
       (flash ? muted(flash) : "") +
       (hasDayType() ? "" : muted(esc(typeInfo(session.type).label) + " uses the Volume day defaults.")))) +
     muted(session.type === "cardio" ? "Tap a machine to set its target time." : "Tap a machine to give it its own weights, reps or sets.") +
-    (groups.length > 0 ? box("Never use at this gym", '<div class="choices sm fit" id="neverKinds"></div>' + muted("Hides a whole group from all your lists here. Single exercises can be set on their own screens.")) : "") +
+    (groups.length > 0 ? box("Never use at this gym", '<div class="choices fit" id="neverKinds" style="flex-wrap:wrap;overflow:visible"></div>' + muted("Hides a whole group from all your lists here. Single exercises can be set on their own screens.")) : "") +
     '<div id="list"></div>' +
     (list.length === 0 ? muted("No exercises here yet. You will be able to add some in a later step.") : "") +
     (hiddenHere.length > 0 ? "<h2>Never used here (" + hiddenHere.length + ")</h2>" + '<div id="neverList"></div>' : "");
   flash = "";
 
   const rowFor = (e) => [
-    esc(e.name) + "<small>" + (never[e.id] ? "Never used here" : esc(summary(e, configFor(settings, e.id), key))) + "</small>",
+    esc(e.name) + "<small>" + (never[e.id] ? "Never used here" : (useOf(store, store.currentPerson, store.currentGym, e) === "rare" ? "Rare · " : "") + esc(summary(e, configFor(settings, e.id), key))) + "</small>",
     () => { editId = e.id; go("edit"); },
   ];
   addItems("list", normal.map(rowFor));

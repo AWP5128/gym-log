@@ -16,7 +16,7 @@ const COLS = {
     gymId: "t", id: "t", exerciseId: "t", equipmentTypeId: "t", exerciseTypeId: "t", name: "t", unit: "t", step: "n", common: "b",
     min: "n", pins: "j", stackSpec: "j", hidden: "b", muscle: "t", uses: "t", top: "n", watts: "b",
   },
-  personal_setup: { personId: "t", gymId: "t", exerciseId: "t", dayType: "t", warmup: "j", working: "j", notes: "t", never: "b" },
+  personal_setup: { personId: "t", gymId: "t", exerciseId: "t", dayType: "t", warmup: "j", working: "j", notes: "t", never: "b", use: "t" },
   workout: { id: "t", personId: "t", gymId: "t", date: "d", start: "s", end: "s" },
   workout_type: { id: "t", workoutId: "t", exerciseTypeId: "t", dayType: "t", start: "s", end: "s" },
   workout_exercise: { id: "t", workoutTypeId: "t", exerciseId: "t", distance: "n", avgHeartRate: "n", zoneMinutes: "j", watts: "n", level: "n", start: "s", end: "s" },
