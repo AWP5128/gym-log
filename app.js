@@ -18,7 +18,7 @@ import {
 } from "./cardio.js";
 import { buildPins, addPin, removePin, hasPins } from "./stacks.js";
 import {
-  exerciseList, stepChoices, defaultStep, TYPES, UNITS, GYM_DISTANCE_UNITS, DISTANCE_UNITS, unitsFor, visibleEntries, hiddenEntries, hideItem, restoreItem,
+  exerciseList, stepChoices, defaultStep, TYPES, typeInfoOf, WEIGHT_SET_TYPES, setIdFor, UNITS, GYM_DISTANCE_UNITS, DISTANCE_UNITS, unitsFor, visibleEntries, hiddenEntries, hideItem, restoreItem,
   setDefaultUnit, addItem, updateItem, editItem, checkName, LIST_KINDS, listKindOf, listDefaultOf, setListDefault, kindCounts, chooseListKind, entriesOfKind, kindCountsOfEntries, isSmallList, commonFirst, hideWeightSet, restoreWeightSet, isSetHidden, hiddenSetIds, weightSetUsers, setWeightSetUnit, updateWeightSet, dumbbellWeights,
 } from "./gym.js";
 import {
@@ -146,7 +146,7 @@ let gsTab = "equipment";   // the chip open on the Gym settings screen: units, f
 let editItemId = null;     // the item shown on the Edit item screen
 let itemEditDraft = null;  // its name, session, type, unit and weight-set link while being edited
 let setPins = [];          // the weights of that set while editing
-const SET_TYPES = ["dumbbell", "barbell"];   // equipment types whose weights come from the gym's weight sets
+const SET_TYPES = WEIGHT_SET_TYPES;   // equipment types whose weights come from the gym's weight sets
 
 const app = $("app");
 const typeInfo = (id) => sessionTypes.find((t) => t.id === id);
@@ -1088,7 +1088,7 @@ function renderGymEdit() {
   // The gym's dumbbells and barbell are equipment like the machines: Edit changes their weights and unit,
   // Hide means the gym does not have them (the exercises that use them are hidden with them).
   const setIds = Object.keys(g.weightSets || {}).filter((k) => SET_TYPES.includes(g.weightSets[k].type));
-  const setLabel = (sid) => (g.weightSets[sid].type === "dumbbell" ? "Dumbbells" : "Barbell");
+  const setLabel = (sid) => typeInfoOf(g.weightSets[sid].type)?.setName ?? "Weights";
   const setRow = (sid, kind) => {
     const ws = g.weightSets[sid];
     const sub = ws.unit + " &middot; " + ws.pins.length + " weights" + (kind === "restore" ? " &middot; " + weightSetUsers(g, sid).length + " exercises" : "");
@@ -1099,7 +1099,7 @@ function renderGymEdit() {
   };
   const shownSets = setIds.filter((k) => !isSetHidden(g, k));
   const hiddenSets = setIds.filter((k) => isSetHidden(g, k));
-  const listLabel = (t) => (t.id === "dumbbell" ? "Dumbbells List" : t.id === "barbell" ? "Barbell List" : t.label);
+  const listLabel = (t) => t.listLabel ?? t.label;
   // The chips under Gym settings pick one part of the screen so it stays short: Units, Free weights or Equipment.
   // On Equipment, the kind chips (the same ones as the exercise list) filter the list AND are the gym's default kind.
   const kind = listDefaultOf(g);
@@ -1157,7 +1157,7 @@ function renderGymEdit() {
     addChoices("gsKinds", LIST_KINDS.map((k) => [k.label + " " + counts[k.id], kind === k.id, () => { saveGym(gymId, setListDefault(g, k.id)); render(); }]));
   }
   for (const t of gsTab === "units" ? TYPES.filter((x) => !SET_TYPES.includes(x.id)) : []) {
-    addChoices("unit_" + t.id, (t.id === "cardio" ? GYM_DISTANCE_UNITS : UNITS).map((u) => [u, g.units?.[t.id] === u, () => { saveGym(gymId, setDefaultUnit(g, t.id, u)); render(); }]));
+    addChoices("unit_" + t.id, (t.distance ? GYM_DISTANCE_UNITS : UNITS).map((u) => [u, g.units?.[t.id] === u, () => { saveGym(gymId, setDefaultUnit(g, t.id, u)); render(); }]));
   }
   buttons.forEach(([id, kind], n) => {
     if (kind === "hide") {
@@ -1196,12 +1196,11 @@ function renderGymItemAdd() {
   const g = store.gyms[gymId];
   if (!g) return go("gyms");
   const d = itemDraft;
-  const addLabel = { dumbbell: "Dumbbell exercise", barbell: "Barbell exercise" };
-  const set = SET_TYPES.includes(d.type) ? g.weightSets?.[d.type === "dumbbell" ? "dumbbells" : "barbell"] : null;
+  const set = setIdFor(d.type) ? g.weightSets?.[setIdFor(d.type)] : null;
   app.innerHTML =
     backBtn("Back without adding") + "<h2>Add equipment</h2>" +
     field("ia_name", "Name", '<input class="field" id="ia_name" type="text" placeholder="e.g. Chest Press" value="' + esc(d.name) + '">') +
-    field("ia_type", "Type", selectHtml("ia_type", optionsHtml(TYPES.map((t) => t.id), d.type, (id) => esc(addLabel[id] ?? typeLabel(id))), "field")) +
+    field("ia_type", "Type", selectHtml("ia_type", optionsHtml(TYPES.map((t) => t.id), d.type, (id) => esc(typeInfoOf(id).addLabel ?? typeLabel(id))), "field")) +
     (d.type === "cardio" ? "" : field("ia_group", "Session", selectHtml("ia_group", optionsHtml(["legs", "arms", "abs"], d.group, (id) => esc(typeInfo(id).label)), "field"))) +
     (d.type === "cardio" ? muted("Cardio machines log time, distance and optional watts. They appear under Cardio.", "small") : "") +
     (set
@@ -1234,7 +1233,7 @@ function renderGymItemAdd() {
         }
         return;
       }
-      const setKey = set ? (d.type === "dumbbell" ? "dumbbells" : "barbell") : null;
+      const setKey = set ? setIdFor(d.type) : null;
       let base = g;
       if (setKey && isSetHidden(g, setKey)) {
         if (!confirm("The " + set.name + " are hidden in this gym. Bring them back and add this exercise?")) return;
@@ -1286,7 +1285,7 @@ function renderGymItemEdit() {
   if (it.type === "cardio") return renderGymItemEditCardio(g, it);
   const d = itemEditDraft;
   const locked = idsWithHistory(sets, gymId).has(editItemId);
-  const setId = SET_TYPES.includes(d.type) ? (d.type === "dumbbell" ? "dumbbells" : "barbell") : null;
+  const setId = setIdFor(d.type);
   const set = setId ? g.weightSets?.[setId] : null;
   const linked = !!set && (d.useSet || (d.type === it.type && !!it.weightSet));
   // A stack machine's weights are edited here too, saved straight into this gym's item (any gym, not only the
@@ -1297,7 +1296,7 @@ function renderGymItemEdit() {
     stackOk ? "<h2>Stack</h2>" + stackFormHtml(it, it.stackSpec)
     : muted("Save the change of type or unit first, then edit the stack.", "small");
   const autoMuscle = muscleOf({ id: editItemId, name: d.name });   // what the app picks when none is chosen
-  const typeLabelFor = (id) => ({ dumbbell: "Dumbbell exercise", barbell: "Barbell exercise" }[id] ?? typeLabel(id));
+  const typeLabelFor = (id) => typeInfoOf(id).addLabel ?? typeLabel(id);
   app.innerHTML =
     backBtn("Back without saving") + "<h2>Edit " + esc(it.name) + "</h2>" +
     field("ie_name", "Name", '<input class="field" id="ie_name" type="text" value="' + esc(d.name) + '">') +
@@ -1339,7 +1338,7 @@ function renderGymItemEdit() {
       const patch = { name: d.name, group: d.group, muscle: d.muscle, type: d.type, useSet: d.useSet, ...(set ? {} : { unit: d.unit }) };
       const changes = [d.type !== it.type && "type", d.useSet && "list", !set && !locked && d.unit !== it.unit && "unit"].filter(Boolean);
       if (changes.length > 0 && !confirm("Changing the " + changes.join(" and ") + " restarts this exercise's weight list. Continue?")) return;
-      const toSet = SET_TYPES.includes(d.type) && (d.type !== it.type || d.useSet) ? (d.type === "dumbbell" ? "dumbbells" : "barbell") : null;
+      const toSet = setIdFor(d.type) && (d.type !== it.type || d.useSet) ? setIdFor(d.type) : null;
       let base = g;
       if (toSet && isSetHidden(g, toSet)) {
         if (!confirm("The " + g.weightSets[toSet].name + " are hidden in this gym. Bring them back too?")) return;

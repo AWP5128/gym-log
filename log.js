@@ -1,6 +1,6 @@
 import { BUILT_IN_DEFAULTS } from "./defaults.js";
 import { DEFAULT_GYM } from "./store.js";
-import { convert, round2 } from "./gym.js";
+import { convert, round2, TYPES, typeInfoOf } from "./gym.js";
 
 const last = (list) => list[list.length - 1];
 const day = (date) => new Date(date).toDateString();
@@ -134,7 +134,7 @@ export function isNewPb(allSets, exerciseId, manual, newSet, options = {}) {
 }
 
 // Machines keep a best for each gym as well as a best ever; free weights have the best ever only.
-export const GYM_SPECIFIC_TYPES = ["stack", "plate"];
+export const GYM_SPECIFIC_TYPES = TYPES.filter((t) => t.gymBest).map((t) => t.id);
 const typeOf = (exercise) => exercise.type ?? (exercise.unit === "lb" ? "stack" : "barbell");
 
 // The two personal bests for an exercise, both in the exercise's own unit: { gym, ever }. gym is the
@@ -166,7 +166,7 @@ export function describeBest(best, unit) {
 
 // The caption over the main weight list on the exercise card: "Stack" for a weight stack machine,
 // "Weight" for everything else (barbells, plate machines, dumbbells). A list of extras sits beside it.
-export const weightCaption = (exercise) => (typeOf(exercise) === "stack" ? "Stack" : "Weight");
+export const weightCaption = (exercise) => typeInfoOf(typeOf(exercise))?.caption ?? "Weight";
 
 // Which personal best a new set breaks, given the bests from before it was logged ({ gym, ever } from
 // personalBests): "ever" (it beats the best ever, so it beats the gym's too), "gym" (only the gym's best),

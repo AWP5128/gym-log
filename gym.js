@@ -19,14 +19,22 @@
 // - Extras (the small weights added on top) come from the type and unit, not from the item.
 
 export const UNITS = ["kg", "lb"];
+// The equipment types, and everything the rest of the code needs to know about each one (so a new type is one line):
+//   label       the name in the Type lists          addLabel / listLabel   other names on the Add and Gym screens
+//   kind        which exercise-list chip it is under (machines, dumbbells, barbell, bodyweight)
+//   gymBest     keeps a personal best for each gym as well as the best ever
+//   caption     what the main weight list is called on the exercise card
+//   weightSet   the id of the gym weight set it uses (dumbbells, barbell), or null  setName   that set's default name
+//   distance    logs a distance (km, mi, m) instead of a weight   barLike   counts in main steps of 10 with small extras
 export const TYPES = [
-  { id: "stack", label: "Stack machine" },
-  { id: "dumbbell", label: "Dumbbells" },
-  { id: "barbell", label: "Barbell" },
-  { id: "plate", label: "Plate-loaded machine" },
-  { id: "bodyweight", label: "Body weight" },
-  { id: "cardio", label: "Cardio machine" },
+  { id: "stack", label: "Stack machine", kind: "machines", gymBest: true, caption: "Stack" },
+  { id: "dumbbell", label: "Dumbbells", kind: "dumbbells", weightSet: "dumbbells", setName: "Dumbbells", addLabel: "Dumbbell exercise", listLabel: "Dumbbells List" },
+  { id: "barbell", label: "Barbell", kind: "barbell", weightSet: "barbell", setName: "Barbell", addLabel: "Barbell exercise", listLabel: "Barbell List", barLike: true },
+  { id: "plate", label: "Plate-loaded machine", kind: "machines", gymBest: true, barLike: true },
+  { id: "bodyweight", label: "Body weight", kind: "bodyweight" },
+  { id: "cardio", label: "Cardio machine", kind: "machines", distance: true },
 ];
+export const typeInfoOf = (type) => TYPES.find((t) => t.id === type);
 const TYPE_IDS = TYPES.map((t) => t.id);
 export const DEFAULT_UNITS = { stack: "lb", dumbbell: "kg", barbell: "kg", plate: "kg", bodyweight: "kg", cardio: "km" };
 
@@ -35,11 +43,11 @@ export const DEFAULT_UNITS = { stack: "lb", dumbbell: "kg", barbell: "kg", plate
 // always safe, even with history. Every other type uses kg or lb.
 export const GYM_DISTANCE_UNITS = ["km", "mi"];
 export const DISTANCE_UNITS = ["km", "mi", "m"];
-export const unitsFor = (type) => (type === "cardio" ? DISTANCE_UNITS : UNITS);
+export const unitsFor = (type) => (typeInfoOf(type)?.distance ? DISTANCE_UNITS : UNITS);
 
 export const round2 = (n) => Math.round(n * 100) / 100;
 const ladder = (step, count) => Array.from({ length: count }, (_, i) => round2(step * (i + 1)));
-const barLike = (type) => type === "barbell" || type === "plate";
+const barLike = (type) => !!typeInfoOf(type)?.barLike;
 
 // Extras: stack machines 2.5 to 20 lb or 1.25 to 10 kg; barbells and plate-loaded machines count in main
 // steps of 10 (kg or lb), so they offer extras of 2.5, 5 and 7.5.
@@ -290,9 +298,9 @@ const DUMBBELL_BANDS = {
 export const dumbbellBands = (unit) => structuredClone(DUMBBELL_BANDS[unit] ?? DUMBBELL_BANDS.kg);
 
 // ---------- Weight sets: the dumbbells and barbell a gym has ----------
-export const WEIGHT_SET_TYPES = ["dumbbell", "barbell"];
-export const setIdFor = (type) => (type === "dumbbell" ? "dumbbells" : type === "barbell" ? "barbell" : null);
-const SET_NAME = { dumbbell: "Dumbbells", barbell: "Barbell" };
+export const WEIGHT_SET_TYPES = TYPES.filter((t) => t.weightSet).map((t) => t.id);
+export const setIdFor = (type) => typeInfoOf(type)?.weightSet ?? null;
+const SET_NAME = Object.fromEntries(TYPES.filter((t) => t.weightSet).map((t) => [t.id, t.setName]));
 const BARBELL_TOP = { kg: 200, lb: 450 };
 
 // The usual dumbbell weights in a unit (see dumbbellBands). stacks.js buildPins gives the same list.
@@ -561,11 +569,11 @@ export function copyEquipment(from, ids, to, { overwrite = false } = {}) {
 // barbells or body weight. Each gym has a default kind (gym.listDefault); an exercise without a type counts
 // as a machine.
 export const LIST_KINDS = [
-  { id: "machines", label: "Machines", types: ["stack", "plate", "cardio"] },
-  { id: "dumbbells", label: "Dumbbells", types: ["dumbbell"] },
-  { id: "barbell", label: "Barbells", types: ["barbell"] },
-  { id: "bodyweight", label: "Body weight", types: ["bodyweight"] },
-];
+  { id: "machines", label: "Machines" },
+  { id: "dumbbells", label: "Dumbbells" },
+  { id: "barbell", label: "Barbells" },
+  { id: "bodyweight", label: "Body weight" },
+].map((k) => ({ ...k, types: TYPES.filter((t) => t.kind === k.id).map((t) => t.id) }));
 export const listKindOf = (item) => LIST_KINDS.find((k) => k.types.includes(item?.type))?.id ?? "machines";
 export const listDefaultOf = (gym) => (LIST_KINDS.some((k) => k.id === gym?.listDefault) ? gym.listDefault : "machines");
 export const setListDefault = (gym, kind) => (LIST_KINDS.some((k) => k.id === kind) ? { ...gym, listDefault: kind } : gym);
