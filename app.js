@@ -23,7 +23,7 @@ import {
 } from "./gym.js";
 import {
   STORE_VERSION, DEFAULT_GYM, cleanStore, migrateLegacy, toLegacySettings, applyLegacySettings, supportsWarmup,
-  exportMachines, importMachines, gymList, addGym, renameGym, setDefaultGym, setCurrentGym, useDefaultGym,
+  exportMachines, importMachines, gymList, addGym, renameGym, setDefaultGym, setCurrentGym, useDefaultGym, neverIds, setNever,
 } from "./store.js";
 import { makeBackup, backupFileName, parseBackup, fileKind, dataSummary, describeData, backupAge } from "./backup.js";
 import { MUSCLES, muscleOf, muscleLabel, partnerGroups, pairedPartners, getPairs, setPairs, addPair, removePair, pairedWith, isSuitable, setSuitable, hasPair, pairCandidates } from "./superset.js";
@@ -131,6 +131,7 @@ let pickMore = false;      // show less common exercises when picking a superset
 let pickOther = false;     // show the other sessions' exercises when picking a superset partner
 let rememberPair = false;  // save the next pair picked from another session
 let pickAll = false;       // show every exercise when picking a partner, not only the ones paired with this exercise
+let neverDraft = null;     // "never used here" choice for the exercise on its Set up screen, saved with Save
 let ssDraft = null;        // superset choices for the exercise on the Set up screen, saved with Save
 let panels = [];           // exercises on the logging page: one, or two when supersetting
 let editId = null;         // the exercise being set up
@@ -294,7 +295,7 @@ function renderStart() {
 
 // ---------- Exercise list ----------
 function renderList() {
-  const all = sessionPool();   // this session's exercises, plus pull-ups on a legs or arms day
+  const all = sessionPool().filter(inLists);   // this session's exercises, plus pull-ups on a legs or arms day
   const finished = all.filter((e) => isDoneToday(done, e.id));
   const open = all.filter((e) => !isDoneToday(done, e.id));
   // One kind of exercise at a time keeps the list short (machines, dumbbells, barbells, body weight).
@@ -660,6 +661,22 @@ function sessionPool() {
   return [...own, ...extra];
 }
 
+// "Never used here" (personal, per gym): left out of the lists and the superset picker, unless already done today.
+const neverNow = () => neverIds(store, store.currentPerson, store.currentGym);
+const inLists = (e) => !neverNow()[e.id] || isDoneToday(done, e.id);
+
+// The "At this gym" choice on an exercise's Set up screen: Normal or Never use. Saved with Save.
+function neverBoxHtml() { return box("At this gym", '<div class="choices" id="neverSw"></div>' + muted("Never use hides it from all your lists here. The gym keeps it.")); }
+function bindNever(e) {
+  if (!neverDraft || neverDraft.id !== e.id) neverDraft = { id: e.id, on: neverNow()[e.id] === true };
+  const draw = () => {
+    $("neverSw").innerHTML = "";
+    addChoices("neverSw", [["Normal", !neverDraft.on, () => { neverDraft.on = false; draw(); }], ["Never use", neverDraft.on, () => { neverDraft.on = true; draw(); }]]);
+  };
+  draw();
+}
+const saveNever = (e) => { if (neverDraft?.id === e.id) saveStore(setNever(store, store.currentPerson, store.currentGym, [e.id], neverDraft.on)); };
+
 // Your saved superset pairs (kept per person; each pair works both ways).
 const pairPrefs = () => getPairs(store, store.currentPerson);
 const savePairs = (prefs) => saveStore(setPairs(store, store.currentPerson, prefs));
@@ -668,9 +685,9 @@ const savePairs = (prefs) => saveStore(setPairs(store, store.currentPerson, pref
 // the rest of the session, then (behind a button) other sessions as exceptions you can save as a pair.
 function renderPick() {
   const first = panels[0].ex;
-  const all = exList().filter((e) => !isCardio(e));   // cardio machines are not paired
+  const all = exList().filter((e) => !isCardio(e) && inLists(e));   // cardio machines are not paired
   const taken = new Set([...panels.map((p) => p.ex.id), ...all.filter((e) => isDoneToday(done, e.id)).map((e) => e.id)]);
-  const pool = sessionPool();
+  const pool = sessionPool().filter(inLists);
   const poolIds = new Set(pool.map((e) => e.id));
   const others = all.filter((e) => !poolIds.has(e.id));
   const g = partnerGroups({ ex: first, pool, others, prefs: pairPrefs(), taken });
@@ -758,7 +775,14 @@ function summary(e, cfg, key) {
 
 function renderSetup() {
   ssDraft = null;
+  neverDraft = null;
   const list = sessionPool();   // this session's exercises, plus pull-ups on a legs or arms day
+  const never = neverNow();
+  const normal = list.filter((e) => !never[e.id]);
+  const hiddenHere = list.filter((e) => never[e.id]);
+  // Never use a whole kind of exercise here (not for the cardio list): every exercise of that kind in this gym
+  const kindable = exList().filter((e) => !isCardio(e));
+  const kinds = session.type === "cardio" ? [] : LIST_KINDS.filter((k) => kindable.some((e) => listKindOf(e) === k.id));
   const key = modeKey();
   const g = globalDefaults(settings);
   app.innerHTML =
@@ -769,14 +793,25 @@ function renderSetup() {
       (flash ? muted(flash) : "") +
       (hasDayType() ? "" : muted(esc(typeInfo(session.type).label) + " uses the Volume day defaults.")))) +
     muted(session.type === "cardio" ? "Tap a machine to set its target time." : "Tap a machine to give it its own weights, reps or sets.") +
+    (kinds.length > 0 ? box("Never use at this gym", '<div class="choices sm fit" id="neverKinds"></div>' + muted("Hides a whole kind from all your lists here. Single exercises can be set on their own screens.")) : "") +
     '<div id="list"></div>' +
-    (list.length === 0 ? muted("No exercises here yet. You will be able to add some in a later step.") : "");
+    (list.length === 0 ? muted("No exercises here yet. You will be able to add some in a later step.") : "") +
+    (hiddenHere.length > 0 ? "<h2>Never used here (" + hiddenHere.length + ")</h2>" + '<div id="neverList"></div>' : "");
   flash = "";
 
-  addItems("list", list.map((e) => [
-    esc(e.name) + "<small>" + esc(summary(e, configFor(settings, e.id), key)) + "</small>",
+  const rowFor = (e) => [
+    esc(e.name) + "<small>" + (never[e.id] ? "Never used here" : esc(summary(e, configFor(settings, e.id), key))) + "</small>",
     () => { editId = e.id; go("edit"); },
-  ]));
+  ];
+  addItems("list", normal.map(rowFor));
+  if (hiddenHere.length > 0) addItems("neverList", hiddenHere.map(rowFor));
+  if (kinds.length > 0) {
+    addChoices("neverKinds", kinds.map((k) => {
+      const ids = kindable.filter((e) => listKindOf(e) === k.id).map((e) => e.id);
+      const on = ids.every((id) => never[id]);
+      return [k.label, on, () => { saveStore(setNever(store, store.currentPerson, store.currentGym, ids, !on)); render(); }];
+    }));
+  }
   wire({
     back: goBack,
     saveDefaults: () => {
@@ -804,11 +839,14 @@ function renderEditCardio(e) {
       cols(numField("f_tmin", "Minutes", has ? t.min : ""), numField("f_tsec", "Seconds", has && t.sec > 0 ? t.sec : "")) +
       muted("Shown on the log card as your target. The machine's clock sets the actual time.")) +
     field("f_notes", "Notes (seat height, level, etc.)", '<textarea class="field" id="f_notes" rows="3">' + esc(cfg.notes) + "</textarea>") +
+    neverBoxHtml() +
     '<button class="primary" id="save">Save</button>';
+  bindNever(e);
   wire({
     back: goBack,
     save: () => {
       saveSettings(updateExercise(settings, e.id, { notes: $("f_notes").value, workVolume: makeMinutes(toNumber($("f_tmin").value), toNumber($("f_tsec").value)) }));
+      saveNever(e);
       go("setup");
     },
   });
@@ -858,7 +896,9 @@ function renderEdit() {
     field("f_notes", "Notes (seat height, pad position, etc.)", '<textarea class="field" id="f_notes" rows="3">' + esc(cfg.notes) + "</textarea>") +
     muted("Notes are the same for Heavy and Volume days.") +
     box("Supersets", '<div id="ssBody"></div>') +
+    neverBoxHtml() +
     '<button class="primary" id="save">Save</button>';
+  bindNever(e);
 
   // Superset choices are kept in a draft and saved with Save (Back without saving drops them).
   if (!ssDraft || ssDraft.id !== e.id) ssDraft = { id: e.id, prefs: pairPrefs() };
@@ -915,6 +955,7 @@ function renderEdit() {
       patch["sets" + key] = wholeOrNull($("f_sets").value);
       saveSettings(updateExercise(settings, e.id, patch));
       savePairs(ssDraft.prefs);
+      saveNever(e);
       go("setup");
     },
   });

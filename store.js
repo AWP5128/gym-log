@@ -303,6 +303,24 @@ export function applyLegacySettings(store, personId, gymId, flat) {
   };
 }
 
+// ---------- Never used (personal, per gym) ----------
+// A person can mark an exercise "never used" at a gym: it is hidden from their lists there (the gym keeps it).
+// Saved as people[person].gyms[gym].never = { exerciseId: true }.
+export const neverIds = (store, personId, gymId) => store.people?.[personId]?.gyms?.[gymId]?.never || {};
+export const isNever = (store, personId, gymId, exerciseId) => neverIds(store, personId, gymId)[exerciseId] === true;
+
+// Returns a new store with the exercises in ids marked never used (on = true) or back to normal (on = false).
+export function setNever(store, personId, gymId, ids, on) {
+  const person = store.people?.[personId] || { name: personId, gyms: {} };
+  const { never: old, ...rest } = person.gyms?.[gymId] || {};
+  const never = { ...(old || {}) };
+  for (const id of ids) { if (on) never[id] = true; else delete never[id]; }
+  return {
+    ...store,
+    people: { ...store.people, [personId]: { ...person, gyms: { ...person.gyms, [gymId]: { ...rest, machines: rest.machines || {}, ...(Object.keys(never).length > 0 ? { never } : {}) } } } },
+  };
+}
+
 // ---------- Sharing the machine list ----------
 // Only the shared fields (name, step, stack): no weights, reps or notes. Machines that are
 // exactly as built in are left out.

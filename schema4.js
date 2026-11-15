@@ -19,7 +19,8 @@
 //     exercise_type   { id, label, dayTypes }                  dayTypes: ["heavy", "volume"] or []
 //     exercise        { id, name, exerciseTypeId, alsoUnder, custom? }   one movement, shared by every gym
 //   Personal
-//     personal_setup  { personId, gymId, exerciseId, dayType, warmup, working, notes? }
+//     personal_setup  { personId, gymId, exerciseId, dayType, warmup, working, notes?, never? }
+//                     never: true on the dayType-null row = this person never uses the exercise at this gym (hidden from their lists)
 //                     a row per person, machine and day type; notes are written on each day-type row;
 //                     a machine with notes only has one row with dayType null
 //   Training log
@@ -149,6 +150,8 @@ export function migrateToV4({ store = null, settings = null, sets = [] } = {}) {
   for (const [personId, p] of people) {
     for (const [gymId, pg] of Object.entries(isObj(p.gyms) ? p.gyms : {})) {
       if (!v3.gyms[gymId]) continue;
+      // "never used here" marks go on the person's no-day-type row for the exercise (made if there is none yet)
+      const neverRows = Object.keys(isObj(pg?.never) ? pg.never : {}).filter((id) => pg.never[id] === true);
       for (const [exerciseId, m] of Object.entries(isObj(pg?.machines) ? pg.machines : {})) {
         note(exerciseId, null);
         const dayRows = DAY_TYPES.filter((d) => isObj(m[d]));
@@ -170,6 +173,12 @@ export function migrateToV4({ store = null, settings = null, sets = [] } = {}) {
             reps: Number.isFinite(m.pbReps) ? m.pbReps : undefined, time: null, workoutExerciseId: null,
           }));
         }
+      }
+      for (const exerciseId of neverRows) {
+        note(exerciseId, null);
+        const row = t.personal_setup.find((r) => r.personId === personId && r.gymId === gymId && r.exerciseId === exerciseId && r.dayType === null);
+        if (row) row.never = true;
+        else { setupCount++; t.personal_setup.push({ personId, gymId, exerciseId, dayType: null, never: true }); }
       }
     }
   }
@@ -289,6 +298,8 @@ export function fromV4(v4) {
   for (const m of t.gym_member) if (people[m.personId]) people[m.personId].gyms[m.gymId] ??= { machines: {} };
   const machine = (r) => people[r.personId]?.gyms[r.gymId]?.machines && (people[r.personId].gyms[r.gymId].machines[r.exerciseId] ??= {});
   for (const r of t.personal_setup) {
+    if (r.never) { const pg = people[r.personId]?.gyms[r.gymId]; if (pg) (pg.never ??= {})[r.exerciseId] = true; }
+    if (!r.notes && !r.dayType) continue;   // a row that only carries the never mark has no machine settings
     const m = machine(r);
     if (!m) continue;
     if (r.notes && !m.notes) m.notes = r.notes;
