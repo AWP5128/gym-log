@@ -787,7 +787,7 @@ function renderSetup() {
   // Each chip marks every exercise of the group that this gym has now.
   const all = exList();
   const isAbs = (e) => e.group === "abs" && !isCardio(e);
-  const SHORT = { machines: "Machine", dumbbells: "Dumbbell", barbell: "Barbell", bodyweight: "Bodyweight" };   // short, so the chips fit a phone
+  const SHORT = { machines: "Machines", dumbbells: "Dumbbells", barbell: "Barbells", bodyweight: "Bodyweight" };   // two even lines of chips, so there is room for plurals
   const groups = [
     ...LIST_KINDS.map((k) => ({ label: SHORT[k.id] || k.label, ids: all.filter((e) => !isAbs(e) && !isCardio(e) && listKindOf(e) === k.id).map((e) => e.id) })),
     { label: "Abs", ids: all.filter(isAbs).map((e) => e.id) },
@@ -803,7 +803,7 @@ function renderSetup() {
       (flash ? muted(flash) : "") +
       (hasDayType() ? "" : muted(esc(typeInfo(session.type).label) + " uses the Volume day defaults.")))) +
     muted(session.type === "cardio" ? "Tap a machine to set its target time." : "Tap a machine to give it its own weights, reps or sets.") +
-    (groups.length > 0 ? box("Never use at this gym", '<div class="choices fit" id="neverKinds" style="flex-wrap:wrap;overflow:visible"></div>' + muted("Hides a whole group from all your lists here. Single exercises can be set on their own screens.")) : "") +
+    (groups.length > 0 ? box("Never use at this gym", '<div class="choices fit" id="neverKinds" style="display:grid;grid-template-columns:repeat(' + (groups.length <= 3 ? groups.length : Math.ceil(groups.length / 2)) + ',1fr);overflow:visible"></div>' + muted("Hides a whole group from all your lists here. Single exercises can be set on their own screens.")) : "") +
     '<div id="list"></div>' +
     (list.length === 0 ? muted("No exercises here yet. You will be able to add some in a later step.") : "") +
     (hiddenHere.length > 0 ? "<h2>Never used here (" + hiddenHere.length + ")</h2>" + '<div id="neverList"></div>' : "");
