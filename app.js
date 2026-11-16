@@ -131,6 +131,7 @@ let pickMore = false;      // show less common exercises when picking a superset
 let pickOther = false;     // show the other sessions' exercises when picking a superset partner
 let rememberPair = false;  // save the next pair picked from another session
 let pickAll = false;       // show every exercise when picking a partner, not only the ones paired with this exercise
+let cardioDraft = null;    // target time and notes for a cardio machine on its Set up screen, saved with Save
 let neverDraft = null;     // Normal / Rare / Never choice for the exercise on its Set up screen, saved with Save
 let ssDraft = null;        // superset choices for the exercise on the Set up screen, saved with Save
 let panels = [];           // exercises on the logging page: one, or two when supersetting
@@ -779,6 +780,7 @@ function summary(e, cfg, key) {
 function renderSetup() {
   ssDraft = null;
   neverDraft = null;
+  cardioDraft = null;
   const list = sessionPool();   // this session's exercises, plus pull-ups on a legs or arms day
   const never = neverNow();
   const normal = list.filter((e) => !never[e.id]);
@@ -839,22 +841,29 @@ function renderSetup() {
 // weights and reps, and notes (the same notes for Heavy and Volume days).
 // A cardio machine's Set up screen: the target time the log card starts with, and notes.
 function renderEditCardio(e) {
-  const cfg = configFor(settings, e.id);
-  const t = splitMinutes(cfg.workVolume);
-  const has = cfg.workVolume !== null;
+  if (!cardioDraft || cardioDraft.id !== e.id) {
+    const cfg = configFor(settings, e.id);
+    const t = splitMinutes(cfg.workVolume);
+    const has = cfg.workVolume !== null;
+    cardioDraft = { id: e.id, tmin: has ? t.min : "", tsec: has && t.sec > 0 ? t.sec : "", notes: cfg.notes };
+  }
+  const d = cardioDraft;
+  const fields = [
+    { type: "group", title: "Target time for you", fields: [
+      { type: "pair", fields: [{ key: "tmin", label: "Minutes", type: "number" }, { key: "tsec", label: "Seconds", type: "number" }] },
+      { type: "note", small: false, text: "Shown on the log card as your target. The machine's clock sets the actual time." },
+    ] },
+    { key: "notes", label: "Notes (seat height, level, etc.)", type: "textarea" },
+  ];
   app.innerHTML =
     backBtn("Back without saving") + timeBar() + "<h2>" + esc(e.name) + "</h2>" +
-    box("Target time for you",
-      cols(numField("f_tmin", "Minutes", has ? t.min : ""), numField("f_tsec", "Seconds", has && t.sec > 0 ? t.sec : "")) +
-      muted("Shown on the log card as your target. The machine's clock sets the actual time.")) +
-    field("f_notes", "Notes (seat height, level, etc.)", '<textarea class="field" id="f_notes" rows="3">' + esc(cfg.notes) + "</textarea>") +
-    neverBoxHtml() +
-    '<button class="primary" id="save">Save</button>';
+    formHtml(fields, d, "f_") + neverBoxHtml() + '<button class="primary" id="save">Save</button>';
+  bindForm(fields, d, render, "f_");
   bindNever(e);
   wire({
     back: goBack,
     save: () => {
-      saveSettings(updateExercise(settings, e.id, { notes: $("f_notes").value, workVolume: makeMinutes(toNumber($("f_tmin").value), toNumber($("f_tsec").value)) }));
+      saveSettings(updateExercise(settings, e.id, { notes: d.notes, workVolume: makeMinutes(toNumber(d.tmin), toNumber(d.tsec)) }));
       saveNever(e);
       go("setup");
     },
@@ -1409,25 +1418,18 @@ function renderGymSet() {
 
 function renderGymAdd() {
   const items = draft.from ? gymItems(draft.from) : [];
+  const fields = [
+    { key: "name", label: "Gym name", type: "text", placeholder: "e.g. Holiday gym" },
+    { key: "from", label: "Copy equipment from", type: "select", redraw: true,
+      options: () => [["", "Start with no equipment"], ...gymList(store).map((g) => [g.id, gymName(g.id)])],
+      onChange: (x, v) => { x.ids = new Set(v ? gymItems(v).map(([id]) => id) : []); } },
+    { type: "note", show: (x) => !!x.from, text: "Tap to tick or untick what this gym also has. Stacks and units are copied. Your own weights and notes are not." },
+  ];
   app.innerHTML =
-    backBtn("Back without adding") + "<h2>Add a gym</h2>" +
-    field("ga_name", "Gym name", '<input class="field" id="ga_name" type="text" placeholder="e.g. Holiday gym" value="' + esc(draft.name) + '">') +
-    field("ga_from", "Copy equipment from",
-      selectHtml("ga_from", '<option value="">Start with no equipment</option>' +
-        optionsHtml(gymList(store).map((g) => g.id), draft.from, (id) => esc(gymName(id))), "field")) +
-    (draft.from
-      ? muted("Tap to tick or untick what this gym also has. Stacks and units are copied. Your own weights and notes are not.", "small") +
-        '<div class="topbar">' + ghostBtn("allBtn", "Select all") + ghostBtn("noneBtn", "Select none") + "</div>" +
-        '<div id="copyList"></div>'
-      : "") +
+    backBtn("Back without adding") + "<h2>Add a gym</h2>" + formHtml(fields, draft, "ga_") +
+    (draft.from ? '<div class="topbar">' + ghostBtn("allBtn", "Select all") + ghostBtn("noneBtn", "Select none") + '</div><div id="copyList"></div>' : "") +
     '<button class="primary" id="addBtn">Add gym</button>';
-
-  $("ga_name").oninput = (ev) => { draft.name = ev.target.value; };
-  $("ga_from").onchange = (ev) => {
-    draft.from = ev.target.value;
-    draft.ids = new Set(draft.from ? gymItems(draft.from).map(([id]) => id) : []);
-    render();
-  };
+  bindForm(fields, draft, render, "ga_");
   if (draft.from) {
     addItems("copyList", items.map(([id, i]) => [
       (draft.ids.has(id) ? "&#10003; " : "") + esc(i.name) + "<small>" + esc(typeLabel(i.type)) + ", " + i.unit + "</small>",

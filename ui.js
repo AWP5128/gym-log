@@ -31,25 +31,32 @@ export const backBtn = (label = "Back") => ghostBtn("back", "&larr; " + label, "
 
 // ---------- Forms described as data ----------
 // A form is a list of fields, shown from a draft object d (the draft holds what has been typed or chosen).
-//   { key, label, type: "text" | "select" | "choice" | "note" | "textarea", placeholder?, rows?,
+//   { key, label, type: "text" | "number" | "select" | "choice" | "note" | "textarea", placeholder?, rows?,
 //     options?: [[value, label], ...] or (d) => [...]     for select and choice
 //     show?: (d) => boolean                              leave the field out when false
-//     text?: string or (d) => string                     the words of a note
+//     text?: string or (d) => string                     the words of a note (small: false for normal size)
 //     isActive?: (d, value) => boolean                   which choice is lit (default: d[key] === value)
 //     onChange?: (d, value) => void                      extra changes when it is picked or typed
 //     redraw?: true                                      show the screen again after a select or choice changes }
+// Two layout types hold other fields: { type: "group", title, fields } is a titled box and
+// { type: "pair", fields: [a, b] } puts two fields side by side. Both can have show.
 // formHtml builds the text (so it can be tested); bindForm wires the page: it keeps d up to date and calls redraw().
 const optionsOf = (f, d) => (typeof f.options === "function" ? f.options(d) : f.options || []);
 const visible = (fields, d) => fields.filter((f) => !f.show || f.show(d));
+// The fields that hold a value, with groups and pairs opened up.
+const leaves = (fields, d) => visible(fields, d).flatMap((f) => (f.type === "group" || f.type === "pair" ? leaves(f.fields, d) : [f]));
 
 export function formHtml(fields, d, prefix = "fm_") {
   return visible(fields, d).map((f) => {
     const id = prefix + f.key;
     const value = d[f.key] ?? "";
-    if (f.type === "note") return muted(esc(typeof f.text === "function" ? f.text(d) : f.text), "small");
+    if (f.type === "group") return box(esc(f.title), formHtml(f.fields, d, prefix));
+    if (f.type === "pair") { const [a, b] = f.fields; return cols(formHtml([a], d, prefix), formHtml([b], d, prefix)); }
+    if (f.type === "note") return muted(esc(typeof f.text === "function" ? f.text(d) : f.text), f.small === false ? "" : "small");
+    if (f.type === "number") return numField(id, esc(f.label), value, f.placeholder || "");
     if (f.type === "textarea") return field(id, esc(f.label), '<textarea class="field" id="' + id + '" rows="' + (f.rows || 3) + '">' + esc(value) + "</textarea>");
     if (f.type === "select") {
-      const inner = optionsOf(f, d).map(([v, label]) => '<option value="' + esc(v) + '"' + (String(v) === String(d[f.key]) ? " selected" : "") + ">" + esc(label) + "</option>").join("");
+      const inner = optionsOf(f, d).map(([v, label]) => '<option value="' + esc(v) + '"' + (String(v) === String(d[f.key] ?? "") ? " selected" : "") + ">" + esc(label) + "</option>").join("");
       return field(id, esc(f.label), selectHtml(id, inner, "field"));
     }
     if (f.type === "choice") return "<label>" + esc(f.label) + '</label><div class="choices" id="' + id + '"></div>';
@@ -58,10 +65,10 @@ export function formHtml(fields, d, prefix = "fm_") {
 }
 
 export function bindForm(fields, d, redraw, prefix = "fm_") {
-  for (const f of visible(fields, d)) {
+  for (const f of leaves(fields, d)) {
     const id = prefix + f.key;
     const changed = (v) => { d[f.key] = v; f.onChange?.(d, v); if (f.redraw) redraw(); };
-    if (f.type === "text" || f.type === "textarea") $(id).oninput = (ev) => changed(ev.target.value);
+    if (f.type === "text" || f.type === "number" || f.type === "textarea") $(id).oninput = (ev) => changed(ev.target.value);
     else if (f.type === "select") $(id).onchange = (ev) => changed(ev.target.value);
     else if (f.type === "choice") {
       addChoices(id, optionsOf(f, d).map(([v, label]) => [label, f.isActive ? f.isActive(d, v) : d[f.key] === v, () => { changed(v); if (!f.redraw) redraw(); }]));

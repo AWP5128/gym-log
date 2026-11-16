@@ -28,3 +28,26 @@ test("a field that is shown only for one choice appears when it is picked", () =
   assert.ok(html.includes('id="f_extra"'));
   assert.ok(!html.includes("Note for"));
 });
+
+test("a group is a titled box, a pair puts two fields side by side, a number field is a number box", () => {
+  const f = [
+    { type: "group", title: "Target <time>", fields: [
+      { type: "pair", fields: [{ key: "m", label: "Minutes", type: "number" }, { key: "s", label: "Seconds", type: "number", placeholder: "0" }] },
+      { type: "note", small: false, text: "Shown on the card." },
+    ] },
+    { type: "group", title: "Hidden box", show: () => false, fields: [{ key: "z", label: "Z", type: "text" }] },
+  ];
+  const html = formHtml(f, { m: 25, s: "" }, "f_");
+  assert.ok(html.startsWith('<div class="panel"><strong>Target &lt;time&gt;</strong>'));
+  assert.ok(html.includes('<div class="two"><div><label for="f_m">Minutes</label>'));
+  assert.ok(html.includes('id="f_m" type="number"') && html.includes('value="25"'));
+  assert.ok(html.includes('id="f_s"') && html.includes('placeholder="0"'));
+  assert.ok(html.includes('<div class="muted">Shown on the card.</div>'));   // small: false leaves the small class off
+  assert.ok(!html.includes("Hidden box") && !html.includes('id="f_z"'));
+});
+
+test("a select with no value yet lights its blank option", () => {
+  const f = [{ key: "from", label: "From", type: "select", options: [["", "None"], ["a", "A"]] }];
+  assert.ok(formHtml(f, {}, "g_").includes('<option value="" selected>None</option>'));
+  assert.ok(formHtml(f, { from: "a" }, "g_").includes('<option value="a" selected>A</option>'));
+});
