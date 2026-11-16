@@ -35,7 +35,7 @@ import { runSync } from "./syncglue.js";
 import { makeRemote } from "./remote.js";
 import { makeAuth, loadClient } from "./auth.js";
 import {
-  $, esc, optionsHtml, selectHtml, field, numField, cols, box, muted, ghostBtn, backBtn, wire, addItems, addChoices, sendFile, formHtml, bindForm,
+  $, esc, optionsHtml, selectHtml, field, numField, cols, box, muted, ghostBtn, backBtn, wire, addItems, addChoices, sendFile, formHtml, bindForm, blocks,
 } from "./ui.js";
 
 // ---------- Saved data ----------
@@ -268,24 +268,22 @@ function commonSplit(list, expanded, id, small = false) {
 function renderStart() {
   const t = typeInfo(session.type);
   const age = backupAge(load(KEY.lastBackup, null));
+  // Choosing a session or day type updates Quick start and is remembered straight away.
+  const choose = (change) => { Object.assign(session, change); listKind = null; save(KEY.session, session); render(); };
+  const L = blocks();
   app.innerHTML =
     "<h1>Gym Log</h1>" + timeBar() +
     "<label>Gym</label>" +
     selectHtml("gymSel", optionsHtml(gymList(store).map((g) => g.id), store.currentGym, (id) => esc(gymName(id))), "field") +
     '<button class="primary" id="quick">Quick start: ' + esc(sessionLabel(session)) + "</button>" +
     "<label>Session</label>" +
-    '<div class="choices" id="types"></div>' +
-    (t.weights ? '<label>Day type</label><div class="choices" id="modes"></div>' : "") +
+    L.chips("types", sessionTypes.map((st) => [st.label, st.id === session.type, () => choose({ type: st.id })])) +
+    (t.weights ? "<label>Day type</label>" + L.chips("modes", [["heavy", "Heavy"], ["volume", "Volume"]].map(([mode, label]) => [label, session.mode === mode, () => choose({ mode })])) : "") +
     '<button class="secondary" id="setupBtn">Set up ' + esc(sessionLabel(session)) + "</button>" +
     '<button class="link" id="gymsBtn" style="display:block;margin:12px auto 0;opacity:0.6">Gyms</button>' +
     '<button class="faintlink" id="backupBtn">Backup &amp; restore' + (age.stale ? " (last backup: " + age.text + ")" : "") + "</button>";
 
-  // Choosing a session or day type updates Quick start and is remembered straight away.
-  const choose = (change) => { Object.assign(session, change); listKind = null; save(KEY.session, session); render(); };
-  addChoices("types", sessionTypes.map((st) => [st.label, st.id === session.type, () => choose({ type: st.id })]));
-  if (t.weights) {
-    addChoices("modes", [["heavy", "Heavy"], ["volume", "Volume"]].map(([mode, label]) => [label, session.mode === mode, () => choose({ mode })]));
-  }
+  L.bind();
   wire({
     quick: () => { showMore = false; listKind = null; go("list"); },
     setupBtn: () => go("setup"),
@@ -313,27 +311,24 @@ function renderList() {
   else if (shown.length === 0 && openKind.length === 0 && open.length > 0) message = "Nothing left in this list. The other lists still have exercises.";
   else if (shown.length === 0 && finished.length > 0) message = open.length === 0 ? "All done for today. Nice work." : "All the main exercises are done.";
 
+  const L = blocks();
   app.innerHTML =
     timeBar() + ghostBtn("change", esc(sessionLabel(session)) + " &#9662; change", "margin-top:0") +
-    (present.length > 1 ? '<div class="choices sm fit" id="kinds" style="margin-top:12px"></div>' : "") +
-    '<div id="list"></div>' +
+    (present.length > 1
+      ? L.chips("kinds", present.map((k) => [LIST_KINDS.find((x) => x.id === k).label + " " + openCounts[k], k === kind, () => { listKind = k; showMore = false; render(); }]), "choices sm fit", "margin-top:12px")
+      : "") +
+    L.items("list", shown.map((e) => [esc(e.name), () => openExercise(e)])) +
     (message ? muted(message) : "") +
     toggle +
     (finished.length > 0 ? ghostBtn("doneToggle", (showDone ? "Hide" : "Show") + " done today (" + finished.length + ")") : "") +
-    '<div id="doneList"></div>' +
-    (isRunning(workout) ? '<button class="secondary" id="endWorkout">End workout</button>' : "");
-
-  if (present.length > 1) {
-    addChoices("kinds", present.map((k) => [LIST_KINDS.find((x) => x.id === k).label + " " + openCounts[k], k === kind, () => { listKind = k; showMore = false; render(); }]));
-  }
-  addItems("list", shown.map((e) => [esc(e.name), () => openExercise(e)]));
-  if (showDone) {
-    addItems("doneList", finished.map((e) => {
+    L.items("doneList", !showDone ? [] : finished.map((e) => {
       const n = todaysSets(gymSets(), e.id).length;
       const what = isCardio(e) ? (n === 1 ? " session" : " sessions") : n === 1 ? " set" : " sets";
       return ["&#10003; " + esc(e.name) + "<small>" + n + what + " &middot; tap to view or reopen</small>", () => openExercise(e)];
-    }));
-  }
+    })) +
+    (isRunning(workout) ? '<button class="secondary" id="endWorkout">End workout</button>' : "");
+
+  L.bind();
   wire({
     change: () => go("start"),
     more: () => { showMore = !showMore; render(); },
@@ -699,14 +694,16 @@ function renderPick() {
   const paired = pairedPartners({ ex: first, pool, others, prefs: pairPrefs(), taken });
   // An exercise with pairs (chosen on its Set up screen) offers just those first; "Show all exercises" opens the rest.
   if (paired.length > 0 && !pickAll) {
+    const L = blocks();
     app.innerHTML =
       backBtn() + timeBar() + "<h2>Superset with " + esc(first.name) + "</h2>" +
-      muted("<strong>Your pairs</strong>") + '<div id="pickPairs"></div>' +
+      muted("<strong>Your pairs</strong>") +
+      L.items("pickPairs", paired.map((e) => {
+        const m = muscleLabel(muscleOf(e));
+        return [esc(e.name) + (m ? "<small>" + esc(m) + "</small>" : ""), () => { panels.push(newPanel(e)); go("exercise"); }];
+      })) +
       ghostBtn("pickAll", "Show all exercises");
-    addItems("pickPairs", paired.map((e) => {
-      const m = muscleLabel(muscleOf(e));
-      return [esc(e.name) + (m ? "<small>" + esc(m) + "</small>" : ""), () => { panels.push(newPanel(e)); go("exercise"); }];
-    }));
+    L.bind();
     wire({ back: goBack, pickAll: () => { pickAll = true; render(); } });
     return;
   }
@@ -728,35 +725,31 @@ function renderPick() {
   const names = Object.fromEntries(all.map((e) => [e.id, e.name]));
   const forget = pairedWith(pairPrefs(), first.id).filter((id) => names[id]);
 
+  const L = blocks();
   app.innerHTML =
     backBtn() + timeBar() + "<h2>Superset with " + esc(first.name) + "</h2>" +
     (paired.length ? ghostBtn("pickPairsOnly", "Show only my pairs") : "") +
     (g.suggested.length
-      ? muted("<strong>" + (mine ? "Opposite to " + esc(muscleLabel(mine).toLowerCase()) + " and your pairs" : "Your pairs") + "</strong>") + '<div id="pickSuggest"></div>'
+      ? muted("<strong>" + (mine ? "Opposite to " + esc(muscleLabel(mine).toLowerCase()) + " and your pairs" : "Your pairs") + "</strong>") + L.items("pickSuggest", g.suggested.map((e) => row(e, false)))
       : muted(mine ? "No opposite muscles left in this session." : "No muscle group known for this exercise; showing the whole session.")) +
-    (g.rest.length ? muted("<strong>Rest of " + esc(sessionLabel(session)) + "</strong>") + '<div id="pickList"></div>' + rest.toggle : "") +
+    (g.rest.length ? muted("<strong>Rest of " + esc(sessionLabel(session)) + "</strong>") + L.items("pickList", rest.shown.map((e) => row(e, false))) + rest.toggle : "") +
     (g.elsewhere.length
       ? ghostBtn("pickOther", (pickOther ? "Hide" : "Show") + " other sessions (" + g.elsewhere.length + ")") +
         (pickOther
           ? muted("Pick one for this time only, or turn on Remember to pair them every time.") +
-            '<div class="choices fit" id="pickRemember"></div><div id="pickElsewhere"></div>'
+            L.chips("pickRemember", [["Remember this pair", rememberPair, () => { rememberPair = !rememberPair; render(); }]], "choices fit") +
+            L.items("pickElsewhere", g.elsewhere.map((e) => row(e, true)))
           : "")
       : "") +
     (g.suggested.length + g.rest.length + g.elsewhere.length === 0 ? muted("No other exercises left to add.") : "") +
-    (forget.length ? muted("<strong>Saved pairs</strong>") + '<div id="pickForget"></div>' : "");
-
-  if (g.suggested.length) addItems("pickSuggest", g.suggested.map((e) => row(e, false)));
-  if (g.rest.length) addItems("pickList", rest.shown.map((e) => row(e, false)));
-  if (pickOther && g.elsewhere.length) {
-    addChoices("pickRemember", [["Remember this pair", rememberPair, () => { rememberPair = !rememberPair; render(); }]]);
-    addItems("pickElsewhere", g.elsewhere.map((e) => row(e, true)));
-  }
-  if (forget.length) {
-    addItems("pickForget", forget.map((id) => [
-      "Forget " + esc(first.name) + " + " + esc(names[id]),
-      () => { savePairs(removePair(pairPrefs(), first.id, id)); render(); },
-    ]));
-  }
+    (forget.length
+      ? muted("<strong>Saved pairs</strong>") +
+        L.items("pickForget", forget.map((id) => [
+          "Forget " + esc(first.name) + " + " + esc(names[id]),
+          () => { savePairs(removePair(pairPrefs(), first.id, id)); render(); },
+        ]))
+      : "");
+  L.bind();
   wire({
     back: goBack,
     pickMore: () => { pickMore = !pickMore; render(); },
@@ -799,6 +792,11 @@ function renderSetup() {
   ].filter((g) => g.ids.length > 0);
   const key = modeKey();
   const g = globalDefaults(settings);
+  const rowFor = (e) => [
+    esc(e.name) + "<small>" + (never[e.id] ? "Never used here" : (useOf(store, store.currentPerson, store.currentGym, e) === "rare" ? "Rare · " : "") + esc(summary(e, configFor(settings, e.id), key))) + "</small>",
+    () => { editId = e.id; go("edit"); },
+  ];
+  const L = blocks();
   app.innerHTML =
     backBtn() + timeBar() + "<h2>Set up " + esc(sessionLabel(session)) + "</h2>" +
     (session.type === "cardio" ? "" : box("Defaults for every machine · " + key + " day",
@@ -807,24 +805,19 @@ function renderSetup() {
       (flash ? muted(flash) : "") +
       (hasDayType() ? "" : muted(esc(typeInfo(session.type).label) + " uses the Volume day defaults.")))) +
     muted(session.type === "cardio" ? "Tap a machine to set its target time." : "Tap a machine to give it its own weights, reps or sets.") +
-    (groups.length > 0 ? box("Never use at this gym", '<div class="choices fit" id="neverKinds" style="display:grid;grid-template-columns:repeat(' + (groups.length <= 3 ? groups.length : Math.ceil(groups.length / 2)) + ',1fr);overflow:visible"></div>' + muted("Hides a whole group from all your lists here. Single exercises can be set on their own screens.")) : "") +
-    '<div id="list"></div>' +
+    (groups.length > 0
+      ? box("Never use at this gym",
+          L.chips("neverKinds", groups.map((g) => {
+            const on = g.ids.every((id) => never[id]);
+            return [g.label, on, () => { saveStore(setNever(store, store.currentPerson, store.currentGym, g.ids, !on)); render(); }];
+          }), "choices fit", "display:grid;grid-template-columns:repeat(" + (groups.length <= 3 ? groups.length : Math.ceil(groups.length / 2)) + ",1fr);overflow:visible") +
+          muted("Hides a whole group from all your lists here. Single exercises can be set on their own screens."))
+      : "") +
+    L.items("list", normal.map(rowFor)) +
     (list.length === 0 ? muted("No exercises here yet. You will be able to add some in a later step.") : "") +
-    (hiddenHere.length > 0 ? "<h2>Never used here (" + hiddenHere.length + ")</h2>" + '<div id="neverList"></div>' : "");
+    (hiddenHere.length > 0 ? "<h2>Never used here (" + hiddenHere.length + ")</h2>" + L.items("neverList", hiddenHere.map(rowFor)) : "");
   flash = "";
-
-  const rowFor = (e) => [
-    esc(e.name) + "<small>" + (never[e.id] ? "Never used here" : (useOf(store, store.currentPerson, store.currentGym, e) === "rare" ? "Rare · " : "") + esc(summary(e, configFor(settings, e.id), key))) + "</small>",
-    () => { editId = e.id; go("edit"); },
-  ];
-  addItems("list", normal.map(rowFor));
-  if (hiddenHere.length > 0) addItems("neverList", hiddenHere.map(rowFor));
-  if (groups.length > 0) {
-    addChoices("neverKinds", groups.map((g) => {
-      const on = g.ids.every((id) => never[id]);
-      return [g.label, on, () => { saveStore(setNever(store, store.currentPerson, store.currentGym, g.ids, !on)); render(); }];
-    }));
-  }
+  L.bind();
   wire({
     back: goBack,
     saveDefaults: () => {
@@ -940,36 +933,30 @@ function renderEdit() {
     const prefs = ssDraft.prefs;
     const on = isSuitable(prefs, e.id);
     const c = pairCandidates({ ex: e, all: exList().filter((x) => !isCardio(x)), prefs, anyDay: ANY_DAY_SUPERSET });
-    const group = (title, list) => list.length
-      ? muted("<strong>" + title + "</strong>") + '<div class="ssList"></div>' : "";
+    const L = blocks();
+    const pairRows = (list) => list.map((x) => {
+      const paired = hasPair(prefs, e.id, x.id);
+      const m = muscleLabel(muscleOf(x));
+      return [(paired ? "&#10003; " : "") + esc(x.name) + (m ? "<small>" + esc(m) + (paired ? " · paired" : "") + "</small>" : ""), () => {
+        ssDraft.prefs = paired ? removePair(prefs, e.id, x.id) : addPair(prefs, e.id, x.id);
+        drawSuperset();
+      }];
+    });
+    const group = (id, title, list) => list.length ? muted("<strong>" + title + "</strong>") + L.items(id, pairRows(list)) : "";
     $("ssBody").innerHTML =
       muted("Mark this exercise as suitable for supersets, then choose what it can be paired with.") +
-      '<div class="choices" id="ssSwitch"></div>' +
+      L.chips("ssSwitch", [["Not for supersets", !on, () => {
+        const n = pairedWith(prefs, e.id).length;
+        if (n > 0 && !confirm("Turning this off removes its " + n + (n === 1 ? " pair" : " pairs") + ". Continue?")) return;
+        ssDraft.prefs = setSuitable(prefs, e.id, false);
+        drawSuperset();
+      }], ["Suitable for supersets", on, () => { ssDraft.prefs = setSuitable(prefs, e.id, true); drawSuperset(); }]]) +
       (on
         ? (c.opposite.length + c.rest.length + c.other.length === 0
             ? muted("No other exercises are marked suitable yet. Mark them on their own Set up screens, then come back to pair them.")
-            : group("Opposite muscles", c.opposite) + group("Rest of " + esc((ANY_DAY_SUPERSET.includes(e.id) && hasDayType() ? typeInfo(session.type) : typeInfo(e.group))?.label ?? "this session"), c.rest) + group("Other sessions", c.other))
+            : group("ssOpposite", "Opposite muscles", c.opposite) + group("ssRest", "Rest of " + esc((ANY_DAY_SUPERSET.includes(e.id) && hasDayType() ? typeInfo(session.type) : typeInfo(e.group))?.label ?? "this session"), c.rest) + group("ssOther", "Other sessions", c.other))
         : "");
-    addChoices("ssSwitch", [["Not for supersets", !on, () => {
-      const n = pairedWith(prefs, e.id).length;
-      if (n > 0 && !confirm("Turning this off removes its " + n + (n === 1 ? " pair" : " pairs") + ". Continue?")) return;
-      ssDraft.prefs = setSuitable(prefs, e.id, false);
-      drawSuperset();
-    }], ["Suitable for supersets", on, () => { ssDraft.prefs = setSuitable(prefs, e.id, true); drawSuperset(); }]]);
-    if (!on) return;
-    const lists = [...$("ssBody").querySelectorAll(".ssList")];
-    [c.opposite, c.rest, c.other].filter((l) => l.length).forEach((list, n) => {
-      const el = lists[n];
-      el.id = "ssList" + n;
-      addItems(el.id, list.map((x) => {
-        const paired = hasPair(prefs, e.id, x.id);
-        const m = muscleLabel(muscleOf(x));
-        return [(paired ? "&#10003; " : "") + esc(x.name) + (m ? "<small>" + esc(m) + (paired ? " · paired" : "") + "</small>" : ""), () => {
-          ssDraft.prefs = paired ? removePair(prefs, e.id, x.id) : addPair(prefs, e.id, x.id);
-          drawSuperset();
-        }];
-      }));
-    });
+    L.bind();
   };
   drawSuperset();
 
@@ -1076,18 +1063,19 @@ const saveGym = (id, gym) => saveStore({ ...store, gyms: { ...store.gyms, [id]: 
 const flashHtml = () => (flash ? '<div class="note">' + esc(flash) + "</div>" : "");
 
 function renderGyms() {
+  const L = blocks();
   app.innerHTML =
     backBtn() + "<h2>Gyms</h2>" + flashHtml() +
     muted("Each gym has its own equipment. Tap a gym to rename it, make it your default or see its equipment.") +
-    '<div id="list"></div>' +
+    L.items("list", gymList(store).map((g) => [
+      esc(g.name) + "<small>" +
+        [g.id === store.defaultGym && "Default", g.id === store.currentGym && "In use now", gymItems(g.id).length + " items"].filter(Boolean).join(" &middot; ") +
+        "</small>",
+      () => { gymId = g.id; gsTab = "equipment"; go("gymEdit"); },
+    ])) +
     '<button class="secondary" id="addGymBtn">Add a gym</button>';
   flash = "";
-  addItems("list", gymList(store).map((g) => [
-    esc(g.name) + "<small>" +
-      [g.id === store.defaultGym && "Default", g.id === store.currentGym && "In use now", gymItems(g.id).length + " items"].filter(Boolean).join(" &middot; ") +
-      "</small>",
-    () => { gymId = g.id; gsTab = "equipment"; go("gymEdit"); },
-  ]));
+  L.bind();
   wire({
     back: goBack,
     addGymBtn: () => { draft = { name: "", from: "", ids: new Set() }; go("gymAdd"); },
@@ -1099,29 +1087,51 @@ function renderGymEdit() {
   if (!g) return go("gyms");
   const items = gymItems(gymId);
   const hidden = hiddenEntries(g);
-  const buttons = [];   // [id, "hide" | "restore"] for each Hide or Restore button, by position
-  const row = ([id, i], kind) => {
-    buttons.push([id, kind]);
+  const L = blocks();
+  let cardN = 0;   // each list of cards needs its own id
+  // The rows of a list of equipment: Edit and Hide on items in use, Restore on hidden ones.
+  const itemCards = (list, kind) => L.cards("eq" + cardN++, list.map(([id, i]) => {
     const saved = i.weightSet && g.weightSets?.[i.weightSet]
       ? " &middot; uses " + esc(g.weightSets[i.weightSet].name)
       : Array.isArray(i.pins) && i.pins.length > 0 ? " &middot; " + (i.type === "stack" ? "stack" : "weight list") + " saved" : "";
-    return '<div class="cardhead" style="margin-top:10px"><div>' + esc(i.name) +
-      '<small style="display:block;color:#aaa;font-size:0.9rem">' + i.unit + saved + "</small></div>" +
-      '<span style="white-space:nowrap">' + (kind === "hide" ? '<button class="chip" id="edit' + (buttons.length - 1) + '">Edit</button> ' : "") +
-      '<button class="chip" id="act' + (buttons.length - 1) + '">' + (kind === "hide" ? "Hide" : "Restore") + "</button></span></div>";
-  };
+    return {
+      title: i.name, sub: i.unit + saved,
+      actions: [
+        ...(kind === "hide" ? [["Edit", () => {
+          editItemId = id;
+          itemEditDraft = { name: i.name, group: i.group, muscle: i.muscle || "", type: i.type, unit: i.unit, useSet: false, watts: i.watts !== false };
+          stackPins = Array.isArray(i.pins) ? [...i.pins] : [];
+          go("gymItemEdit");
+        }]] : []),
+        [kind === "hide" ? "Hide" : "Restore", () => {
+          saveGym(gymId, kind === "hide" ? hideItem(g, id) : restoreItem(g, id));
+          flash = kind === "hide" ? "Hid " + i.name + ". You can bring it back under Hidden." : "Brought back " + i.name;
+          render();
+        }],
+      ],
+    };
+  }));
   // The gym's dumbbells and barbell are equipment like the machines: Edit changes their weights and unit,
   // Hide means the gym does not have them (the exercises that use them are hidden with them).
   const setIds = Object.keys(g.weightSets || {}).filter((k) => SET_TYPES.includes(g.weightSets[k].type));
   const setLabel = (sid) => typeInfoOf(g.weightSets[sid].type)?.setName ?? "Weights";
-  const setRow = (sid, kind) => {
+  const setCards = (list, kind) => L.cards("ws" + cardN++, list.map((sid) => {
     const ws = g.weightSets[sid];
-    const sub = ws.unit + " &middot; " + ws.pins.length + " weights" + (kind === "restore" ? " &middot; " + weightSetUsers(g, sid).length + " exercises" : "");
-    return '<div class="cardhead" style="margin-top:10px"><div>' + esc(setLabel(sid)) +
-      '<small style="display:block;color:#aaa;font-size:0.9rem">' + sub + "</small></div>" +
-      '<span style="white-space:nowrap">' + (kind === "hide" ? '<button class="chip" id="wsEdit_' + sid + '">Edit</button> ' : "") +
-      '<button class="chip" id="wsAct_' + sid + '">' + (kind === "hide" ? "Hide" : "Restore") + "</button></span></div>";
-  };
+    return {
+      title: setLabel(sid),
+      sub: ws.unit + " &middot; " + ws.pins.length + " weights" + (kind === "restore" ? " &middot; " + weightSetUsers(g, sid).length + " exercises" : ""),
+      actions: [
+        ...(kind === "hide" ? [["Edit", () => { editSetId = sid; setPins = [...g.weightSets[sid].pins]; go("gymSet"); }]] : []),
+        [kind === "hide" ? "Hide" : "Restore", () => {
+          const n = weightSetUsers(g, sid).length;
+          if (kind === "hide" && !confirm("Hide the " + setLabel(sid) + "? The " + n + " exercises that use them are hidden too. Nothing is deleted, and Restore brings them all back.")) return;
+          saveGym(gymId, kind === "restore" ? restoreWeightSet(g, sid) : hideWeightSet(g, sid));
+          flash = kind === "restore" ? "Brought back the " + setLabel(sid) + " and its exercises" : "Hid the " + setLabel(sid) + ". You can bring it back under Hidden.";
+          render();
+        }],
+      ],
+    };
+  }));
   const shownSets = setIds.filter((k) => !isSetHidden(g, k));
   const hiddenSets = setIds.filter((k) => isSetHidden(g, k));
   const listLabel = (t) => t.listLabel ?? t.label;
@@ -1138,22 +1148,22 @@ function renderGymEdit() {
     muted("The unit new equipment of each kind starts in. The dumbbells and barbell have their own units: tap Edit on them under Free weights. For cardio it also changes the cross trainer and bike (the rowing machine stays in metres).", "small") +
     TYPES.filter((t) => !SET_TYPES.includes(t.id)).map((t) =>
       '<div class="cardhead" style="margin-top:10px"><div>' + esc(t.label) + "</div>" +
-      '<div class="choices sm" id="unit_' + t.id + '"></div></div>').join(""));
+      L.chips("unit_" + t.id, (t.distance ? GYM_DISTANCE_UNITS : UNITS).map((u) => [u, g.units?.[t.id] === u, () => { saveGym(gymId, setDefaultUnit(g, t.id, u)); render(); }]), "choices sm") + "</div>").join(""));
   const freePart = () =>
-    (shownSets.length > 0 ? box("Free weights (" + shownSets.length + ")", shownSets.map((k) => setRow(k, "hide")).join("")) : muted("No free weights at this gym.")) +
+    (shownSets.length > 0 ? box("Free weights (" + shownSets.length + ")", setCards(shownSets, "hide")) : muted("No free weights at this gym.")) +
     (hiddenSets.length > 0
       ? muted("Hidden free weights are kept with their weights and history. Restore brings one back with its exercises.", "small") +
-        box("Hidden free weights", hiddenSets.map((k) => setRow(k, "restore")).join(""))
+        box("Hidden free weights", setCards(hiddenSets, "restore"))
       : "");
   const equipmentPart = () =>
-    '<div class="choices sm fit" id="gsKinds" style="margin-top:12px"></div>' +
+    L.chips("gsKinds", LIST_KINDS.map((k) => [k.label + " " + counts[k.id], kind === k.id, () => { saveGym(gymId, setListDefault(g, k.id)); render(); }]), "choices sm fit", "margin-top:12px") +
     (groups.length === 0 ? muted("No " + kindInfo.label.toLowerCase() + " equipment yet.") : "") +
-    groups.map(([label, list]) => box(esc(label) + " (" + list.length + ")", list.map((e) => row(e, "hide")).join(""))).join("") +
+    groups.map(([label, list]) => box(esc(label) + " (" + list.length + ")", itemCards(list, "hide"))).join("") +
     '<button class="secondary" id="addItemBtn">Add equipment</button>' +
     (hiddenKind.length > 0
       ? "<h2>Hidden (" + hiddenKind.length + ")</h2>" +
         muted("Hidden items are kept with their weights and history. Restore brings one back.", "small") +
-        box("Hidden " + kindInfo.label.toLowerCase(), hiddenKind.map((e) => row(e, "restore")).join(""))
+        box("Hidden " + kindInfo.label.toLowerCase(), itemCards(hiddenKind, "restore"))
       : "");
   app.innerHTML =
     backBtn() + "<h2>" + esc(g.name) + "</h2>" + flashHtml() +
@@ -1162,45 +1172,11 @@ function renderGymEdit() {
     (store.defaultGym === gymId ? muted("This is your default gym. The app starts here.") : '<button class="secondary" id="makeDefault">Make this my default gym</button>') +
     (store.currentGym === gymId ? muted("You are using this gym now.") : '<button class="primary" id="useNow">Use this gym now</button>') +
     "<h2>Gym settings</h2>" +
-    '<div class="choices fit" id="gsTabs"></div>' +
+    L.chips("gsTabs", [["Units", "units"], ["Free weights", "free"], ["Equipment", "equipment"]].map(([label, id]) => [label, gsTab === id, () => { gsTab = id; render(); }]), "choices fit") +
     (gsTab === "units" ? unitsPart() : gsTab === "free" ? freePart() : equipmentPart());
   flash = "";
 
-  addChoices("gsTabs", [["Units", "units"], ["Free weights", "free"], ["Equipment", "equipment"]].map(([label, id]) => [label, gsTab === id, () => { gsTab = id; render(); }]));
-  for (const sid of gsTab === "free" ? setIds : []) {
-    const hiddenNow = isSetHidden(g, sid);
-    if (!hiddenNow) $("wsEdit_" + sid).onclick = () => { editSetId = sid; setPins = [...g.weightSets[sid].pins]; go("gymSet"); };
-    $("wsAct_" + sid).onclick = () => {
-      const n = weightSetUsers(g, sid).length;
-      if (!hiddenNow && !confirm("Hide the " + setLabel(sid) + "? The " + n + " exercises that use them are hidden too. Nothing is deleted, and Restore brings them all back.")) return;
-      saveGym(gymId, hiddenNow ? restoreWeightSet(g, sid) : hideWeightSet(g, sid));
-      flash = hiddenNow ? "Brought back the " + setLabel(sid) + " and its exercises" : "Hid the " + setLabel(sid) + ". You can bring it back under Hidden.";
-      render();
-    };
-  }
-  if (gsTab === "equipment") {
-    addChoices("gsKinds", LIST_KINDS.map((k) => [k.label + " " + counts[k.id], kind === k.id, () => { saveGym(gymId, setListDefault(g, k.id)); render(); }]));
-  }
-  for (const t of gsTab === "units" ? TYPES.filter((x) => !SET_TYPES.includes(x.id)) : []) {
-    addChoices("unit_" + t.id, (t.distance ? GYM_DISTANCE_UNITS : UNITS).map((u) => [u, g.units?.[t.id] === u, () => { saveGym(gymId, setDefaultUnit(g, t.id, u)); render(); }]));
-  }
-  buttons.forEach(([id, kind], n) => {
-    if (kind === "hide") {
-      $("edit" + n).onclick = () => {
-        const it = g.equipment[id];
-        editItemId = id;
-        itemEditDraft = { name: it.name, group: it.group, muscle: it.muscle || "", type: it.type, unit: it.unit, useSet: false, watts: it.watts !== false };
-        stackPins = Array.isArray(it.pins) ? [...it.pins] : [];
-        go("gymItemEdit");
-      };
-    }
-    $("act" + n).onclick = () => {
-      const name = g.equipment[id].name;
-      saveGym(gymId, kind === "hide" ? hideItem(g, id) : restoreItem(g, id));
-      flash = kind === "hide" ? "Hid " + name + ". You can bring it back under Hidden." : "Brought back " + name;
-      render();
-    };
-  });
+  L.bind();
   wire({
     back: goBack,
     saveName: () => {
@@ -1377,10 +1353,19 @@ function renderGymSet() {
   if (!ws) return go("gymEdit");
   const bar = ws.type === "barbell";
   const used = weightSetUsers(g, editSetId).length;
+  const L = blocks();
   app.innerHTML =
     backBtn("Back without saving") + "<h2>" + esc(ws.name) + "</h2>" +
     muted(used + " exercises use this list. Weights are in " + ws.unit + (bar ? "." : ", per dumbbell (the weight in each hand).")) +
-    '<label>Unit</label><div class="choices" id="wsUnit"></div>' +
+    "<label>Unit</label>" + L.chips("wsUnit", UNITS.map((u) => [u, ws.unit === u, () => {
+      if (u === ws.unit) return;
+      const r = setWeightSetUnit(g, editSetId, u, idsWithHistory(sets, gymId));
+      if (r.reason === "history") { alert("Exercises using the " + ws.name + " list have logged sets at this gym, so its unit can't be changed."); return; }
+      if (!r.ok || !confirm("Change to " + u + "? The list of weights starts again at the usual " + u + " weights.")) return;
+      saveGym(gymId, r.gym);
+      setPins = [...r.gym.weightSets[editSetId].pins];
+      render();
+    }])) +
     (bar
       ? numField("w_top", "Top weight (" + ws.unit + ")", ws.top, "e.g. 200") +
         muted("The barbell goes up in steps of 10 " + ws.unit + ". Each exercise adds 2.5, 5 or 7.5 " + ws.unit + " on top.", "small")
@@ -1397,15 +1382,7 @@ function renderGymSet() {
       b.onclick = () => { setPins = removePin(setPins, Number(b.dataset.w)); draw("Removed " + b.dataset.w + " " + ws.unit + "."); };
     });
   };
-  addChoices("wsUnit", UNITS.map((u) => [u, ws.unit === u, () => {
-    if (u === ws.unit) return;
-    const r = setWeightSetUnit(g, editSetId, u, idsWithHistory(sets, gymId));
-    if (r.reason === "history") { alert("Exercises using the " + ws.name + " list have logged sets at this gym, so its unit can't be changed."); return; }
-    if (!r.ok || !confirm("Change to " + u + "? The list of weights starts again at the usual " + u + " weights.")) return;
-    saveGym(gymId, r.gym);
-    setPins = [...r.gym.weightSets[editSetId].pins];
-    render();
-  }]));
+  L.bind();
   if (!bar) draw("Saved weights shown below.");
   const done = () => { flash = ws.name + " saved"; goBack(); };
   wire({
@@ -1441,17 +1418,19 @@ function renderGymAdd() {
       onChange: (x, v) => { x.ids = new Set(v ? gymItems(v).map(([id]) => id) : []); } },
     { type: "note", show: (x) => !!x.from, text: "Tap to tick or untick what this gym also has. Stacks and units are copied. Your own weights and notes are not." },
   ];
+  const L = blocks();
   app.innerHTML =
     backBtn("Back without adding") + "<h2>Add a gym</h2>" + formHtml(fields, draft, "ga_") +
-    (draft.from ? '<div class="topbar">' + ghostBtn("allBtn", "Select all") + ghostBtn("noneBtn", "Select none") + '</div><div id="copyList"></div>' : "") +
+    (draft.from
+      ? '<div class="topbar">' + ghostBtn("allBtn", "Select all") + ghostBtn("noneBtn", "Select none") + "</div>" +
+        L.items("copyList", items.map(([id, i]) => [
+          (draft.ids.has(id) ? "&#10003; " : "") + esc(i.name) + "<small>" + esc(typeLabel(i.type)) + ", " + i.unit + "</small>",
+          () => { if (draft.ids.has(id)) draft.ids.delete(id); else draft.ids.add(id); render(); },
+        ]))
+      : "") +
     '<button class="primary" id="addBtn">Add gym</button>';
   bindForm(fields, draft, render, "ga_");
-  if (draft.from) {
-    addItems("copyList", items.map(([id, i]) => [
-      (draft.ids.has(id) ? "&#10003; " : "") + esc(i.name) + "<small>" + esc(typeLabel(i.type)) + ", " + i.unit + "</small>",
-      () => { if (draft.ids.has(id)) draft.ids.delete(id); else draft.ids.add(id); render(); },
-    ]));
-  }
+  L.bind();
   wire({
     back: goBack,
     allBtn: () => { draft.ids = new Set(items.map(([id]) => id)); render(); },

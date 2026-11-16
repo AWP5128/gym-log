@@ -76,6 +76,36 @@ export function bindForm(fields, d, redraw, prefix = "fm_") {
   }
 }
 
+// ---------- Lists and chips described as data ----------
+// blocks() gives one screen a small kit. Each helper returns the html of a block AND remembers how to wire it, so the
+// holder id is written once and a block cannot be wired without being on the page. Call bind() after app.innerHTML is set.
+//   items(id, rows)                  big buttons: rows are [html, onclick]
+//   chips(id, rows, cls, style)      choice buttons: rows are [label, active, onclick]; cls and style are for the holder
+//   cards(id, rows)                  a name with a small line under it and chip buttons beside it:
+//                                    rows are { title, sub (html), actions: [[label, onclick], ...] }
+export function blocks() {
+  const todo = [];
+  return {
+    items(id, rows) {
+      todo.push(() => addItems(id, rows));
+      return '<div id="' + id + '"></div>';
+    },
+    chips(id, rows, cls = "choices", style = "") {
+      todo.push(() => addChoices(id, rows));
+      return '<div class="' + cls + '" id="' + id + '"' + (style ? ' style="' + style + '"' : "") + "></div>";
+    },
+    cards(id, rows) {
+      todo.push(() => rows.forEach((r, i) => r.actions.forEach(([, onclick], n) => { $(id + "_" + i + "_" + n).onclick = onclick; })));
+      return rows.map((r, i) =>
+        '<div class="cardhead" style="margin-top:10px"><div>' + esc(r.title) +
+        '<small style="display:block;color:#aaa;font-size:0.9rem">' + r.sub + "</small></div>" +
+        '<span style="white-space:nowrap">' + r.actions.map(([label], n) => '<button class="chip" id="' + id + "_" + i + "_" + n + '">' + label + "</button>").join(" ") + "</span></div>"
+      ).join("");
+    },
+    bind() { todo.splice(0).forEach((f) => f()); },
+  };
+}
+
 // ---------- The page ----------
 export const $ = (id) => document.getElementById(id);
 
