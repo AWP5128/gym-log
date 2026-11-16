@@ -1295,34 +1295,34 @@ function renderGymItemEdit() {
     : muted("Save the change of type or unit first, then edit the stack.", "small");
   const autoMuscle = muscleOf({ id: editItemId, name: d.name });   // what the app picks when none is chosen
   const typeLabelFor = (id) => typeInfoOf(id).addLabel ?? typeLabel(id);
+  const fields = [
+    { key: "name", label: "Name", type: "text" },
+    { type: "pair", fields: [
+      { key: "group", label: "Session", type: "select", options: ["legs", "arms", "abs"].map((id) => [id, typeInfo(id).label]) },
+      { key: "muscle", label: "Muscle", type: "select",
+        options: [["", "Auto: " + (muscleLabel(autoMuscle) || "none")], ...Object.entries(MUSCLES)] },
+    ] },
+    { type: "note", text: "The muscle is used to suggest opposite-muscle partners for supersets." },
+    { type: "note", show: () => locked, text: "Type and unit can't change because this exercise has logged sets at this gym. Name and session can." },
+    { key: "type", label: "Type", type: "select", show: () => !locked, redraw: true,
+      options: TYPES.filter((t) => t.id !== "cardio").map((t) => [t.id, typeLabelFor(t.id)]),
+      onChange: (x) => { x.useSet = false; } },
+    { type: "note", show: () => !!set,
+      text: () => linked || d.type !== it.type
+        ? "Uses this gym's " + set.name + " list (" + set.unit + "). Change the list with Edit on the gym screen."
+        : "Not linked to this gym's " + set.name + " list (this exercise is in " + it.unit + ")." },
+    { type: "note", show: () => !set && locked, text: "Unit: " + it.unit },
+    { key: "unit", label: "Unit", type: "select", show: () => !set && !locked, redraw: stackItem, options: UNITS.map((u) => [u, u]) },
+  ];
   app.innerHTML =
-    backBtn("Back without saving") + "<h2>Edit " + esc(it.name) + "</h2>" +
-    field("ie_name", "Name", '<input class="field" id="ie_name" type="text" value="' + esc(d.name) + '">') +
-    cols(
-      field("ie_group", "Session", selectHtml("ie_group", optionsHtml(["legs", "arms", "abs"], d.group, (id) => esc(typeInfo(id).label)), "field")),
-      field("ie_muscle", "Muscle", selectHtml("ie_muscle", optionsHtml(["", ...Object.keys(MUSCLES)], d.muscle, (id) => esc(id === "" ? "Auto: " + (muscleLabel(autoMuscle) || "none") : MUSCLES[id])), "field"))) +
-    muted("The muscle is used to suggest opposite-muscle partners for supersets.", "small") +
-    (locked
-      ? muted("Type and unit can't change because this exercise has logged sets at this gym. Name and session can.", "small")
-      : field("ie_type", "Type", selectHtml("ie_type", optionsHtml(TYPES.filter((t) => t.id !== "cardio").map((t) => t.id), d.type, (id) => esc(typeLabelFor(id))), "field"))) +
-    (set
-      ? muted(linked || d.type !== it.type
-          ? "Uses this gym's " + esc(set.name) + " list (" + set.unit + "). Change the list with Edit on the gym screen."
-          : "Not linked to this gym's " + esc(set.name) + " list (this exercise is in " + it.unit + ").", "small") +
-        (!linked && d.type === it.type ? '<button class="secondary" id="useSetBtn">Use the ' + esc(set.name) + " list</button>" : "")
-      : locked
-        ? muted("Unit: " + it.unit, "small")
-        : field("ie_unit", "Unit", selectHtml("ie_unit", optionsHtml(UNITS, d.unit), "field"))) +
+    backBtn("Back without saving") + "<h2>Edit " + esc(it.name) + "</h2>" + formHtml(fields, d, "ie_") +
+    (set && !linked && d.type === it.type ? '<button class="secondary" id="useSetBtn">Use the ' + esc(set.name) + " list</button>" : "") +
     stackHtml +
     '<button class="primary" id="saveItem">Save</button>' +
     (stackOk && hasPins(it) ? '<button class="ghost" id="clearStack">Clear the stack</button>' : "");
 
   const stackForm = stackOk ? bindStackForm(it) : null;
-  $("ie_name").oninput = (ev) => { d.name = ev.target.value; };
-  $("ie_group").onchange = (ev) => { d.group = ev.target.value; };
-  $("ie_muscle").onchange = (ev) => { d.muscle = ev.target.value; };
-  if (!locked) $("ie_type").onchange = (ev) => { d.type = ev.target.value; d.useSet = false; render(); };
-  if (!set && !locked) $("ie_unit").onchange = (ev) => { d.unit = ev.target.value; if (stackItem) render(); };
+  bindForm(fields, d, render, "ie_");
   wire({
     back: goBack,
     ...(set && !linked && d.type === it.type ? { useSetBtn: () => { d.useSet = true; render(); } } : {}),
