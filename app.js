@@ -131,6 +131,7 @@ let pickMore = false;      // show less common exercises when picking a superset
 let pickOther = false;     // show the other sessions' exercises when picking a superset partner
 let rememberPair = false;  // save the next pair picked from another session
 let pickAll = false;       // show every exercise when picking a partner, not only the ones paired with this exercise
+let weightDraft = null;    // warm-up and working weights, reps, sets and notes for an exercise on its Set up screen, saved with Save
 let cardioDraft = null;    // target time and notes for a cardio machine on its Set up screen, saved with Save
 let neverDraft = null;     // Normal / Rare / Never choice for the exercise on its Set up screen, saved with Save
 let ssDraft = null;        // superset choices for the exercise on the Set up screen, saved with Save
@@ -781,6 +782,7 @@ function renderSetup() {
   ssDraft = null;
   neverDraft = null;
   cardioDraft = null;
+  weightDraft = null;
   const list = sessionPool();   // this session's exercises, plus pull-ups on a legs or arms day
   const never = neverNow();
   const normal = list.filter((e) => !never[e.id]);
@@ -884,38 +886,52 @@ function renderEdit() {
     return Number.isFinite(x) ? x : 0;
   };
 
-  // A stack weight: chosen from the machine's stack when it has one, otherwise typed.
-  const stackField = (id, label, value) => hasStack
-    ? field(id, label, selectHtml(id, '<option value="">None</option>' + optionsHtml(weightOptions(e, value ?? undefined), value, (w) => w + " " + e.unit), "field"))
-    : numField(id, label + " (" + e.unit + ")", value, "none");
+  // The boxes are kept in a draft and saved with Save (Back without saving drops them).
+  const draftKey = e.id + "|" + key;
+  if (!weightDraft || weightDraft.id !== draftKey) {
+    const own = (kind) => {   // a machine with extras shows the stack weight and the extra apart (the total is saved)
+      const total = cfg[kind + key];
+      const extra = total === null ? 0 : extraFor(kind);
+      return { [kind]: !withExtras || total === null ? total : totalWeight(total, -extra), [kind + "Extra"]: extra };
+    };
+    weightDraft = { id: draftKey, ...own("start"), ...own("work"), warmReps: ownWarmupReps(settings, e.id, key), reps: cfg["reps" + key], sets: cfg["sets" + key], notes: cfg.notes };
+  }
+  const d = weightDraft;
 
+  // A stack weight: chosen from the machine's stack when it has one, otherwise typed.
+  const stackField = (kind, label) => ({
+    key: kind, type: hasStack ? "select" : "number", placeholder: "none",
+    label: hasStack ? label + " weight" : label + " weight (" + e.unit + ")",
+    options: () => [["", "None"], ...weightOptions(e, toNumber(d[kind]) ?? undefined).map((w) => [w, w + " " + e.unit])],
+  });
   // A warm-up or working weight. Machines with extras get a stack weight and an extra list (the total is the sum).
-  const weightField = (kind, label) => {
-    const total = cfg[kind + key];
-    const id = "f_" + kind;
-    if (!withExtras) return stackField(id, label + " weight", total);
-    const extra = total === null ? 0 : extraFor(kind);
-    const stack = total === null ? null : totalWeight(total, -extra);
-    return cols(stackField(id, label + " weight", stack), field(id + "Extra", "Extra", extraSelectHtml(id + "Extra", e, extra)));
-  };
+  const weightFields = (kind, label) => !withExtras ? [stackField(kind, label)] : [{ type: "pair", fields: [
+    stackField(kind, label),
+    { key: kind + "Extra", label: "Extra", type: "select", options: [[0, "None"], ...extraOptions(e).map((x) => [x, "+" + x + " " + e.unit])] },
+  ] }];
+  const fields = [
+    { type: "note", small: false, text: hasStack ? "Weights come from this machine's stack." : "No stack set up yet. Add one under Gyms: tap the gym, then Edit on the machine." },
+    { type: "group", title: sessionLabel(session) + " for you", fields: [
+      ...(withWarmup
+        ? [...weightFields("start", "Warm-up"), { key: "warmReps", label: "Warm-up reps", type: "number", placeholder: "default " + warmupReps(settings, e.id, key) }]
+        : [{ type: "note", small: false, text: "No warm-up set for this exercise." }]),
+      ...weightFields("work", "Working"),
+      { type: "pair", fields: [
+        { key: "reps", label: "Working reps", type: "number", placeholder: "default " + eff["reps" + key] },
+        { key: "sets", label: "Working sets", type: "number", placeholder: "default " + eff["sets" + key] },
+      ] },
+      { type: "note", small: false, text: "The warm-up is optional. Leave reps or sets blank to use the defaults." },
+    ] },
+    { key: "notes", label: "Notes (seat height, pad position, etc.)", type: "textarea" },
+    { type: "note", small: false, text: "Notes are the same for Heavy and Volume days." },
+  ];
 
   app.innerHTML =
-    backBtn("Back without saving") + timeBar() + "<h2>" + esc(e.name) + "</h2>" +
-    muted(hasStack ? "Weights come from this machine's stack." : "No stack set up yet. Add one under Gyms: tap the gym, then Edit on the machine.") +
-    box(esc(sessionLabel(session)) + " for you",
-      (withWarmup
-        ? weightField("start", "Warm-up") +
-          numField("f_warmReps", "Warm-up reps", ownWarmupReps(settings, e.id, key), "default " + warmupReps(settings, e.id, key))
-        : muted("No warm-up set for this exercise.")) +
-      weightField("work", "Working") +
-      cols(numField("f_reps", "Working reps", cfg["reps" + key], "default " + eff["reps" + key]),
-           numField("f_sets", "Working sets", cfg["sets" + key], "default " + eff["sets" + key])) +
-      muted("The warm-up is optional. Leave reps or sets blank to use the defaults.")) +
-    field("f_notes", "Notes (seat height, pad position, etc.)", '<textarea class="field" id="f_notes" rows="3">' + esc(cfg.notes) + "</textarea>") +
-    muted("Notes are the same for Heavy and Volume days.") +
+    backBtn("Back without saving") + timeBar() + "<h2>" + esc(e.name) + "</h2>" + formHtml(fields, d, "f_") +
     box("Supersets", '<div id="ssBody"></div>') +
     neverBoxHtml() +
     '<button class="primary" id="save">Save</button>';
+  bindForm(fields, d, render, "f_");
   bindNever(e);
 
   // Superset choices are kept in a draft and saved with Save (Back without saving drops them).
@@ -960,17 +976,17 @@ function renderEdit() {
   wire({
     back: goBack,
     save: () => {
-      const patch = { notes: $("f_notes").value };
+      const patch = { notes: d.notes };
       for (const kind of withWarmup ? ["start", "work"] : ["work"]) {
-        const typed = toNumber($("f_" + kind).value);
+        const typed = toNumber(d[kind]);
         if (!withExtras) { patch[kind + key] = typed; continue; }
-        const extra = typed === null ? 0 : Number($("f_" + kind + "Extra").value);
+        const extra = typed === null ? 0 : Number(d[kind + "Extra"]);
         patch[kind + key] = typed === null ? null : totalWeight(typed, extra);       // the total is what is used
         patch[kind + "Extra" + key] = typed === null || extra === 0 ? null : extra;   // remembered so the split shows again
       }
-      if (withWarmup) patch["warmReps" + key] = wholeOrNull($("f_warmReps").value);
-      patch["reps" + key] = wholeOrNull($("f_reps").value);
-      patch["sets" + key] = wholeOrNull($("f_sets").value);
+      if (withWarmup) patch["warmReps" + key] = wholeOrNull(d.warmReps);
+      patch["reps" + key] = wholeOrNull(d.reps);
+      patch["sets" + key] = wholeOrNull(d.sets);
       saveSettings(updateExercise(settings, e.id, patch));
       savePairs(ssDraft.prefs);
       saveNever(e);
