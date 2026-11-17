@@ -25,6 +25,7 @@ test("the storage names never change", () => {
     beforeRestore: "gymlog.beforeRestore",
     beforeGyms: "gymlog.beforeGyms",
     beforeV4: "gymlog.beforeV4",
+    beforeStageC: "gymlog.beforeStageC",
     sync: "gymlog.sync",
   });
 });

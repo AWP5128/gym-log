@@ -1,8 +1,8 @@
 // Gym Log: the screens and what they do. Saved data goes through storage.js and store.js,
 // and the small HTML and page helpers are in ui.js.
 import { sessionTypes, exercisesForGroup } from "./exercises.js";
-import { emptySettings, configFor, updateExercise, toNumber, manualPb } from "./settings.js";
-import { effectiveConfig, globalDefaults, updateGlobalDefaults, warmupReps, ownWarmupReps } from "./defaults.js";
+import { emptySettings, updateExercise, toNumber, manualPb } from "./settings.js";
+import { updateGlobalDefaults, configOf, globalDefaultsOf, effectiveConfigOf, warmupRepsOf, ownWarmupRepsOf, savedExtraOf } from "./defaults.js";
 import {
   makeSet, todaysSets, defaultsFor, removeLastSet, weightOptions, setsForGym, tagSets, setsForExercise,
   isDoneToday, markDone, unmarkDone, personalBests, hasGymBest, describeBest, weightCaption, newBestLevel, idsWithHistory,
@@ -11,7 +11,7 @@ import {
   formatTime, startWorkout, isRunning, workoutElapsed, machineElapsed, machineStart, isStopped, stopMachine, restartMachine,
   runMachines, endWorkout, cleanWorkout,
 } from "./timer.js";
-import { hasExtras, extraOptions, totalWeight, splitFor, savedExtra } from "./extras.js";
+import { hasExtras, extraOptions, totalWeight, splitForFrom } from "./extras.js";
 import {
   isCardio, isCardioSet, makeCardioSet, todaysEntries, describeEntry, entryBoxes, makeMinutes, splitMinutes, describeTime,
   cardioBests, newCardioBests, bestLines, newBestLines, clockText, chooseDuration, chooseStart, endOf,
@@ -56,6 +56,8 @@ if (!store) store = migrateLegacy(load(KEY.settings, {}));
 else if (savedStore.version === 2 && load(KEY.beforeGyms, null) === null) save(KEY.beforeGyms, savedStore);
 // Step 26: the safety copy of the data as it was before version 4 (kept once), then the store is saved as version 4.
 if (load(KEY.beforeV4, null) === null) save(KEY.beforeV4, { store, sets });
+// Stage C of the refactor: a safety copy of the store and sets as they were before the screens read settings a new way (kept once).
+if (load(KEY.beforeStageC, null) === null) save(KEY.beforeStageC, { store, sets });
 // Step 29d: sync (off unless config.js says so). dataVersion counts saves, so a sync round that overlapped a save is thrown away.
 let syncState = load(KEY.sync, null) ?? emptySync();
 let syncTimer = null;
@@ -100,6 +102,14 @@ function saveSettings(next) {
   persistStore(store);
 }
 reloadSettings();
+
+// Stage C: the screens read the current person's settings at the current gym straight from the store.
+const myConfig = (id) => configOf(store, store.currentPerson, store.currentGym, id);                  // this machine's own settings
+const myEffective = (id) => effectiveConfigOf(store, store.currentPerson, store.currentGym, id);      // with the every-machine defaults filled in
+const myDefaults = () => globalDefaultsOf(store, store.currentPerson);
+const myWarmupReps = (id, key) => warmupRepsOf(store, store.currentPerson, store.currentGym, id, key);
+const myOwnWarmupReps = (id, key) => ownWarmupRepsOf(store, store.currentPerson, store.currentGym, id, key);
+const mySavedExtra = (id, kind, key) => savedExtraOf(store, store.currentPerson, store.currentGym, id, kind, key);
 
 // Saves a changed store (gyms, current gym, default gym) and refreshes what the screens read from it.
 function saveStore(next) {
@@ -348,7 +358,7 @@ function renderList() {
 
 // A machine's settings as the logging page uses them. Exercises with no warm-up set have no warm-up weight.
 function cfgFor(e) {
-  const cfg = effectiveConfig(settings, e.id);
+  const cfg = myEffective(e.id);
   if (!supportsWarmup(e)) { cfg.startHeavy = null; cfg.startVolume = null; }
   return cfg;
 }
@@ -361,13 +371,13 @@ function resetPanel(p) {
   p.weight = d.weight;
   // The warm-up set (the first set of the day, when a warm-up weight is set) uses the warm-up reps.
   if (cfg["start" + key] !== null && todaysSets(gymSets(), p.ex.id).length === 0) {
-    p.reps = warmupReps(settings, p.ex.id, key);
+    p.reps = myWarmupReps(p.ex.id, key);
   }
   if (!hasExtras(p.ex)) return;
   // Machines with extras: keep the stack weight and extra already chosen when the total is unchanged
   // (the next set at the same weight), otherwise work them out from the total.
   if (p.pin !== undefined && totalWeight(p.pin, p.extra) === d.weight) return;
-  const s = splitFor(settings, p.ex, d.weight, cfg, key);
+  const s = splitForFrom((kind) => mySavedExtra(p.ex.id, kind, key), p.ex, d.weight, cfg, key);
   p.pin = s.pin;
   p.extra = s.extra;
 }
@@ -390,7 +400,7 @@ const extraSelectHtml = (id, e, chosen) =>
 
 // The personal bests for an exercise at the current gym: a machine shows the best here and the best ever
 // (one line when they are the same), free weights show the best ever only. All logged sets count, from every gym.
-const bestsFor = (e) => personalBests(sets, e, store.currentGym, manualPb(configFor(settings, e.id)));
+const bestsFor = (e) => personalBests(sets, e, store.currentGym, manualPb(myConfig(e.id)));
 
 function bestsHtml(e) {
   if (e.kind === "time") return "";
@@ -541,7 +551,7 @@ const distanceLabel = (unit) => (unit === "m" ? "Distance (metres)" : unit === "
 
 function cardioPanelHtml(p, i) {
   const e = p.ex;
-  const cfg = configFor(settings, e.id);
+  const cfg = myConfig(e.id);
   const today = todaysEntries(gymSets(), e.id);
   const showWatts = e.watts !== false;
   const lines = bestLines(cardioBests(sets, e.id, store.currentGym), showWatts);
@@ -791,9 +801,9 @@ function renderSetup() {
     { label: "Cardio", ids: all.filter(isCardio).map((e) => e.id) },
   ].filter((g) => g.ids.length > 0);
   const key = modeKey();
-  const g = globalDefaults(settings);
+  const g = myDefaults();
   const rowFor = (e) => [
-    esc(e.name) + "<small>" + (never[e.id] ? "Never used here" : (useOf(store, store.currentPerson, store.currentGym, e) === "rare" ? "Rare · " : "") + esc(summary(e, configFor(settings, e.id), key))) + "</small>",
+    esc(e.name) + "<small>" + (never[e.id] ? "Never used here" : (useOf(store, store.currentPerson, store.currentGym, e) === "rare" ? "Rare · " : "") + esc(summary(e, myConfig(e.id), key))) + "</small>",
     () => { editId = e.id; go("edit"); },
   ];
   const L = blocks();
@@ -837,7 +847,7 @@ function renderSetup() {
 // A cardio machine's Set up screen: the target time the log card starts with, and notes.
 function renderEditCardio(e) {
   if (!cardioDraft || cardioDraft.id !== e.id) {
-    const cfg = configFor(settings, e.id);
+    const cfg = myConfig(e.id);
     const t = splitMinutes(cfg.workVolume);
     const has = cfg.workVolume !== null;
     cardioDraft = { id: e.id, tmin: has ? t.min : "", tsec: has && t.sec > 0 ? t.sec : "", notes: cfg.notes };
@@ -868,14 +878,14 @@ function renderEditCardio(e) {
 function renderEdit() {
   const e = exList().find((x) => x.id === editId);
   if (isCardio(e)) return renderEditCardio(e);
-  const cfg = configFor(settings, e.id);
-  const eff = effectiveConfig(settings, e.id);   // what this machine uses right now
+  const cfg = myConfig(e.id);
+  const eff = myEffective(e.id);   // what this machine uses right now
   const key = modeKey();
   const withExtras = hasExtras(e);
   const withWarmup = supportsWarmup(e);
   const hasStack = hasPins(e);
   const extraFor = (kind) => {
-    const x = savedExtra(settings, e.id, kind, key);
+    const x = mySavedExtra(e.id, kind, key);
     return Number.isFinite(x) ? x : 0;
   };
 
@@ -887,7 +897,7 @@ function renderEdit() {
       const extra = total === null ? 0 : extraFor(kind);
       return { [kind]: !withExtras || total === null ? total : totalWeight(total, -extra), [kind + "Extra"]: extra };
     };
-    weightDraft = { id: draftKey, ...own("start"), ...own("work"), warmReps: ownWarmupReps(settings, e.id, key), reps: cfg["reps" + key], sets: cfg["sets" + key], notes: cfg.notes };
+    weightDraft = { id: draftKey, ...own("start"), ...own("work"), warmReps: myOwnWarmupReps(e.id, key), reps: cfg["reps" + key], sets: cfg["sets" + key], notes: cfg.notes };
   }
   const d = weightDraft;
 
@@ -906,7 +916,7 @@ function renderEdit() {
     { type: "note", small: false, text: hasStack ? "Weights come from this machine's stack." : "No stack set up yet. Add one under Gyms: tap the gym, then Edit on the machine." },
     { type: "group", title: sessionLabel(session) + " for you", fields: [
       ...(withWarmup
-        ? [...weightFields("start", "Warm-up"), { key: "warmReps", label: "Warm-up reps", type: "number", placeholder: "default " + warmupReps(settings, e.id, key) }]
+        ? [...weightFields("start", "Warm-up"), { key: "warmReps", label: "Warm-up reps", type: "number", placeholder: "default " + myWarmupReps(e.id, key) }]
         : [{ type: "note", small: false, text: "No warm-up set for this exercise." }]),
       ...weightFields("work", "Working"),
       { type: "pair", fields: [
