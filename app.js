@@ -2,7 +2,7 @@
 // and the small HTML and page helpers are in ui.js.
 import { sessionTypes, exercisesForGroup } from "./exercises.js";
 import { emptySettings, updateExercise, toNumber, manualPb } from "./settings.js";
-import { updateGlobalDefaults, configOf, globalDefaultsOf, effectiveConfigOf, warmupRepsOf, ownWarmupRepsOf, savedExtraOf } from "./defaults.js";
+import { configOf, globalDefaultsOf, effectiveConfigOf, warmupRepsOf, ownWarmupRepsOf, savedExtraOf } from "./defaults.js";
 import {
   makeSet, todaysSets, defaultsFor, removeLastSet, weightOptions, setsForGym, tagSets, setsForExercise,
   isDoneToday, markDone, unmarkDone, personalBests, hasGymBest, describeBest, weightCaption, newBestLevel, idsWithHistory,
@@ -23,7 +23,7 @@ import {
 } from "./gym.js";
 import {
   STORE_VERSION, DEFAULT_GYM, cleanStore, migrateLegacy, toLegacySettings, applyLegacySettings, supportsWarmup,
-  exportMachines, importMachines, gymList, addGym, renameGym, setDefaultGym, setCurrentGym, useDefaultGym, neverIds, setNever, useIds, useOf, setUse,
+  exportMachines, importMachines, gymList, addGym, renameGym, setDefaultGym, setCurrentGym, useDefaultGym, neverIds, setNever, useIds, useOf, setUse, setDefaults,
 } from "./store.js";
 import { makeBackup, backupFileName, parseBackup, fileKind, dataSummary, describeData, backupAge } from "./backup.js";
 import { MUSCLES, muscleOf, muscleLabel, partnerGroups, pairedPartners, getPairs, setPairs, addPair, removePair, pairedWith, isSuitable, setSuitable, hasPair, pairCandidates } from "./superset.js";
@@ -831,10 +831,7 @@ function renderSetup() {
   wire({
     back: goBack,
     saveDefaults: () => {
-      saveSettings(updateGlobalDefaults(settings, {
-        ["reps" + key]: wholeOrNull($("g_reps").value),
-        ["sets" + key]: wholeOrNull($("g_sets").value),
-      }));
+      saveStore(setDefaults(store, store.currentPerson, { [key === "Heavy" ? "heavy" : "volume"]: { reps: wholeOrNull($("g_reps").value), sets: wholeOrNull($("g_sets").value) } }));
       flash = "Defaults saved";
       render();
     },
