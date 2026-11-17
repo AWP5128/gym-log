@@ -17,6 +17,7 @@
 // they differ from the built-in exercise, which is how the screens have always seen them.
 
 import { exercises } from "./exercises.js";
+import { addCustomExercise, removeCustomExercise } from "./settings.js";
 import {
   newGym, makeItem, starterEquipment, withMachineData, updateItem, copyEquipment, uniqueId, DEFAULT_UNITS,
   ensureWeightSets, seedStarterFree, STARTER_FREE, seedStarterAbs, STARTER_ABS, seedStarterCardio, STARTER_CARDIO, movePullUps,
@@ -302,6 +303,74 @@ export function applyLegacySettings(store, personId, gymId, flat) {
     },
   };
 }
+
+// ---------- Personal settings, read and written directly (stage C of the refactor) ----------
+// The same data the flat settings above carry, but read from and written to the store without the flat shape.
+// Nothing in the app uses these yet; they are proved equal to the flat path in personal.test.js.
+// A day type is "heavy" or "volume". A person's settings for one exercise at one gym:
+//   { notes, pbWeight, pbReps, heavy|volume: { warmup: { weight, extra, reps }, working: { weight, extra, reps, sets } } }
+// Reading gives every field (null when not set, "" for no notes). A patch to setPersonal gives only the fields to change;
+// a field given as null is cleared, a field left out stays. weight is always the TOTAL, extra the part that came from the extra list.
+const hasOwn = (o, k) => isObj(o) && Object.prototype.hasOwnProperty.call(o, k);
+
+export function personalOf(store, personId, gymId, id) {
+  const p = store.people?.[personId]?.gyms?.[gymId]?.machines?.[id] || {};
+  const out = { notes: typeof p.notes === "string" ? p.notes : "", pbWeight: num(p.pbWeight), pbReps: num(p.pbReps) };
+  for (const [, mode] of MODES) {
+    const block = { warmup: {}, working: {} };
+    for (const [, group, key] of FIELDS) block[group][key] = num(p[mode]?.[group]?.[key]);
+    out[mode] = block;
+  }
+  return out;
+}
+
+// Returns a new store with the patch applied to this person's settings for the exercise. Everything else is left as it was
+// (other exercises, other gyms and people, never, use, the superset marks). An exercise left with nothing set loses its entry.
+export function setPersonal(store, personId, gymId, id, patch) {
+  const now = personalOf(store, personId, gymId, id);
+  const flat = { notes: hasOwn(patch, "notes") ? patch.notes : now.notes, pbWeight: hasOwn(patch, "pbWeight") ? patch.pbWeight : now.pbWeight, pbReps: hasOwn(patch, "pbReps") ? patch.pbReps : now.pbReps };
+  for (const [Cap, mode] of MODES) {
+    for (const [prefix, group, key] of FIELDS) {
+      const given = hasOwn(patch?.[mode]?.[group], key);
+      flat[prefix + Cap] = given ? patch[mode][group][key] : now[mode][group][key];
+    }
+  }
+  const entry = personalFrom(flat);   // the same cleaning as the flat path
+  const person = store.people?.[personId] || { name: personId, gyms: {}, defaults: {} };
+  const here = person.gyms?.[gymId] || {};
+  const machines = { ...(here.machines || {}) };
+  if (has(entry)) machines[id] = entry; else delete machines[id];
+  return { ...store, people: { ...store.people, [personId]: { ...person, gyms: { ...person.gyms, [gymId]: { ...here, machines } } } } };
+}
+
+// The person's every-machine defaults: { heavy|volume: { reps, sets, warmupReps } }, every field present (null when not set).
+export function defaultsOf(store, personId) {
+  const d = store.people?.[personId]?.defaults || {};
+  const out = {};
+  for (const [, mode] of MODES) {
+    out[mode] = {};
+    for (const [, key] of DEFAULTS) out[mode][key] = num(d[mode]?.[key]);
+  }
+  return out;
+}
+
+// Returns a new store with the defaults patched (given fields change, null clears, left out stays). A day type with nothing set is left out.
+export function setDefaults(store, personId, patch) {
+  const now = defaultsOf(store, personId);
+  const defaults = {};
+  for (const [, mode] of MODES) {
+    const o = {};
+    for (const [, key] of DEFAULTS) o[key] = hasOwn(patch?.[mode], key) ? num(patch[mode][key]) : now[mode][key];
+    if (Object.values(o).some((v) => v !== null)) defaults[mode] = o;
+  }
+  const person = store.people?.[personId] || { name: personId, gyms: {} };
+  return { ...store, people: { ...store.people, [personId]: { ...person, defaults } } };
+}
+
+// The exercises you added (the same list the flat settings call custom).
+export const customOf = (store) => store.custom || [];
+export const addCustom = (store, def) => ({ ...store, custom: addCustomExercise({ custom: store.custom || [] }, def).custom });
+export const removeCustom = (store, id) => ({ ...store, custom: removeCustomExercise({ custom: store.custom || [] }, id).custom });
 
 // ---------- Never used (personal, per gym) ----------
 // A person can mark an exercise "never used" at a gym: it is hidden from their lists there (the gym keeps it).
