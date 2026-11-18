@@ -23,7 +23,7 @@ import {
 } from "./gym.js";
 import {
   STORE_VERSION, DEFAULT_GYM, cleanStore, migrateLegacy, toLegacySettings, applyLegacySettings, supportsWarmup,
-  exportMachines, importMachines, gymList, addGym, renameGym, setDefaultGym, setCurrentGym, useDefaultGym, neverIds, setNever, useIds, useOf, setUse, setDefaults,
+  exportMachines, importMachines, gymList, addGym, renameGym, setDefaultGym, setCurrentGym, useDefaultGym, neverIds, setNever, useIds, useOf, setUse, setDefaults, setPersonal,
 } from "./store.js";
 import { makeBackup, backupFileName, parseBackup, fileKind, dataSummary, describeData, backupAge } from "./backup.js";
 import { MUSCLES, muscleOf, muscleLabel, partnerGroups, pairedPartners, getPairs, setPairs, addPair, removePair, pairedWith, isSuitable, setSuitable, hasPair, pairCandidates } from "./superset.js";
@@ -865,7 +865,7 @@ function renderEditCardio(e) {
   wire({
     back: goBack,
     save: () => {
-      saveSettings(updateExercise(settings, e.id, { notes: d.notes, workVolume: makeMinutes(toNumber(d.tmin), toNumber(d.tsec)) }));
+      saveStore(setPersonal(store, store.currentPerson, store.currentGym, e.id, { notes: d.notes, volume: { working: { weight: makeMinutes(toNumber(d.tmin), toNumber(d.tsec)) } } }));
       saveNever(e);
       go("setup");
     },
