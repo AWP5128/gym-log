@@ -1,7 +1,7 @@
 // Gym Log: the screens and what they do. Saved data goes through storage.js and store.js,
 // and the small HTML and page helpers are in ui.js.
 import { sessionTypes, exercisesForGroup } from "./exercises.js";
-import { emptySettings, updateExercise, toNumber, manualPb } from "./settings.js";
+import { toNumber, manualPb } from "./settings.js";
 import { configOf, globalDefaultsOf, effectiveConfigOf, warmupRepsOf, ownWarmupRepsOf, savedExtraOf } from "./defaults.js";
 import {
   makeSet, todaysSets, defaultsFor, removeLastSet, weightOptions, setsForGym, tagSets, setsForExercise,
@@ -22,7 +22,7 @@ import {
   setDefaultUnit, addItem, updateItem, editItem, checkName, LIST_KINDS, listKindOf, listDefaultOf, setListDefault, kindCounts, chooseListKind, entriesOfKind, kindCountsOfEntries, isSmallList, commonFirst, hideWeightSet, restoreWeightSet, isSetHidden, hiddenSetIds, weightSetUsers, setWeightSetUnit, updateWeightSet, dumbbellWeights,
 } from "./gym.js";
 import {
-  STORE_VERSION, DEFAULT_GYM, cleanStore, migrateLegacy, toLegacySettings, applyLegacySettings, supportsWarmup,
+  STORE_VERSION, DEFAULT_GYM, cleanStore, migrateLegacy, supportsWarmup,
   exportMachines, importMachines, gymList, addGym, renameGym, setDefaultGym, setCurrentGym, useDefaultGym, neverIds, setNever, useIds, useOf, setUse, setDefaults, setPersonal,
 } from "./store.js";
 import { makeBackup, backupFileName, parseBackup, fileKind, dataSummary, describeData, backupAge } from "./backup.js";
@@ -88,20 +88,8 @@ store = useDefaultGym(store);   // every visit starts in the default gym
   (v4.ok ? console.info : console.warn)("Version 4 check:", v4.ok ? "OK" : v4.problems, v4.bytes3 + " -> " + v4.bytes4 + " bytes");
 }
 
-// The screens use the current person's and gym's settings in a flat shape. The store is the saved copy.
-let settings;
+// The exercise list of the current gym is worked out once and kept here; anything that changes the store clears it.
 let exCache = null;
-function reloadSettings() {
-  settings = { ...emptySettings(), ...toLegacySettings(store, store.currentPerson, store.currentGym) };
-  exCache = null;
-}
-function saveSettings(next) {
-  settings = next;
-  exCache = null;
-  store = applyLegacySettings(store, store.currentPerson, store.currentGym, settings);
-  persistStore(store);
-}
-reloadSettings();
 
 // Stage C: the screens read the current person's settings at the current gym straight from the store.
 const myConfig = (id) => configOf(store, store.currentPerson, store.currentGym, id);                  // this machine's own settings
@@ -111,11 +99,11 @@ const myWarmupReps = (id, key) => warmupRepsOf(store, store.currentPerson, store
 const myOwnWarmupReps = (id, key) => ownWarmupRepsOf(store, store.currentPerson, store.currentGym, id, key);
 const mySavedExtra = (id, kind, key) => savedExtraOf(store, store.currentPerson, store.currentGym, id, kind, key);
 
-// Saves a changed store (gyms, current gym, default gym) and refreshes what the screens read from it.
+// Saves a changed store (gyms, current gym, default gym, personal settings) and clears the kept exercise list.
 function saveStore(next) {
   store = next;
   persistStore(store);
-  reloadSettings();
+  exCache = null;
 }
 
 // The current gym's equipment in the shape the screens use, plus any exercises you added that the gym
@@ -1482,7 +1470,7 @@ async function importFile(ev) {
     else {
       store = r.store;
       persistStore(store);
-      reloadSettings();
+      exCache = null;
       backupMsg = "Added " + r.count + (r.count === 1 ? " machine" : " machines") + " from the file. Your own weights and notes were not changed.";
     }
   } else if (kind === "backup") {
@@ -1627,7 +1615,7 @@ async function syncNow() {
       store = r.store;
       sets = r.sets;
       save(KEY.store, toStoreV4(store, sets) ?? store);
-      reloadSettings();
+      exCache = null;
       render();
     }
     console.info("Sync:", r.report);
