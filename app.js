@@ -970,18 +970,20 @@ function renderEdit() {
   wire({
     back: goBack,
     save: () => {
-      const patch = { notes: d.notes };
+      const mode = key === "Heavy" ? "heavy" : "volume";
+      const patch = { notes: d.notes, [mode]: { warmup: {}, working: {} } };
       for (const kind of withWarmup ? ["start", "work"] : ["work"]) {
+        const part = patch[mode][kind === "start" ? "warmup" : "working"];
         const typed = toNumber(d[kind]);
-        if (!withExtras) { patch[kind + key] = typed; continue; }
+        if (!withExtras) { part.weight = typed; continue; }
         const extra = typed === null ? 0 : Number(d[kind + "Extra"]);
-        patch[kind + key] = typed === null ? null : totalWeight(typed, extra);       // the total is what is used
-        patch[kind + "Extra" + key] = typed === null || extra === 0 ? null : extra;   // remembered so the split shows again
+        part.weight = typed === null ? null : totalWeight(typed, extra);       // the total is what is used
+        part.extra = typed === null || extra === 0 ? null : extra;             // remembered so the split shows again
       }
-      if (withWarmup) patch["warmReps" + key] = wholeOrNull(d.warmReps);
-      patch["reps" + key] = wholeOrNull(d.reps);
-      patch["sets" + key] = wholeOrNull(d.sets);
-      saveSettings(updateExercise(settings, e.id, patch));
+      if (withWarmup) patch[mode].warmup.reps = wholeOrNull(d.warmReps);
+      patch[mode].working.reps = wholeOrNull(d.reps);
+      patch[mode].working.sets = wholeOrNull(d.sets);
+      saveStore(setPersonal(store, store.currentPerson, store.currentGym, e.id, patch));
       savePairs(ssDraft.prefs);
       saveNever(e);
       go("setup");
