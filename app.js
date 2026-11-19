@@ -29,6 +29,7 @@ import { makeBackup, backupFileName, parseBackup, fileKind, dataSummary, describ
 import { MUSCLES, muscleOf, muscleLabel, partnerGroups, pairedPartners, getPairs, setPairs, addPair, removePair, pairedWith, isSuitable, setSuitable, hasPair, pairCandidates } from "./superset.js";
 import { KEY, load, loadList, save } from "./storage.js";
 import { checkV4, toStoreV4, readStore, readSets } from "./schema4.js";
+import { openDb } from "./db.js";
 import { SYNC } from "./config.js";
 import { emptySync } from "./sync.js";
 import { runSync } from "./syncglue.js";
@@ -63,11 +64,15 @@ let syncState = load(KEY.sync, null) ?? emptySync();
 let syncTimer = null;
 let syncing = false;
 let dataVersion = 0;
+// Stage D: `db` is the saved version 4 data as tables (see db.js), kept equal to what was last saved. The screens still read
+// `store` and `sets`, which are worked out from the same data; later steps move the screens over to `db` one part at a time.
+let db = openDb(savedStore);
+const saveV4 = (v4) => { save(KEY.store, v4); db = openDb(v4); };
 // If the conversion ever failed, the store and the flat sets are saved the old way so nothing is lost.
 const persistStore = (st) => {
   const v4 = toStoreV4(st, sets);
-  if (v4) save(KEY.store, v4);
-  else { save(KEY.store, st); save(KEY.sets, sets); }
+  if (v4) saveV4(v4);
+  else { save(KEY.store, st); save(KEY.sets, sets); db = null; }
   dataVersion++;
   scheduleSync();
 };
@@ -1614,7 +1619,8 @@ async function syncNow() {
     if (r.changed) {
       store = r.store;
       sets = r.sets;
-      save(KEY.store, toStoreV4(store, sets) ?? store);
+      const v4 = toStoreV4(store, sets);
+      if (v4) saveV4(v4); else { save(KEY.store, store); db = null; }
       exCache = null;
       render();
     }
