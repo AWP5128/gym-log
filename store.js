@@ -11,10 +11,10 @@
 // An equipment item (see gym.js) is { name, group, type, unit, step, common, min?, pins?, stackSpec? }.
 // weight is always the TOTAL; extra is the part of it that came from the extra list.
 //
-// The screens still use an older flat shape (startHeavy, workVolume, repsHeavy ...) and the built-in
-// exercise list. The tables below say how each flat name maps to the store, and every conversion in
-// this file is driven by them. In the flat shape a machine's name, step and stack appear only when
-// they differ from the built-in exercise, which is how the screens have always seen them.
+// The settings saved by the first versions of the app were flat (startHeavy, workVolume, repsHeavy ...).
+// The tables below say how each flat name maps to the store; they are used to read those old settings
+// once (migrateLegacy), to clean what setPersonal saves, and to write and read the machines file. In the
+// flat shape a machine's name, step and stack appear only when they differ from the built-in exercise.
 
 import { exercises } from "./exercises.js";
 import { addCustomExercise, removeCustomExercise } from "./settings.js";
@@ -190,7 +190,7 @@ export function supportsWarmup(exercise) {
   return exercise.unit === "lb" && exercise.kind !== "time";
 }
 
-// ---------- Flat settings <-> store ----------
+// ---------- Old flat settings -> store ----------
 // The personal part of one flat machine entry.
 function personalFrom(c) {
   const out = {};
@@ -248,65 +248,8 @@ export function migrateLegacy(legacy, opts = {}) {
   };
 }
 
-// The flat settings the screens use, for one person at one gym.
-export function toLegacySettings(store, personId, gymId) {
-  const person = store.people?.[personId] || {};
-  const exercises = {};
-  const entry = (id) => (exercises[id] ??= {});
-
-  for (const [id, item] of Object.entries(store.gyms?.[gymId]?.equipment || {})) {
-    const o = overrides(item, baseFor(id, store.custom));
-    if (has(o)) Object.assign(entry(id), o);
-  }
-  for (const [id, p] of Object.entries(person.gyms?.[gymId]?.machines || {})) {
-    const out = entry(id);
-    if (p.notes) out.notes = p.notes;
-    put(out, "pbWeight", p.pbWeight);
-    put(out, "pbReps", p.pbReps);
-    for (const [Cap, mode] of MODES) {
-      if (!p[mode]) continue;
-      for (const [prefix, group, key] of FIELDS) put(out, prefix + Cap, p[mode][group]?.[key]);
-    }
-  }
-  const defaults = {};
-  for (const [Cap, mode] of MODES) {
-    for (const [prefix, key] of DEFAULTS) put(defaults, prefix + Cap, person.defaults?.[mode]?.[key]);
-  }
-  return { exercises, custom: store.custom || [], defaults };
-}
-
-// Returns a new store with the flat settings saved back into it for one person at one gym.
-// Other gyms and other people are left exactly as they were.
-export function applyLegacySettings(store, personId, gymId, flat) {
-  const s = splitFlat(flat);
-  let gym = store.gyms?.[gymId] || newGym("My gym", {}, starterEquipment(exercises));
-  const person = store.people?.[personId] || { name: personId, gyms: {} };
-  // Each item takes its name, step and stack from the flat settings; a stack that is no longer there was cleared.
-  for (const id of Object.keys(gym.equipment || {})) {
-    const o = s.shared[id] || {};
-    gym = updateItem(gym, id, { ...o, pins: o.pins ?? null, stackSpec: o.stackSpec ?? null });
-  }
-  for (const [id, o] of Object.entries(s.shared)) {
-    if (!gym.equipment?.[id]) gym = { ...gym, equipment: { ...gym.equipment, [id]: newItem(id, o, s.custom) } };
-  }
-  return {
-    ...store,
-    custom: s.custom,
-    gyms: { ...store.gyms, [gymId]: gym },
-    people: {
-      ...store.people,
-      [personId]: {
-        ...person,
-        defaults: s.defaults,
-        gyms: { ...person.gyms, [gymId]: { ...person.gyms?.[gymId], machines: s.personal } },
-      },
-    },
-  };
-}
-
-// ---------- Personal settings, read and written directly (stage C of the refactor) ----------
-// The same data the flat settings above carry, but read from and written to the store without the flat shape.
-// Nothing in the app uses these yet; they are proved equal to the flat path in personal.test.js.
+// ---------- Personal settings, read and written directly ----------
+// What the screens use: a person's settings read from and written to the store, with no flat shape in between.
 // A day type is "heavy" or "volume". A person's settings for one exercise at one gym:
 //   { notes, pbWeight, pbReps, heavy|volume: { warmup: { weight, extra, reps }, working: { weight, extra, reps, sets } } }
 // Reading gives every field (null when not set, "" for no notes). A patch to setPersonal gives only the fields to change;

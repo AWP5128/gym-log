@@ -6,7 +6,7 @@ import {
   checkName, isHidden, hideItem, restoreItem, visibleEntries, hiddenEntries, unitChangeImpact, dumbbellBands,
 } from "./gym.js";
 import { buildPins } from "./stacks.js";
-import { emptyStore, toLegacySettings, applyLegacySettings, DEFAULT_GYM, DEFAULT_PERSON } from "./store.js";
+import { emptyStore, setPersonal, DEFAULT_GYM, DEFAULT_PERSON } from "./store.js";
 
 const builtIn = [
   { id: "leg-press", name: "Leg Press Machine", group: "legs", common: true, unit: "lb", step: 10 },
@@ -264,13 +264,12 @@ test("dumbbell bands build the usual weights through the stack builder", () => {
   assert.equal(dumbbellBands("kg").changes.length, 1);        // each call gives a fresh copy
 });
 
-test("a hidden item stays hidden, with its stack, through the settings round trip", () => {
+test("a hidden item stays hidden, with its stack, when a personal setting is saved", () => {
   let store = emptyStore();
   const gym = store.gyms[DEFAULT_GYM];
   const lp = updateItem(gym, "leg-press", { pins: [10, 20, 30], stackSpec: { low: 10, step: 10, top: 30, changes: [] } });
   store = { ...store, gyms: { ...store.gyms, [DEFAULT_GYM]: hideItem(lp, "leg-press") } };
-  const flat = toLegacySettings(store, DEFAULT_PERSON, DEFAULT_GYM);
-  const after = applyLegacySettings(store, DEFAULT_PERSON, DEFAULT_GYM, flat).gyms[DEFAULT_GYM];
+  const after = setPersonal(store, DEFAULT_PERSON, DEFAULT_GYM, "leg-press", { notes: "Seat 4" }).gyms[DEFAULT_GYM];
   assert.equal(isHidden(after.equipment["leg-press"]), true);
   assert.deepEqual(after.equipment["leg-press"].pins, [10, 20, 30]);
   assert.equal(exerciseList(after).some((e) => e.id === "leg-press"), false);

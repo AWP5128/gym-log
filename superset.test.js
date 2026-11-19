@@ -5,7 +5,7 @@ import {
   getPairs, setPairs, partnerGroups, DEFAULT_MUSCLE, MUSCLES,
   suitableIds, isSuitable, setSuitable, pairCandidates, pairedPartners,
 } from "./superset.js";
-import { emptyStore, cleanStore, toLegacySettings, applyLegacySettings } from "./store.js";
+import { emptyStore, cleanStore, setPersonal } from "./store.js";
 import { exercises } from "./exercises.js";
 import { STARTER_FREE } from "./gym.js";
 
@@ -100,7 +100,7 @@ test("saved pairs live under the person and survive the store round trip", () =>
   assert.deepEqual(getPairs(store, person).pairs, [["pull-up", "leg-press"]]);
   assert.deepEqual(getPairs(store, "someone-else").pairs, []);
   // saving ordinary settings and reloading keeps them
-  store = applyLegacySettings(store, person, store.currentGym, toLegacySettings(store, person, store.currentGym));
+  store = setPersonal(store, person, store.currentGym, "leg-press", { notes: "Seat 4" });
   assert.deepEqual(getPairs(store, person).pairs, [["pull-up", "leg-press"]]);
   const again = cleanStore(JSON.parse(JSON.stringify(store)));
   assert.deepEqual(getPairs(again, person).pairs, [["pull-up", "leg-press"]]);
@@ -135,7 +135,7 @@ test("the muscle survives saving other settings and copying to another gym", () 
   const person = store.currentPerson;
   const gym = editItem(store.gyms[store.currentGym], "bicep-curl", { muscle: "chest" }).gym;
   store = { ...store, gyms: { ...store.gyms, [store.currentGym]: gym } };
-  store = applyLegacySettings(store, person, store.currentGym, toLegacySettings(store, person, store.currentGym));
+  store = setPersonal(store, person, store.currentGym, "leg-press", { notes: "Seat 4" });
   assert.equal(store.gyms[store.currentGym].equipment["bicep-curl"].muscle, "chest");
   assert.equal(cleanStore(JSON.parse(JSON.stringify(store))).gyms[store.currentGym].equipment["bicep-curl"].muscle, "chest");
   const to = copyEquipment(store.gyms[store.currentGym], ["bicep-curl"], { name: "Other", units: {}, equipment: {}, weightSets: {} }).gym;
@@ -206,7 +206,7 @@ test("marks live under the person, survive saving settings, and old pairs-only d
   let store = emptyStore();
   const person = store.currentPerson;
   store = setPairs(store, person, setSuitable(addPair(emptyPairs(), "a", "b"), "z", true));
-  store = applyLegacySettings(store, person, store.currentGym, toLegacySettings(store, person, store.currentGym));
+  store = setPersonal(store, person, store.currentGym, "leg-press", { notes: "Seat 4" });
   const back = getPairs(cleanStore(JSON.parse(JSON.stringify(store))), person);
   assert.deepEqual(back, { pairs: [["a", "b"]], suitable: ["z"] });
   const old = { ...store, people: { ...store.people, [person]: { ...store.people[person], superset: { pairs: [["a", "b"]] } } } };

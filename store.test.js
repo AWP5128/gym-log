@@ -1,12 +1,12 @@
 import test from "node:test";
 import assert from "node:assert/strict";
 import {
-  STORE_VERSION, emptyStore, cleanStore, migrateLegacy, toLegacySettings, applyLegacySettings,
+  STORE_VERSION, emptyStore, cleanStore, migrateLegacy, personalOf, setPersonal,
   supportsWarmup, exportMachines, importMachines,
   gymList, addGym, renameGym, setDefaultGym, setCurrentGym, useDefaultGym,
 } from "./store.js";
 import { exercises } from "./exercises.js";
-import { newGym, makeItem, STARTER_FREE, STARTER_ABS, STARTER_CARDIO } from "./gym.js";
+import { newGym, makeItem, updateItem, STARTER_FREE, STARTER_ABS, STARTER_CARDIO } from "./gym.js";
 
 const legacy = {
   exercises: {
@@ -82,18 +82,27 @@ test("migrateLegacy keeps the personal settings separate", () => {
   assert.equal(mine.notes, "Seat 4");
   assert.equal(mine.pbWeight, 200);
   assert.deepEqual(mine.heavy.warmup, { weight: 100, extra: 5, reps: null });
+  assert.equal(mine.pbReps, 3);
   assert.deepEqual(mine.heavy.working, { weight: 115, extra: 2.5, reps: 5, sets: 4 });
   assert.equal(mine.volume.warmup.weight, null);
+  assert.deepEqual(mine.volume.working, { weight: 85, extra: null, reps: 10, sets: null });
+  assert.deepEqual(s.people.awp.gyms.main.machines["pull-up"].heavy.working, { weight: 10, extra: null, reps: 5, sets: null });
   assert.deepEqual(s.people.awp.defaults.heavy, { reps: 6, sets: null, warmupReps: null });
+  assert.deepEqual(s.people.awp.defaults.volume, { reps: null, sets: 3, warmupReps: null });
   assert.equal(JSON.stringify(s.gyms).includes("Seat 4"), false);
 });
 
-test("converting to the store and back gives the same settings", () => {
+test("migrateLegacy puts a machine's own name, step and stack on the gym's item, and the exercises you added in the list", () => {
   const s = migrateLegacy(legacy);
-  assert.deepEqual(toLegacySettings(s, "awp", "main"), legacy);
+  const lp = s.gyms.main.equipment["leg-press"];
+  assert.equal(lp.name, "Leg Press");
+  assert.equal(lp.step, 15);
+  assert.deepEqual(lp.pins, [10, 20, 35]);
+  assert.deepEqual(lp.stackSpec, { low: 10, step: 10, top: 35, changes: [{ at: 20, step: 15 }] });
+  assert.deepEqual(s.custom, legacy.custom);
 });
 
-test("an exercise you added keeps its stack and is not listed as changed when nothing differs", () => {
+test("an exercise you added keeps its stack", () => {
   const withCustom = {
     exercises: { "custom-x": { pins: [5, 10], notes: "mine" } },
     custom: [{ id: "custom-x", name: "X", group: "abs", unit: "lb", step: 10, common: true, kind: "weights", custom: true }],
@@ -102,16 +111,14 @@ test("an exercise you added keeps its stack and is not listed as changed when no
   const s = migrateLegacy(withCustom);
   assert.deepEqual(s.gyms.main.equipment["custom-x"].pins, [5, 10]);
   assert.equal(s.gyms.main.equipment["custom-x"].name, "X");
-  assert.deepEqual(toLegacySettings(s, "awp", "main"), withCustom);
+  assert.equal(s.people.awp.gyms.main.machines["custom-x"].notes, "mine");
 });
 
-test("applyLegacySettings changes only this person at this gym", () => {
+test("saving a personal setting changes only this person at this gym", () => {
   const s = migrateLegacy(legacy);
   s.gyms.second = newGym("Holiday gym", {}, { "leg-press": makeItem({ name: "Leg Press", group: "legs", pins: [5, 10] }) });
   s.people.sam = { name: "Sam", defaults: {}, gyms: {} };
-  const edited = structuredClone(legacy);
-  edited.exercises["leg-press"].notes = "Seat 5";
-  const next = applyLegacySettings(s, "awp", "main", edited);
+  const next = setPersonal(s, "awp", "main", "leg-press", { notes: "Seat 5" });
   assert.equal(next.people.awp.gyms.main.machines["leg-press"].notes, "Seat 5");
   assert.equal(next.gyms.second.equipment["leg-press"].pins.length, 2);
   assert.equal(next.people.sam.name, "Sam");
@@ -119,29 +126,26 @@ test("applyLegacySettings changes only this person at this gym", () => {
   assert.equal(s.people.awp.gyms.main.machines["leg-press"].notes, "Seat 4");
 });
 
-test("saving with nothing changed leaves the store as it was", () => {
+test("saving a personal setting with nothing changed leaves the store as it was", () => {
   const s = migrateLegacy(legacy);
-  assert.deepEqual(applyLegacySettings(s, "awp", "main", toLegacySettings(s, "awp", "main")), s);
+  assert.deepEqual(setPersonal(s, "awp", "main", "leg-press", { notes: "Seat 4" }), s);
+  assert.deepEqual(setPersonal(s, "awp", "main", "leg-press", personalOf(s, "awp", "main", "leg-press")), s);
 });
 
-test("a new stack from the screens is saved on the item", () => {
+test("a new stack on the Edit screen is saved on the item", () => {
   const s = migrateLegacy(legacy);
-  const edited = structuredClone(legacy);
-  edited.exercises["chest-press"] = { pins: [20, 30, 40], stackSpec: { low: 20, step: 10, top: 40, changes: [] } };
-  const next = applyLegacySettings(s, "awp", "main", edited);
-  assert.deepEqual(next.gyms.main.equipment["chest-press"].pins, [20, 30, 40]);
-  assert.equal(next.gyms.main.equipment["chest-press"].name, "Chest Press Machine");
+  const gym = updateItem(s.gyms.main, "chest-press", { pins: [20, 30, 40], stackSpec: { low: 20, step: 10, top: 40, changes: [] } });
+  assert.deepEqual(gym.equipment["chest-press"].pins, [20, 30, 40]);
+  assert.equal(gym.equipment["chest-press"].name, "Chest Press Machine");
+  assert.notDeepEqual(s.gyms.main.equipment["chest-press"].pins, [20, 30, 40]);   // the store it was given is not changed
 });
 
 test("clearing a stack removes it from the item but keeps the item", () => {
   const s = migrateLegacy(legacy);
-  const edited = structuredClone(legacy);
-  edited.exercises["leg-press"].pins = null;
-  edited.exercises["leg-press"].stackSpec = null;
-  const next = applyLegacySettings(s, "awp", "main", edited);
-  assert.equal(next.gyms.main.equipment["leg-press"].pins, undefined);
-  assert.equal(next.gyms.main.equipment["leg-press"].stackSpec, undefined);
-  assert.equal(next.gyms.main.equipment["leg-press"].name, "Leg Press");
+  const gym = updateItem(s.gyms.main, "leg-press", { pins: null, stackSpec: null });
+  assert.equal(gym.equipment["leg-press"].pins, undefined);
+  assert.equal(gym.equipment["leg-press"].stackSpec, undefined);
+  assert.equal(gym.equipment["leg-press"].name, "Leg Press");
 });
 
 test("cleanStore accepts a current store and rejects anything else", () => {
@@ -178,13 +182,16 @@ test("cleanStore upgrades a version 2 store and keeps stacks and personal settin
 
 test("a version 2 store gives the screens the same settings as before", () => {
   const s = cleanStore(v2());
-  const flat = toLegacySettings(s, "awp", "main");
-  assert.deepEqual(flat.exercises["leg-press"], {
-    name: "Leg Press", step: 15, pins: [10, 20, 35],
-    stackSpec: { low: 10, step: 10, top: 35, changes: [] },
-    notes: "Seat 4", pbWeight: 200, pbReps: 3,
-  });
-  assert.equal(Object.keys(flat.exercises).length, 1);
+  const lp = s.gyms.main.equipment["leg-press"];
+  assert.equal(lp.name, "Leg Press");
+  assert.equal(lp.step, 15);
+  assert.deepEqual(lp.pins, [10, 20, 35]);
+  assert.deepEqual(lp.stackSpec, { low: 10, step: 10, top: 35, changes: [] });
+  const mine = personalOf(s, "awp", "main", "leg-press");
+  assert.equal(mine.notes, "Seat 4");
+  assert.equal(mine.pbWeight, 200);
+  assert.equal(mine.pbReps, 3);
+  assert.deepEqual(Object.keys(s.people.awp.gyms.main.machines), ["leg-press"]);
 });
 
 test("supportsWarmup: machines yes, free weights, pull-ups and timed no", () => {
@@ -307,11 +314,11 @@ test("addGym can copy chosen equipment from another gym, with stacks, and nothin
 
 test("a copied gym gives the screens the copied stacks but none of your settings", () => {
   const s = addGym(migrateLegacy(legacy), "Home", { from: "main", ids: ["leg-press"] }).store;
-  const flat = toLegacySettings(s, "awp", "home");
-  assert.deepEqual(flat.exercises["leg-press"].pins, [10, 20, 35]);
-  assert.equal(flat.exercises["leg-press"].notes, undefined);
-  assert.equal(flat.exercises["leg-press"].workHeavy, undefined);
-  const saved = applyLegacySettings(s, "awp", "home", { ...flat, exercises: { "leg-press": { ...flat.exercises["leg-press"], notes: "Seat 9" } } });
+  assert.deepEqual(s.gyms.home.equipment["leg-press"].pins, [10, 20, 35]);
+  const mine = personalOf(s, "awp", "home", "leg-press");
+  assert.equal(mine.notes, "");
+  assert.equal(mine.heavy.working.weight, null);
+  const saved = setPersonal(s, "awp", "home", "leg-press", { notes: "Seat 9" });
   assert.equal(saved.people.awp.gyms.home.machines["leg-press"].notes, "Seat 9");
   assert.equal(saved.people.awp.gyms.main.machines["leg-press"].notes, "Seat 4");
   assert.deepEqual(saved.gyms.main, s.gyms.main);

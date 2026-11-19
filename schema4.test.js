@@ -1,7 +1,7 @@
 import test from "node:test";
 import assert from "node:assert/strict";
 import { SCHEMA_VERSION, TABLES, migrateToV4, fromV4 } from "./schema4.js";
-import { emptyStore, cleanStore, migrateLegacy, addGym, toLegacySettings } from "./store.js";
+import { emptyStore, cleanStore, migrateLegacy, addGym, personalOf, defaultsOf } from "./store.js";
 import { updateItem, hideItem, hideWeightSet, addItem } from "./gym.js";
 import { makeSet, bestSet, personalBests } from "./log.js";
 import { exercises } from "./exercises.js";
@@ -104,14 +104,23 @@ test("a fuller store round trips exactly: notes, stacks, muscle, hidden, pairs, 
   assert.deepEqual(back.custom, s.custom);
 });
 
-test("what the screens read is the same: toLegacySettings for every person and gym", () => {
+test("what the screens read is the same: equipment, personal settings and defaults for every person and gym", () => {
   const { s } = richStore();
   const back = fromV4(migrateToV4({ store: s }).v4).store;
+  const shared = (item) => ({ name: item.name, step: item.step, pins: item.pins, stackSpec: item.stackSpec });
+  let compared = 0;
   for (const p of Object.keys(s.people)) {
+    assert.equal(canon(defaultsOf(back, p)), canon(defaultsOf(s, p)), p + " defaults");
     for (const g of Object.keys(s.gyms)) {
-      assert.equal(canon(toLegacySettings(back, p, g)), canon(toLegacySettings(s, p, g)), p + " at " + g);
+      const ids = new Set([...Object.keys(s.gyms[g].equipment), ...Object.keys(s.people[p].gyms?.[g]?.machines || {}), ...Object.keys(back.people[p].gyms?.[g]?.machines || {})]);
+      for (const id of ids) {
+        assert.equal(canon(personalOf(back, p, g, id)), canon(personalOf(s, p, g, id)), p + " at " + g + " " + id);
+        if (s.gyms[g].equipment[id]) assert.equal(canon(shared(back.gyms[g].equipment[id])), canon(shared(s.gyms[g].equipment[id])), g + " item " + id);
+        compared++;
+      }
     }
   }
+  assert.ok(compared > 20, "the rich store must give many machines to compare (got " + compared + ")");
 });
 
 test("personal setup is a row per person, machine and day type, with the notes on each", () => {
