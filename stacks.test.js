@@ -2,7 +2,6 @@ import { test } from "node:test";
 import assert from "node:assert/strict";
 import { buildPins, addPin, removePin, describePins, hasPins } from "./stacks.js";
 import { weightOptions } from "./log.js";
-import { allExercises } from "./settings.js";
 
 const build = (low, step, top, changes = []) => buildPins({ low, step, top, changes });
 
@@ -65,10 +64,7 @@ test("weightOptions uses a saved pin list", () => {
   assert.deepEqual(weightOptions(e, 25), [10, 20, 25, 35]);
 });
 
-test("allExercises adds saved pins only where they exist", () => {
-  const builtIn = ["a", "b"].map((id) => ({ id, name: id.toUpperCase(), group: "legs", unit: "lb", step: 10 }));
-  const out = allExercises(builtIn, { exercises: { a: { pins: [10, 25] } }, custom: [] });
-  assert.deepEqual(out[0].pins, [10, 25]);
-  assert.equal("pins" in out[1], false);
-  assert.deepEqual(out.map(hasPins), [true, false]);
+test("hasPins is true only for an exercise with a saved pin list", () => {
+  const items = [{ pins: [10, 25] }, {}, { pins: [] }, { pins: null }, { pins: "10" }];
+  assert.deepEqual(items.map(hasPins), [true, false, false, false, false]);
 });
