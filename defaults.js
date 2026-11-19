@@ -1,4 +1,3 @@
-import { configFor } from "./settings.js";
 import { personalOf, defaultsOf } from "./store.js";
 
 // Reps and sets used for every machine that has none of its own.
@@ -9,40 +8,9 @@ export const DEFAULT_WARMUP_REPS = 10;
 // A saved number that is above zero, otherwise null.
 const positive = (v) => (Number.isFinite(v) && v > 0 ? v : null);
 
-// The reps and sets in force for every machine, from your saved choices or the built-in ones.
-export function globalDefaults(settings) {
-  const g = settings.defaults || {};
-  return Object.fromEntries(
-    Object.entries(BUILT_IN_DEFAULTS).map(([f, builtIn]) => [f, positive(g[f]) ?? builtIn])
-  );
-}
-
-export function updateGlobalDefaults(settings, patch) {
-  return { ...settings, defaults: { ...(settings.defaults || {}), ...patch } };
-}
-
-// A machine's own settings, with its reps and sets filled in from the
-// every-machine defaults wherever the machine has none of its own.
-export function effectiveConfig(settings, id) {
-  const cfg = configFor(settings, id);
-  const g = globalDefaults(settings);
-  for (const f in g) cfg[f] ??= g[f];
-  return cfg;
-}
-
-// The machine's own warm-up reps for a day type (key is "Heavy" or "Volume"), or null when none is set.
-export const ownWarmupReps = (settings, id, key) =>
-  positive(((settings.exercises || {})[id] || {})["warmReps" + key]);
-
-// Reps for the warm-up set: the machine's own value, else the every-machine value, else 10.
-export const warmupReps = (settings, id, key) =>
-  ownWarmupReps(settings, id, key) ??
-  positive((settings.defaults || {})["warmReps" + key]) ??
-  DEFAULT_WARMUP_REPS;
-
-// ---------- The same reads, straight from the store (stage C of the refactor) ----------
-// These give exactly what the functions above give for toLegacySettings(store, personId, gymId), without building the flat
-// shape. The screens use these; reads.test.js proves they match the flat ones. personId and gymId say whose settings, where.
+// ---------- Reads straight from the store ----------
+// personId and gymId say whose settings, and where. The reps and sets a machine has none of its own are filled in from the
+// every-machine defaults, and those from the built-in ones. Names like startHeavy and repsVolume are what the screens use.
 const DAY = [["Heavy", "heavy"], ["Volume", "volume"]];
 const dayOf = (key) => (key === "Heavy" ? "heavy" : "volume");
 

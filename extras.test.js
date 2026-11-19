@@ -2,17 +2,25 @@ import { test } from "node:test";
 import assert from "node:assert/strict";
 import { exercises } from "./exercises.js";
 import {
-  EXTRA_WEIGHTS, extraOptions, hasExtras, totalWeight, splitWeight, savedExtra, savedSplit, splitFor,
+  EXTRA_WEIGHTS, extraOptions, hasExtras, totalWeight, splitWeight, savedSplitFrom, splitForFrom,
 } from "./extras.js";
+import { emptyStore, setPersonal } from "./store.js";
+import { savedExtraOf } from "./defaults.js";
 
 const byId = (id) => exercises.find((e) => e.id === id);
 const legPress = byId("leg-press");   // lb machine, step 10
 const deadlift = byId("deadlift");    // kg free weight
 
-// Settings with saved extras for the leg press, e.g. saved({ workExtraHeavy: 20 }).
-const saved = (extras) => ({ exercises: { "leg-press": extras } });
+// A store with extras saved on the Set up screen for the leg press, e.g.
+// saved({ heavy: { working: { extra: 20 } } }) is a 20 lb extra on the heavy working weight.
+const saved = (patch) => setPersonal(emptyStore(), "awp", "main", "leg-press", patch);
+const heavyWork = (extra) => saved({ heavy: { working: { extra } } });
+// The extra saved for an exercise's warm-up ("start") or working ("work") weight on a day type ("Heavy" or "Volume").
+const extraFor = (store, exercise, key) => (kind) => savedExtraOf(store, "awp", "main", exercise.id, kind, key);
 // The split saved in Set up for the working weight on a heavy day.
-const workSplit = (settings, exercise, total) => savedSplit(settings, exercise, "work", "Heavy", total);
+const workSplit = (store, exercise, total) => savedSplitFrom(extraFor(store, exercise, "Heavy")("work"), exercise, total);
+// Which split to show for a total.
+const splitFor = (store, exercise, total, cfg, key) => splitForFrom(extraFor(store, exercise, key), exercise, total, cfg, key);
 
 test("lb machines offer extras from 2.5 to 20 lb in 2.5 steps", () => {
   assert.deepEqual(EXTRA_WEIGHTS, [2.5, 5, 7.5, 10, 12.5, 15, 17.5, 20]);
@@ -60,40 +68,40 @@ test("splitting then totalling gives the original total for every 2.5 lb step", 
   }
 });
 
-test("savedSplit returns the pin and extra saved in Set up", () => {
-  const settings = saved({ workHeavyExtra: 99, workExtraHeavy: 20 });
-  assert.equal(savedExtra(settings, "leg-press", "work", "Heavy"), 20);
-  assert.equal(savedExtra({}, "leg-press", "work", "Heavy"), undefined);
-  assert.deepEqual(workSplit(settings, legPress, 110), { pin: 90, extra: 20 });
+test("savedSplitFrom returns the pin and extra saved in Set up", () => {
+  const store = heavyWork(20);
+  assert.equal(savedExtraOf(store, "awp", "main", "leg-press", "work", "Heavy"), 20);
+  assert.equal(savedExtraOf(emptyStore(), "awp", "main", "leg-press", "work", "Heavy"), undefined);
+  assert.deepEqual(workSplit(store, legPress, 110), { pin: 90, extra: 20 });
 });
 
-test("savedSplit ignores missing, zero, invalid or too large extras", () => {
-  const make = (extra) => saved({ workExtraHeavy: extra });
-  assert.equal(workSplit({}, legPress, 110), null);
-  assert.equal(workSplit(make(null), legPress, 110), null);
-  assert.equal(workSplit(make(0), legPress, 110), null);
-  assert.equal(workSplit(make(3), legPress, 110), null);
-  assert.equal(workSplit(make(20), legPress, 15), null);
-  assert.equal(workSplit(make(20), deadlift, 110), null);
+test("savedSplitFrom ignores missing, zero, invalid or too large extras", () => {
+  assert.equal(workSplit(emptyStore(), legPress, 110), null);
+  assert.equal(workSplit(heavyWork(null), legPress, 110), null);
+  assert.equal(workSplit(heavyWork(0), legPress, 110), null);
+  assert.equal(workSplit(heavyWork(3), legPress, 110), null);
+  assert.equal(workSplit(heavyWork(20), legPress, 15), null);
+  assert.equal(savedSplitFrom(undefined, legPress, 110), null);
+  assert.equal(savedSplitFrom(20, deadlift, 110), null);   // an exercise with no extras never uses one
 });
 
-test("splitFor prefers the saved split when the total is the warm-up or working weight", () => {
-  const settings = saved({ workExtraHeavy: 20, startExtraHeavy: 5 });
+test("splitForFrom prefers the saved split when the total is the warm-up or working weight", () => {
+  const store = saved({ heavy: { working: { extra: 20 }, warmup: { extra: 15 } } });
   const cfg = { startHeavy: 55, workHeavy: 110 };
-  assert.deepEqual(splitFor(settings, legPress, 110, cfg, "Heavy"), { pin: 90, extra: 20 });
-  assert.deepEqual(splitFor(settings, legPress, 55, cfg, "Heavy"), { pin: 50, extra: 5 });
+  assert.deepEqual(splitFor(store, legPress, 110, cfg, "Heavy"), { pin: 90, extra: 20 });
+  assert.deepEqual(splitFor(store, legPress, 55, cfg, "Heavy"), { pin: 40, extra: 15 });   // not the highest split (50 + 5)
 });
 
-test("splitFor falls back to the highest-pin split for any other total", () => {
-  const settings = saved({ workExtraHeavy: 20 });
+test("splitForFrom falls back to the highest-pin split for any other total", () => {
+  const store = heavyWork(20);
   const cfg = { startHeavy: null, workHeavy: 110 };
-  assert.deepEqual(splitFor(settings, legPress, 120, cfg, "Heavy"), { pin: 120, extra: 0 });
-  assert.deepEqual(splitFor(settings, legPress, 115, cfg, "Heavy"), { pin: 110, extra: 5 });
+  assert.deepEqual(splitFor(store, legPress, 120, cfg, "Heavy"), { pin: 120, extra: 0 });
+  assert.deepEqual(splitFor(store, legPress, 115, cfg, "Heavy"), { pin: 110, extra: 5 });
 });
 
-test("splitFor uses the day type's own saved extra", () => {
-  const settings = saved({ workExtraHeavy: 20 });
+test("splitForFrom uses the day type's own saved extra", () => {
+  const store = heavyWork(20);
   const cfg = { workHeavy: 110, workVolume: 110 };
-  assert.deepEqual(splitFor(settings, legPress, 110, cfg, "Volume"), { pin: 110, extra: 0 });
-  assert.deepEqual(splitFor(settings, legPress, 110, cfg, "Heavy"), { pin: 90, extra: 20 });
+  assert.deepEqual(splitFor(store, legPress, 110, cfg, "Volume"), { pin: 110, extra: 0 });
+  assert.deepEqual(splitFor(store, legPress, 110, cfg, "Heavy"), { pin: 90, extra: 20 });
 });

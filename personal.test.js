@@ -8,7 +8,8 @@ import {
   personalOf, setPersonal, defaultsOf, setDefaults, customOf, addCustom, removeCustom,
 } from "./store.js";
 import { updateExercise, addCustomExercise, removeCustomExercise, configFor } from "./settings.js";
-import { updateGlobalDefaults } from "./defaults.js";
+// The old flat way of changing the every-machine defaults, kept here only while this file compares the two paths.
+const updateGlobalDefaults = (settings, patch) => ({ ...settings, defaults: { ...(settings.defaults || {}), ...patch } });
 import { rng, randomFlat, STACKS } from "./genflat.js";
 
 const to = toLegacySettings;

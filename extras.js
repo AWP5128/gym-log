@@ -31,21 +31,12 @@ export function splitWeight(exercise, total) {
   return { pin: total, extra: 0 };
 }
 
-// The extra saved on the Set up screen for a machine's warm-up or working weight (kind is "start"
-// or "work", key is "Heavy" or "Volume"), or undefined.
-export const savedExtra = (settings, id, kind, key) =>
-  ((settings.exercises || {})[id] || {})[kind + "Extra" + key];
-
 // The stack weight and extra for a weight, given the extra saved for it (or undefined), or null.
 export function savedSplitFrom(extra, exercise, total) {
   const usable =
     Number.isFinite(extra) && extra > 0 && total != null && !(extra > total) && extraOptions(exercise).includes(extra);
   return usable ? { pin: round2(total - extra), extra } : null;
 }
-
-// The stack weight and extra saved on the Set up screen for that weight, or null.
-export const savedSplit = (settings, exercise, kind, key, total) =>
-  savedSplitFrom(savedExtra(settings, exercise.id, kind, key), exercise, total);
 
 // Which stack weight and extra to show for a total. If the total is the machine's warm-up or working
 // weight and a split was saved for it on the Set up screen, use that. Otherwise use the highest split.
@@ -57,6 +48,3 @@ export function splitForFrom(extraFor, exercise, total, cfg, key) {
   }
   return splitWeight(exercise, total);
 }
-
-export const splitFor = (settings, exercise, total, cfg, key) =>
-  splitForFrom((kind) => savedExtra(settings, exercise.id, kind, key), exercise, total, cfg, key);
