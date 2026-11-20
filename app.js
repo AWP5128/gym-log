@@ -1497,9 +1497,7 @@ async function importFile(ev) {
     const r = importMachines(store, curGym(), text);
     if (r.error) backupMsg = r.error;
     else {
-      store = r.store;
-      persistStore(store);
-      exCache = null;
+      saveGym(curGym(), r.store.gyms[curGym()]);   // the import only changes this gym's equipment
       backupMsg = "Added " + r.count + (r.count === 1 ? " machine" : " machines") + " from the file. Your own weights and notes were not changed.";
     }
   } else if (kind === "backup") {

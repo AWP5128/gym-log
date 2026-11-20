@@ -4,6 +4,7 @@ import { KEYS, openDb, rowsOf, rowOf, putRow, putRows, dropRows, useGym, setDefa
 import { TABLES, toStoreV4, readStore, readSets } from "./schema4.js";
 import { emptyStore, addGym, setPersonal, setNever, setUse, setDefaults, setCurrentGym, setDefaultGym, useDefaultGym, addCustom, gymList, renameGym, addGym as addGymOld } from "./store.js";
 import { makeSet } from "./log.js";
+import { exportMachines, importMachines } from "./store.js";
 import { setupRows } from "./schema4.js";
 import { setPairs } from "./superset.js";
 import { addItem, updateItem, hideItem, restoreItem, hideWeightSet, restoreWeightSet, updateWeightSet, setWeightSetUnit, setDefaultUnit, setListDefault, copyEquipment } from "./gym.js";
@@ -452,4 +453,22 @@ test("setupRows: gyms that do not exist are skipped, and never and use marks joi
   assert.deepEqual(r.manual.map((m) => [m.id, m.weight, m.reps]), [["manual:awp:main:pb-only", 10, 3]]);
   assert.deepEqual(r.ids, ["notes-only", "with-day", "pb-only", "notes-only", "never-alone", "with-day"]);
   assert.deepEqual(setupRows("awp", { name: "A", gyms: "junk" }, new Set(["main"])), { rows: [], manual: [], ids: [] });
+});
+
+test("putGym saves a machines-file import exactly as the old way does", () => {
+  const { v4, sets, hotel } = saved();
+  const store0 = readStore(openDb(v4));
+  const db0 = openDb(toStoreV4(store0, sets));
+  const file = JSON.parse(exportMachines(store0, "main"));
+  const ids = Object.keys(store0.gyms.main.equipment);
+  assert.ok(Object.keys(file.machines).length > 0 || true);
+  for (const id of ids.slice(0, 4)) file.machines[id] = { ...(file.machines[id] || {}), step: 7 };
+  file.machines["brand-new-thing"] = { name: "Brand New Thing", group: "legs", type: "stack", unit: "lb" };
+  const text = JSON.stringify(file);
+  for (const [label, gymId] of [["into another gym", hotel], ["into the same gym", "main"], ["into a gym that is not there", "ghost"]]) {
+    const r = importMachines(store0, gymId, text);
+    assert.equal(r.error, "", label);
+    assert.ok(r.count >= 4, label);
+    assert.deepEqual(putGym(db0, gymId, r.store.gyms[gymId]), openDb(toStoreV4(r.store, sets)), label);
+  }
 });

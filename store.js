@@ -107,7 +107,7 @@ function buildEquipment(shared, custom) {
 }
 
 // ---------- Reading a store ----------
-function cleanGym(g) {
+export function cleanGym(g) {
   if (!isObj(g)) return freshGym(newGym("My gym"));
   return freshGym({
     ...g,

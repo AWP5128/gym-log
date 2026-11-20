@@ -6,7 +6,7 @@
 // A row is found by its key fields (KEYS). A row's other fields are whatever schema4.js saves; this file does not look at them.
 
 import { TABLES, SCHEMA_VERSION, gymRow, equipmentRows, exerciseTables, personRow, setupRows } from "./schema4.js";
-import { blankGym } from "./store.js";
+import { blankGym, cleanGym } from "./store.js";
 import { uniqueId } from "./gym.js";
 
 // The fields that identify a row in each table (a field that is missing counts as null, as dayType does on a person's
@@ -132,7 +132,8 @@ const withMembers = (db, gymId) => {
 // Saves a gym as the gym functions in gym.js give it ({ name, units, equipment, weightSets, ... }): its gym row, its equipment
 // rows (kept where the gym's old ones were, so the list order does not change), the owner rows of a new gym, and the
 // exercise and exercise_type tables, which depend on what every gym has. This is the one way equipment is written.
-export function putGym(db, id, gym) {
+export function putGym(db, id, rawGym) {
+  const gym = cleanGym(rawGym);   // a gym is tidied up before it is saved, as when a store is read (adds the starter marks to a gym that lacks them)
   let next = putRow(db, "gym", gymRow(id, gym));
   next = withMembers(next, id);
   const rows = rowsOf(next, "gym_equipment");
