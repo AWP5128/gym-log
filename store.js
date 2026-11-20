@@ -159,11 +159,13 @@ export const gymList = (store) => Object.entries(store.gyms || {}).map(([id, g])
 // Adds a gym. It starts with no equipment, or with the chosen items (ids) copied from another gym (from):
 // equipment data only, with stacks and units kept and nothing personal. Does not change the current gym.
 // Returns { store, id, copied }; id is null when the name is blank.
+export const blankGym = (name) => ({ ...newGym(name), starterFree: true, starterAbs: true, starterCardio: true, pullUpsMoved: true });   // a new gym never gets the starter exercises
+
 export function addGym(store, name, { from, ids = [] } = {}) {
   const clean = String(name ?? "").trim();
   if (!clean) return { store, id: null, copied: 0 };
   const id = uniqueId(clean, Object.keys(store.gyms || {}), "gym");
-  let gym = { ...newGym(clean), starterFree: true, starterAbs: true, starterCardio: true, pullUpsMoved: true };   // a new gym never gets the starter exercises
+  let gym = blankGym(clean);
   let copied = 0;
   if (from && store.gyms?.[from]) ({ gym, copied } = copyEquipment(store.gyms[from], ids, gym));
   return { store: { ...store, gyms: { ...store.gyms, [id]: gym } }, id, copied };

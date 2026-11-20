@@ -29,7 +29,7 @@ import { makeBackup, backupFileName, parseBackup, fileKind, dataSummary, describ
 import { MUSCLES, muscleOf, muscleLabel, partnerGroups, pairedPartners, getPairs, setPairs, addPair, removePair, pairedWith, isSuitable, setSuitable, hasPair, pairCandidates } from "./superset.js";
 import { KEY, load, loadList, save } from "./storage.js";
 import { checkV4, toStoreV4, readStore, readSets } from "./schema4.js";
-import { openDb, useGym, setDefault, useDefault } from "./db.js";
+import { openDb, useGym, setDefault, useDefault, gymsOf, gymNameOf, renameGym as renameGymDb, addBlankGym } from "./db.js";
 import { SYNC } from "./config.js";
 import { emptySync } from "./sync.js";
 import { runSync } from "./syncglue.js";
@@ -136,7 +136,9 @@ const exList = () => (exCache ??= [
   ...(store.custom || []).filter((c) => !store.gyms[curGym()]?.equipment?.[c.id]),
 ]);
 const gymSets = () => setsForGym(sets, curGym());   // only the sets done at the current gym
-const gymName = (id) => store.gyms[id]?.name ?? id;
+// The gyms and their names, read from the tables (from the store if the tables could not be made).
+const gyms = () => (db ? gymsOf(db) : gymList(store));
+const gymName = (id) => (db ? gymNameOf(db, id) : store.gyms[id]?.name ?? id);
 
 // The selected session. Whatever is selected is remembered and is what Quick start uses.
 let session = { type: "legs", mode: "heavy", ...load(KEY.session, {}) };
@@ -295,7 +297,7 @@ function renderStart() {
   app.innerHTML =
     "<h1>Gym Log</h1>" + timeBar() +
     "<label>Gym</label>" +
-    selectHtml("gymSel", optionsHtml(gymList(store).map((g) => g.id), curGym(), (id) => esc(gymName(id))), "field") +
+    selectHtml("gymSel", optionsHtml(gyms().map((g) => g.id), curGym(), (id) => esc(gymName(id))), "field") +
     '<button class="primary" id="quick">Quick start: ' + esc(sessionLabel(session)) + "</button>" +
     "<label>Session</label>" +
     L.chips("types", sessionTypes.map((st) => [st.label, st.id === session.type, () => choose({ type: st.id })])) +
@@ -1087,7 +1089,7 @@ function renderGyms() {
   app.innerHTML =
     backBtn() + "<h2>Gyms</h2>" + flashHtml() +
     muted("Each gym has its own equipment. Tap a gym to rename it, make it your default or see its equipment.") +
-    L.items("list", gymList(store).map((g) => [
+    L.items("list", gyms().map((g) => [
       esc(g.name) + "<small>" +
         [g.id === curDefaultGym() && "Default", g.id === curGym() && "In use now", gymItems(g.id).length + " items"].filter(Boolean).join(" &middot; ") +
         "</small>",
@@ -1200,9 +1202,9 @@ function renderGymEdit() {
   wire({
     back: goBack,
     saveName: () => {
-      const next = renameGym(store, gymId, $("ge_name").value);
-      if (next === store) { alert("Enter a name for the gym."); return; }
-      saveStore(next);
+      const next = db ? renameGymDb(db, gymId, $("ge_name").value) : renameGym(store, gymId, $("ge_name").value);
+      if (next === (db ?? store)) { alert("Enter a name for the gym."); return; }
+      if (db) saveDb(next); else saveStore(next);
       flash = "Name saved";
       render();
     },
@@ -1434,7 +1436,7 @@ function renderGymAdd() {
   const fields = [
     { key: "name", label: "Gym name", type: "text", placeholder: "e.g. Holiday gym" },
     { key: "from", label: "Copy equipment from", type: "select", redraw: true,
-      options: () => [["", "Start with no equipment"], ...gymList(store).map((g) => [g.id, gymName(g.id)])],
+      options: () => [["", "Start with no equipment"], ...gyms().map((g) => [g.id, gymName(g.id)])],
       onChange: (x, v) => { x.ids = new Set(v ? gymItems(v).map(([id]) => id) : []); } },
     { type: "note", show: (x) => !!x.from, text: "Tap to tick or untick what this gym also has. Stacks and units are copied. Your own weights and notes are not." },
   ];
@@ -1456,9 +1458,11 @@ function renderGymAdd() {
     allBtn: () => { draft.ids = new Set(items.map(([id]) => id)); render(); },
     noneBtn: () => { draft.ids = new Set(); render(); },
     addBtn: () => {
-      const r = addGym(store, draft.name, draft.from ? { from: draft.from, ids: [...draft.ids] } : {});
+      // A gym with no equipment is added to the tables; one with copied equipment still goes the old way (until equipment moves over).
+      const blank = db && !draft.from;
+      const r = blank ? addBlankGym(db, draft.name) : addGym(store, draft.name, draft.from ? { from: draft.from, ids: [...draft.ids] } : {});
       if (r.id === null) { alert("Enter a name for the gym."); return; }
-      saveStore(r.store);
+      if (blank) saveDb(r.db); else saveStore(r.store);
       gymId = r.id;
       flash = "Added " + gymName(r.id) + (r.copied > 0 ? " with " + r.copied + (r.copied === 1 ? " item" : " items") + " copied" : "");
       go("gymEdit");

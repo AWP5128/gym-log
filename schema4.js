@@ -71,6 +71,17 @@ for (const e of [...BUILT_IN, ...STARTER_FREE, ...STARTER_ABS, ...STARTER_CARDIO
 // ---------- Version 3 (+ sets) to version 4 ----------
 // input: { store, settings, sets }. store is the saved gymlog.store (or null); settings is the old
 // gymlog.settings, used only when there is no store. Returns { ok, v4, report, error }.
+// The gym table row for a gym, and the gym_equipment rows for its weight sets (the gym's Dumbbells and Barbell).
+// migrateToV4 and db.js both use these, so a gym added through db.js looks exactly like one that was converted.
+export const gymRow = (id, g) => clean({
+  id, name: g.name, units: g.units, listDefault: g.listDefault, starterFree: g.starterFree, starterAbs: g.starterAbs,
+  starterCardio: g.starterCardio, pullUpsMoved: g.pullUpsMoved,
+});
+export const weightSetRows = (gymId, g) => Object.entries(g.weightSets || {}).map(([id, ws]) => clean({
+  gymId, id: SET_PREFIX + id, exerciseId: null, equipmentTypeId: ws.type, name: ws.name, unit: ws.unit,
+  pins: ws.pins, stackSpec: ws.stackSpec, top: ws.top, hidden: ws.hidden,
+}));
+
 export function migrateToV4({ store = null, settings = null, sets = [] } = {}) {
   const fail = (error) => ({ ok: false, v4: null, report: null, error });
   let v3;
@@ -105,12 +116,7 @@ export function migrateToV4({ store = null, settings = null, sets = [] } = {}) {
     t.person.push(clean({ id, name: p.name, defaults: p.defaults ?? {}, superset: p.superset }));
   }
   const gymEntries = Object.entries(v3.gyms);
-  for (const [id, g] of gymEntries) {
-    t.gym.push(clean({
-      id, name: g.name, units: g.units, listDefault: g.listDefault, starterFree: g.starterFree, starterAbs: g.starterAbs,
-      starterCardio: g.starterCardio, pullUpsMoved: g.pullUpsMoved,
-    }));
-  }
+  for (const [id, g] of gymEntries) t.gym.push(gymRow(id, g));
 
   // gym_member: everyone on this phone owns every gym in the store
   const orphanSetups = [];
@@ -136,12 +142,7 @@ export function migrateToV4({ store = null, settings = null, sets = [] } = {}) {
         hidden: it.hidden, muscle: it.muscle, uses: it.weightSet, watts: it.watts,
       }));
     }
-    for (const [id, ws] of Object.entries(g.weightSets || {})) {
-      t.gym_equipment.push(clean({
-        gymId, id: SET_PREFIX + id, exerciseId: null, equipmentTypeId: ws.type, name: ws.name, unit: ws.unit,
-        pins: ws.pins, stackSpec: ws.stackSpec, top: ws.top, hidden: ws.hidden,
-      }));
-    }
+    t.gym_equipment.push(...weightSetRows(gymId, g));
   }
   const customs = new Map(v3.custom.filter((c) => isObj(c) && typeof c.id === "string").map((c, i) => [c.id, { def: c, i }]));
   for (const id of customs.keys()) note(id, null);

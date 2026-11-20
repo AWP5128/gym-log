@@ -1,8 +1,8 @@
 import test from "node:test";
 import assert from "node:assert/strict";
-import { KEYS, openDb, rowsOf, rowOf, putRow, putRows, dropRows, useGym, setDefault, useDefault } from "./db.js";
+import { KEYS, openDb, rowsOf, rowOf, putRow, putRows, dropRows, useGym, setDefault, useDefault, gymsOf, gymNameOf, renameGym as renameGymDb, addBlankGym } from "./db.js";
 import { TABLES, toStoreV4, readStore, readSets } from "./schema4.js";
-import { emptyStore, addGym, setPersonal, setNever, setUse, setDefaults, setCurrentGym, setDefaultGym, useDefaultGym } from "./store.js";
+import { emptyStore, addGym, setPersonal, setNever, setUse, setDefaults, setCurrentGym, setDefaultGym, useDefaultGym, gymList, renameGym, addGym as addGymOld } from "./store.js";
 import { makeSet } from "./log.js";
 import { makeCardioSet } from "./cardio.js";
 
@@ -203,4 +203,56 @@ test("choosing a gym changes only the gym fields and leaves the old db alone", (
   assert.equal(setDefault(db, "nowhere"), db);
   assert.equal(setDefault(db, hotel).currentGym, db.currentGym);
   assert.equal(setDefault(db, hotel).defaultGym, hotel);
+});
+
+// ---------- Gyms: list, names, rename, add ----------
+test("the gym list and names read from the tables are the old gym list and names", () => {
+  const { store, v4, hotel } = saved();
+  const db = openDb(v4);
+  assert.deepEqual(gymsOf(db), gymList(store));
+  assert.equal(gymNameOf(db, hotel), "Hotel");
+  assert.equal(gymNameOf(db, "nowhere"), "nowhere");
+  assert.deepEqual(gymsOf(openDb({ version: 4, tables: {} })), []);
+});
+
+test("renaming a gym gives what the old rename gives once saved: trimmed, blank and unknown ignored", () => {
+  const { store, sets, v4, hotel } = saved();
+  const db = openDb(v4);
+  const open = (s) => openDb(toStoreV4(s, sets));
+  for (const [id, name] of [[hotel, "Hotel 2"], ["main", "  Home  "], [hotel, ""], [hotel, "   "], ["nowhere", "X"], [hotel, null], [hotel, 5]]) {
+    assert.deepEqual(renameGymDb(db, id, name), open(renameGym(store, id, name)), id + " " + name);
+  }
+  assert.equal(renameGymDb(db, hotel, ""), db);
+  assert.equal(renameGymDb(db, "nowhere", "X"), db);
+});
+
+test("adding a blank gym gives what the old add gives once saved: ids, owners, weight sets, and the old gym untouched", () => {
+  const { store, sets, v4 } = saved();
+  const open = (s) => openDb(toStoreV4(s, sets));
+  let db = openDb(v4);
+  let s = store;
+  for (const name of ["Garage", "Garage", "  Hotel  ", "Garage!", "Gym"]) {
+    const a = addBlankGym(db, name);
+    const b = addGymOld(s, name);
+    assert.equal(a.id, b.id, name);
+    assert.deepEqual(a.db, open(b.store), name);
+    db = a.db; s = b.store;
+  }
+  assert.deepEqual(gymsOf(db), gymList(s));
+  assert.equal(db.currentGym, store.currentGym);
+  for (const name of ["", "   ", null, undefined]) {
+    const r = addBlankGym(db, name);
+    assert.equal(r.id, null);
+    assert.equal(r.db, db);
+  }
+});
+
+test("a new gym belongs to every person, each listed with that person's other gyms", () => {
+  const { v4 } = saved();
+  const db = addBlankGym(openDb(v4), "Garage").db;
+  const rows = rowsOf(db, "gym_member");
+  assert.deepEqual(rows.map((r) => r.personId + ":" + r.gymId), ["awp:main", "awp:hotel", "awp:garage", "sam:main", "sam:hotel", "sam:garage"]);
+  assert.deepEqual(rowsOf(db, "gym_equipment", { gymId: "garage" }).map((r) => r.id), ["set:dumbbells", "set:barbell"]);
+  assert.equal(readStore(db).gyms.garage.name, "Garage");
+  assert.deepEqual(Object.keys(readStore(db).people.sam.gyms).sort(), ["garage", "hotel", "main"]);
 });
