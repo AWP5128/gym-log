@@ -5,7 +5,7 @@
 // every table it did not touch with the old one, so a screen can tell by `===` that a table is unchanged.
 // A row is found by its key fields (KEYS). A row's other fields are whatever schema4.js saves; this file does not look at them.
 
-import { TABLES, SCHEMA_VERSION, gymRow, equipmentRows, exerciseTables } from "./schema4.js";
+import { TABLES, SCHEMA_VERSION, gymRow, equipmentRows, exerciseTables, personRow, setupRows } from "./schema4.js";
 import { blankGym } from "./store.js";
 import { uniqueId } from "./gym.js";
 
@@ -140,6 +140,38 @@ export function putGym(db, id, gym) {
   const kept = rows.filter((r) => r.gymId !== id);
   const place = at === -1 ? kept.length : at;   // the rows before the gym's first old row are all kept
   next = { ...next, tables: { ...next.tables, gym_equipment: [...kept.slice(0, place), ...equipmentRows(id, gym), ...kept.slice(place)] } };
+  const { exercise, exercise_type } = exerciseTables(next.tables);
+  return { ...next, tables: { ...next.tables, exercise, exercise_type } };
+}
+
+// ---------- A person's own settings ----------
+// Rows of a table that match `pred` are replaced by `rows`, where the first old one stood (at the end when there was none).
+const replaceBlock = (db, table, pred, rows) => {
+  const old = rowsOf(db, table);
+  const at = old.findIndex(pred);
+  const kept = old.filter((r) => !pred(r));
+  const place = at === -1 ? kept.length : at;   // the rows before the first old one are all kept
+  return { ...db, tables: { ...db.tables, [table]: [...kept.slice(0, place), ...rows, ...kept.slice(place)] } };
+};
+
+// Saves a person as the store functions give them ({ name, defaults, gyms: { gymId: { machines, never, use } }, superset }):
+// the person row, the personal_setup rows and typed-in bests (in the order a conversion lists them), the owner rows of a new
+// person, and the exercise and exercise_type tables. Setups for a gym that does not exist are not saved, as in a conversion.
+export function putPerson(db, id, person) {
+  const isNew = !rowOf(db, "person", { id });
+  let next = putRow(db, "person", personRow(id, person));
+  if (isNew) {
+    const members = rowsOf(next, "gym").map((g) => ({ personId: id, gymId: g.id, role: "owner", status: "active", offTypes: [] }));
+    next = putRows(next, "gym_member", members);
+  }
+  const { rows, manual } = setupRows(id, person, new Set(rowsOf(next, "gym").map((g) => g.id)));
+  next = replaceBlock(next, "personal_setup", (r) => r.personId === id, rows);
+  // typed-in bests come first in logged_set, person by person, ahead of the real sets
+  const logged = rowsOf(next, "logged_set");
+  const bests = logged.filter((r) => r.manual === true);
+  const people = rowsOf(next, "person").map((p) => p.id);
+  const ordered = people.flatMap((pid) => (pid === id ? manual : bests.filter((r) => r.personId === pid)));
+  next = { ...next, tables: { ...next.tables, logged_set: [...ordered, ...logged.filter((r) => r.manual !== true)] } };
   const { exercise, exercise_type } = exerciseTables(next.tables);
   return { ...next, tables: { ...next.tables, exercise, exercise_type } };
 }

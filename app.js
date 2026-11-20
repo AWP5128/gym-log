@@ -29,7 +29,7 @@ import { makeBackup, backupFileName, parseBackup, fileKind, dataSummary, describ
 import { MUSCLES, muscleOf, muscleLabel, partnerGroups, pairedPartners, getPairs, setPairs, addPair, removePair, pairedWith, isSuitable, setSuitable, hasPair, pairCandidates } from "./superset.js";
 import { KEY, load, loadList, save } from "./storage.js";
 import { checkV4, toStoreV4, readStore, readSets } from "./schema4.js";
-import { openDb, useGym, setDefault, useDefault, gymsOf, gymNameOf, renameGym as renameGymDb, putGym } from "./db.js";
+import { openDb, useGym, setDefault, useDefault, gymsOf, gymNameOf, renameGym as renameGymDb, putGym, putPerson } from "./db.js";
 import { SYNC } from "./config.js";
 import { emptySync } from "./sync.js";
 import { runSync } from "./syncglue.js";
@@ -119,6 +119,9 @@ function saveDb(next) {
   dataVersion++;
   scheduleSync();
 }
+
+// Saves what the store functions give for one person (the current one): that person's rows go into the tables.
+const savePerson = (next, pid = curPerson()) => (db ? saveDb(putPerson(db, pid, next.people[pid])) : saveStore(next));
 
 const chooseGym = (id) => (db ? saveDb(useGym(db, id)) : saveStore(setCurrentGym(store, id)));
 
@@ -698,11 +701,11 @@ function bindNever(e) {
   };
   draw();
 }
-const saveNever = (e) => { if (neverDraft?.id === e.id) saveStore(setUse(store, curPerson(), curGym(), e, neverDraft.state)); };
+const saveNever = (e) => { if (neverDraft?.id === e.id) savePerson(setUse(store, curPerson(), curGym(), e, neverDraft.state)); };
 
 // Your saved superset pairs (kept per person; each pair works both ways).
 const pairPrefs = () => getPairs(store, curPerson());
-const savePairs = (prefs) => saveStore(setPairs(store, curPerson(), prefs));
+const savePairs = (prefs) => savePerson(setPairs(store, curPerson(), prefs));
 
 // Offers partners for the exercise already on the page: opposite muscles in this session first, then
 // the rest of the session, then (behind a button) other sessions as exceptions you can save as a pair.
@@ -832,7 +835,7 @@ function renderSetup() {
       ? box("Never use at this gym",
           L.chips("neverKinds", groups.map((g) => {
             const on = g.ids.every((id) => never[id]);
-            return [g.label, on, () => { saveStore(setNever(store, curPerson(), curGym(), g.ids, !on)); render(); }];
+            return [g.label, on, () => { savePerson(setNever(store, curPerson(), curGym(), g.ids, !on)); render(); }];
           }), "choices fit", "display:grid;grid-template-columns:repeat(" + (groups.length <= 3 ? groups.length : Math.ceil(groups.length / 2)) + ",1fr);overflow:visible") +
           muted("Hides a whole group from all your lists here. Single exercises can be set on their own screens."))
       : "") +
@@ -844,7 +847,7 @@ function renderSetup() {
   wire({
     back: goBack,
     saveDefaults: () => {
-      saveStore(setDefaults(store, curPerson(), { [key === "Heavy" ? "heavy" : "volume"]: { reps: wholeOrNull($("g_reps").value), sets: wholeOrNull($("g_sets").value) } }));
+      savePerson(setDefaults(store, curPerson(), { [key === "Heavy" ? "heavy" : "volume"]: { reps: wholeOrNull($("g_reps").value), sets: wholeOrNull($("g_sets").value) } }));
       flash = "Defaults saved";
       render();
     },
@@ -878,7 +881,7 @@ function renderEditCardio(e) {
   wire({
     back: goBack,
     save: () => {
-      saveStore(setPersonal(store, curPerson(), curGym(), e.id, { notes: d.notes, volume: { working: { weight: makeMinutes(toNumber(d.tmin), toNumber(d.tsec)) } } }));
+      savePerson(setPersonal(store, curPerson(), curGym(), e.id, { notes: d.notes, volume: { working: { weight: makeMinutes(toNumber(d.tmin), toNumber(d.tsec)) } } }));
       saveNever(e);
       go("setup");
     },
@@ -996,7 +999,7 @@ function renderEdit() {
       if (withWarmup) patch[mode].warmup.reps = wholeOrNull(d.warmReps);
       patch[mode].working.reps = wholeOrNull(d.reps);
       patch[mode].working.sets = wholeOrNull(d.sets);
-      saveStore(setPersonal(store, curPerson(), curGym(), e.id, patch));
+      savePerson(setPersonal(store, curPerson(), curGym(), e.id, patch));
       savePairs(ssDraft.prefs);
       saveNever(e);
       go("setup");

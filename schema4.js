@@ -87,6 +87,50 @@ export const weightSetRows = (gymId, g) => Object.entries(g.weightSets || {}).ma
   pins: ws.pins, stackSpec: ws.stackSpec, top: ws.top, hidden: ws.hidden,
 }));
 
+// One person's personal_setup rows and typed-in bests (manual logged_set rows) for the gyms in `gymIds`, and the exercise ids they
+// mention in the order a conversion meets them. migrateToV4 and db.js both use it.
+export function setupRows(personId, p, gymIds) {
+  const rows = [];
+  const manual = [];
+  const ids = [];
+  for (const [gymId, pg] of Object.entries(isObj(p.gyms) ? p.gyms : {})) {
+    if (!gymIds.has(gymId)) continue;
+    // "never used here" marks go on the person's no-day-type row for the exercise (made if there is none yet)
+    const neverMap = isObj(pg?.never) ? pg.never : {};
+    const useMap = isObj(pg?.use) ? pg.use : {};
+    const neverRows = [...new Set([...Object.keys(neverMap).filter((id) => neverMap[id] === true), ...Object.keys(useMap).filter((id) => useMap[id] === "normal" || useMap[id] === "rare")])];
+    for (const [exerciseId, m] of Object.entries(isObj(pg?.machines) ? pg.machines : {})) {
+      ids.push(exerciseId);
+      const dayRows = DAY_TYPES.filter((d) => isObj(m[d]));
+      for (const dayType of dayRows) {
+        rows.push(clean({
+          personId, gymId, exerciseId, dayType, warmup: m[dayType].warmup, working: m[dayType].working,
+          notes: m.notes || undefined,
+        }));
+      }
+      if (dayRows.length === 0 && m.notes) rows.push({ personId, gymId, exerciseId, dayType: null, notes: m.notes });
+      if (Number.isFinite(m.pbWeight) || Number.isFinite(m.pbReps)) {
+        manual.push(clean({
+          id: "manual:" + personId + ":" + gymId + ":" + exerciseId, personId, gymId, exerciseId, manual: true,
+          weight: Number.isFinite(m.pbWeight) ? m.pbWeight : undefined,
+          reps: Number.isFinite(m.pbReps) ? m.pbReps : undefined, time: null, workoutExerciseId: null,
+        }));
+      }
+    }
+    for (const exerciseId of neverRows) {
+      ids.push(exerciseId);
+      const row = rows.find((r) => r.gymId === gymId && r.exerciseId === exerciseId && r.dayType === null);
+      const marks = { ...(neverMap[exerciseId] === true ? { never: true } : {}), ...(useMap[exerciseId] === "normal" || useMap[exerciseId] === "rare" ? { use: useMap[exerciseId] } : {}) };
+      if (row) Object.assign(row, marks);
+      else rows.push({ personId, gymId, exerciseId, dayType: null, ...marks });
+    }
+  }
+  return { rows, manual, ids };
+}
+
+// The person table row.
+export const personRow = (id, p) => clean({ id, name: p.name, defaults: p.defaults ?? {}, superset: p.superset });
+
 export function migrateToV4({ store = null, settings = null, sets = [] } = {}) {
   const fail = (error) => ({ ok: false, v4: null, report: null, error });
   let v3;
@@ -118,7 +162,7 @@ export function migrateToV4({ store = null, settings = null, sets = [] } = {}) {
   // person and gym
   const people = Object.entries(v3.people);
   for (const [id, p] of people) {
-    t.person.push(clean({ id, name: p.name, defaults: p.defaults ?? {}, superset: p.superset }));
+    t.person.push(personRow(id, p));
   }
   const gymEntries = Object.entries(v3.gyms);
   for (const [id, g] of gymEntries) t.gym.push(gymRow(id, g));
@@ -150,43 +194,13 @@ export function migrateToV4({ store = null, settings = null, sets = [] } = {}) {
 
   // personal_setup (and manual bests as logged sets)
   let setupCount = 0;
+  const gymIds = new Set(Object.keys(v3.gyms));
   for (const [personId, p] of people) {
-    for (const [gymId, pg] of Object.entries(isObj(p.gyms) ? p.gyms : {})) {
-      if (!v3.gyms[gymId]) continue;
-      // "never used here" marks go on the person's no-day-type row for the exercise (made if there is none yet)
-      const neverMap = isObj(pg?.never) ? pg.never : {};
-      const useMap = isObj(pg?.use) ? pg.use : {};
-      const neverRows = [...new Set([...Object.keys(neverMap).filter((id) => neverMap[id] === true), ...Object.keys(useMap).filter((id) => useMap[id] === "normal" || useMap[id] === "rare")])];
-      for (const [exerciseId, m] of Object.entries(isObj(pg?.machines) ? pg.machines : {})) {
-        note(exerciseId, null);
-        const dayRows = DAY_TYPES.filter((d) => isObj(m[d]));
-        for (const dayType of dayRows) {
-          setupCount++;
-          t.personal_setup.push(clean({
-            personId, gymId, exerciseId, dayType, warmup: m[dayType].warmup, working: m[dayType].working,
-            notes: m.notes || undefined,
-          }));
-        }
-        if (dayRows.length === 0 && m.notes) {
-          setupCount++;
-          t.personal_setup.push({ personId, gymId, exerciseId, dayType: null, notes: m.notes });
-        }
-        if (Number.isFinite(m.pbWeight) || Number.isFinite(m.pbReps)) {
-          t.logged_set.push(clean({
-            id: "manual:" + personId + ":" + gymId + ":" + exerciseId, personId, gymId, exerciseId, manual: true,
-            weight: Number.isFinite(m.pbWeight) ? m.pbWeight : undefined,
-            reps: Number.isFinite(m.pbReps) ? m.pbReps : undefined, time: null, workoutExerciseId: null,
-          }));
-        }
-      }
-      for (const exerciseId of neverRows) {
-        note(exerciseId, null);
-        const row = t.personal_setup.find((r) => r.personId === personId && r.gymId === gymId && r.exerciseId === exerciseId && r.dayType === null);
-        const marks = { ...(neverMap[exerciseId] === true ? { never: true } : {}), ...(useMap[exerciseId] === "normal" || useMap[exerciseId] === "rare" ? { use: useMap[exerciseId] } : {}) };
-        if (row) Object.assign(row, marks);
-        else { setupCount++; t.personal_setup.push({ personId, gymId, exerciseId, dayType: null, ...marks }); }
-      }
-    }
+    const r = setupRows(personId, p, gymIds);
+    t.personal_setup.push(...r.rows);
+    t.logged_set.push(...r.manual);
+    for (const id of r.ids) note(id, null);
+    setupCount += r.rows.length;
   }
 
   // the logged sets: one workout per gym per day

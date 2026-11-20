@@ -1,9 +1,11 @@
 import test from "node:test";
 import assert from "node:assert/strict";
-import { KEYS, openDb, rowsOf, rowOf, putRow, putRows, dropRows, useGym, setDefault, useDefault, gymsOf, gymNameOf, renameGym as renameGymDb, addBlankGym, putGym } from "./db.js";
+import { KEYS, openDb, rowsOf, rowOf, putRow, putRows, dropRows, useGym, setDefault, useDefault, gymsOf, gymNameOf, renameGym as renameGymDb, addBlankGym, putGym, putPerson } from "./db.js";
 import { TABLES, toStoreV4, readStore, readSets } from "./schema4.js";
 import { emptyStore, addGym, setPersonal, setNever, setUse, setDefaults, setCurrentGym, setDefaultGym, useDefaultGym, addCustom, gymList, renameGym, addGym as addGymOld } from "./store.js";
 import { makeSet } from "./log.js";
+import { setupRows } from "./schema4.js";
+import { setPairs } from "./superset.js";
 import { addItem, updateItem, hideItem, restoreItem, hideWeightSet, restoreWeightSet, updateWeightSet, setWeightSetUnit, setDefaultUnit, setListDefault, copyEquipment } from "./gym.js";
 import { makeCardioSet } from "./cardio.js";
 
@@ -358,4 +360,96 @@ test("putGym keeps the exercise tables right when exercises come from added exer
   assert.deepEqual(readStore(next).custom, store.custom);
   // taking the only item of an unusual group out of every gym's list (hiding keeps it) and putting a gym back as it was changes nothing
   assert.deepEqual(putGym(next, "main", gym), next);
+});
+
+// ---------- A person's own settings: the same rows the old way saves ----------
+test("putPerson saves every kind of personal change exactly as the old way does", () => {
+  const { v4, sets, hotel } = saved();
+  const store0 = readStore(openDb(v4));
+  const db0 = openDb(toStoreV4(store0, sets));   // as the old way saves it, so both sides start from the same row order
+  const leg = { id: "leg-press", common: true };
+  const calf = { id: "calf-press", common: true };
+  const less = { id: "hip-adduction", common: false };
+  const steps = [
+    ["notes", "awp", setPersonal(store0, "awp", "main", "chest-press", { notes: "Seat 2" })],
+    ["clear notes", "awp", setPersonal(store0, "awp", "main", "leg-press", { notes: "" })],
+    ["working weights", "awp", setPersonal(store0, "awp", "main", "leg-press", { heavy: { working: { weight: 120, extra: 2.5, reps: 4, sets: 3 } }, volume: { warmup: { weight: 40 } } })],
+    ["best only", "awp", setPersonal(store0, "awp", "main", "pull-up", { pbWeight: 12, pbReps: 8 })],
+    ["best cleared", "awp", setPersonal(store0, "awp", "main", "leg-press", { pbWeight: null, pbReps: null })],
+    ["another gym", "awp", setPersonal(store0, "awp", hotel, "deadlift", { notes: "Hotel bar", heavy: { working: { weight: 60 } } })],
+    ["a gym that does not exist", "awp", setPersonal(store0, "awp", "nowhere", "leg-press", { notes: "x" })],
+    ["defaults", "awp", setDefaults(store0, "awp", { volume: { reps: 12, sets: 4, warmupReps: 8 } })],
+    ["defaults cleared", "awp", setDefaults(store0, "awp", { heavy: { reps: null, sets: null } })],
+    ["never on", "awp", setNever(store0, "awp", "main", ["leg-press", "chest-press"], true)],
+    ["never off", "awp", setNever(store0, "awp", "main", ["calf-press"], false)],
+    ["use rare", "awp", setUse(store0, "awp", "main", leg, "rare")],
+    ["use normal", "awp", setUse(store0, "awp", "main", less, "normal")],
+    ["use never", "awp", setUse(store0, "awp", hotel, calf, "never")],
+    ["pairs", "awp", setPairs(store0, "awp", { pairs: { "leg-press": ["calf-press"] }, suitable: { "leg-press": true } })],
+    ["another person", "sam", setPersonal(store0, "sam", "main", "chest-press", { notes: "Sam", pbWeight: 30 })],
+    ["a new person", "kim", setPersonal(store0, "kim", "main", "leg-press", { notes: "Kim", heavy: { working: { weight: 50 } } })],
+    ["a new person's never", "kim", setNever(store0, "kim", hotel, ["deadlift"], true)],
+  ];
+  for (const [label, pid, next] of steps) {
+    assert.deepEqual(putPerson(db0, pid, next.people[pid]), openDb(toStoreV4(next, sets)), label);
+  }
+  // one change after another, as the screens do them
+  let db = db0, store = store0;
+  for (const [, pid, next] of steps.filter(([, p]) => p === "awp")) {
+    store = { ...store, people: { ...store.people, [pid]: next.people[pid] } };
+    db = putPerson(db, pid, next.people[pid]);
+    assert.deepEqual(db, openDb(toStoreV4(store, sets)));
+  }
+});
+
+test("putPerson keeps typed-in bests in person order, ahead of the real sets, and leaves other tables alone", () => {
+  const { v4, sets } = saved();
+  const store0 = readStore(openDb(v4));
+  let s = setPersonal(store0, "sam", "main", "chest-press", { pbWeight: 30 });
+  s = setPersonal(s, "awp", "main", "pull-up", { pbWeight: 12 });
+  let db = openDb(toStoreV4(store0, sets));
+  db = putPerson(putPerson(db, "sam", s.people.sam), "awp", s.people.awp);   // sam first, so the order has to be put right
+  const logged = rowsOf(db, "logged_set");
+  const firstReal = logged.findIndex((r) => !r.manual);
+  assert.ok(logged.slice(0, firstReal).every((r) => r.manual) && logged.slice(firstReal).every((r) => !r.manual));
+  assert.deepEqual(logged.slice(0, firstReal).map((r) => r.personId + ":" + r.exerciseId), ["awp:leg-press", "awp:pull-up", "sam:chest-press"]);
+  assert.deepEqual(db, openDb(toStoreV4(s, sets)));
+  assert.equal(db.tables.gym_equipment, putPerson(db, "awp", s.people.awp).tables.gym_equipment);
+});
+
+test("putPerson does not change the old db", () => {
+  const { v4 } = saved();
+  const db = openDb(v4);
+  const before = JSON.stringify(db);
+  putPerson(db, "awp", setPersonal(readStore(db), "awp", "main", "leg-press", { notes: "changed" }).people.awp);
+  assert.equal(JSON.stringify(db), before);
+});
+
+// The builder is shared with the conversion, so these check its rows directly.
+test("setupRows: gyms that do not exist are skipped, and never and use marks join the machine's no-day-type row", () => {
+  const person = {
+    name: "A", defaults: {},
+    gyms: {
+      main: {
+        machines: {
+          "notes-only": { notes: "n" },
+          "with-day": { notes: "d", heavy: { working: { weight: 50 } } },
+          "pb-only": { pbWeight: 10, pbReps: 3 },
+        },
+        never: { "notes-only": true, "never-alone": true, "not-never": false, "text-never": "yes" },
+        use: { "notes-only": "rare", "with-day": "normal", "bad": "weird" },
+      },
+      nowhere: { machines: { "lost": { notes: "x" } }, never: { "lost-never": true } },
+    },
+  };
+  const r = setupRows("awp", person, new Set(["main"]));
+  assert.deepEqual(r.rows, [
+    { personId: "awp", gymId: "main", exerciseId: "notes-only", dayType: null, notes: "n", never: true, use: "rare" },
+    { personId: "awp", gymId: "main", exerciseId: "with-day", dayType: "heavy", working: { weight: 50 }, notes: "d" },
+    { personId: "awp", gymId: "main", exerciseId: "never-alone", dayType: null, never: true },
+    { personId: "awp", gymId: "main", exerciseId: "with-day", dayType: null, use: "normal" },
+  ]);
+  assert.deepEqual(r.manual.map((m) => [m.id, m.weight, m.reps]), [["manual:awp:main:pb-only", 10, 3]]);
+  assert.deepEqual(r.ids, ["notes-only", "with-day", "pb-only", "notes-only", "never-alone", "with-day"]);
+  assert.deepEqual(setupRows("awp", { name: "A", gyms: "junk" }, new Set(["main"])), { rows: [], manual: [], ids: [] });
 });
