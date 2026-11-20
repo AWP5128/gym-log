@@ -5,7 +5,7 @@
 // every table it did not touch with the old one, so a screen can tell by `===` that a table is unchanged.
 // A row is found by its key fields (KEYS). A row's other fields are whatever schema4.js saves; this file does not look at them.
 
-import { TABLES, SCHEMA_VERSION, gymRow, weightSetRows } from "./schema4.js";
+import { TABLES, SCHEMA_VERSION, gymRow, equipmentRows, exerciseTables } from "./schema4.js";
 import { blankGym } from "./store.js";
 import { uniqueId } from "./gym.js";
 
@@ -111,13 +111,35 @@ export function addBlankGym(db, name) {
   if (!clean) return { db, id: null };
   const id = uniqueId(clean, rowsOf(db, "gym").map((g) => g.id), "gym");
   const gym = blankGym(clean);
-  let next = putRow(db, "gym", gymRow(id, gym));
+  return { db: putGym(db, id, gym), id };
+}
+
+// Every person owns the gym: a member row after that person's other gyms, as a conversion lists them.
+const withMembers = (db, gymId) => {
+  let next = db;
   for (const p of rowsOf(next, "person")) {
     const rows = rowsOf(next, "gym_member");
-    const last = rows.map((r) => r.personId).lastIndexOf(p.id);   // after this person's other gyms, as a conversion lists them
-    const member = { personId: p.id, gymId: id, role: "owner", status: "active", offTypes: [] };
+    if (rows.some((r) => r.personId === p.id && r.gymId === gymId)) continue;
+    const last = rows.map((r) => r.personId).lastIndexOf(p.id);
+    const member = { personId: p.id, gymId, role: "owner", status: "active", offTypes: [] };
     const list = last === -1 ? [...rows, member] : [...rows.slice(0, last + 1), member, ...rows.slice(last + 1)];
     next = { ...next, tables: { ...next.tables, gym_member: list } };
   }
-  return { db: putRows(next, "gym_equipment", weightSetRows(id, gym)), id };
+  return next;
+};
+
+// ---------- A gym's equipment ----------
+// Saves a gym as the gym functions in gym.js give it ({ name, units, equipment, weightSets, ... }): its gym row, its equipment
+// rows (kept where the gym's old ones were, so the list order does not change), the owner rows of a new gym, and the
+// exercise and exercise_type tables, which depend on what every gym has. This is the one way equipment is written.
+export function putGym(db, id, gym) {
+  let next = putRow(db, "gym", gymRow(id, gym));
+  next = withMembers(next, id);
+  const rows = rowsOf(next, "gym_equipment");
+  const at = rows.findIndex((r) => r.gymId === id);
+  const kept = rows.filter((r) => r.gymId !== id);
+  const place = at === -1 ? kept.length : at;   // the rows before the gym's first old row are all kept
+  next = { ...next, tables: { ...next.tables, gym_equipment: [...kept.slice(0, place), ...equipmentRows(id, gym), ...kept.slice(place)] } };
+  const { exercise, exercise_type } = exerciseTables(next.tables);
+  return { ...next, tables: { ...next.tables, exercise, exercise_type } };
 }

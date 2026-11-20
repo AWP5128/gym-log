@@ -77,6 +77,11 @@ export const gymRow = (id, g) => clean({
   id, name: g.name, units: g.units, listDefault: g.listDefault, starterFree: g.starterFree, starterAbs: g.starterAbs,
   starterCardio: g.starterCardio, pullUpsMoved: g.pullUpsMoved,
 });
+export const itemRow = (gymId, id, it) => clean({
+  gymId, id, exerciseId: id, equipmentTypeId: it.type, exerciseTypeId: it.group, name: it.name,
+  unit: it.unit, step: it.step, common: it.common, min: it.min, pins: it.pins, stackSpec: it.stackSpec,
+  hidden: it.hidden, muscle: it.muscle, uses: it.weightSet, watts: it.watts,
+});
 export const weightSetRows = (gymId, g) => Object.entries(g.weightSets || {}).map(([id, ws]) => clean({
   gymId, id: SET_PREFIX + id, exerciseId: null, equipmentTypeId: ws.type, name: ws.name, unit: ws.unit,
   pins: ws.pins, stackSpec: ws.stackSpec, top: ws.top, hidden: ws.hidden,
@@ -136,11 +141,7 @@ export function migrateToV4({ store = null, settings = null, sets = [] } = {}) {
       note(id, it);
       addType(it.group);
       itemCount++;
-      t.gym_equipment.push(clean({
-        gymId, id, exerciseId: id, equipmentTypeId: it.type, exerciseTypeId: it.group, name: it.name,
-        unit: it.unit, step: it.step, common: it.common, min: it.min, pins: it.pins, stackSpec: it.stackSpec,
-        hidden: it.hidden, muscle: it.muscle, uses: it.weightSet, watts: it.watts,
-      }));
+      t.gym_equipment.push(itemRow(gymId, id, it));
     }
     t.gym_equipment.push(...weightSetRows(gymId, g));
   }
@@ -271,6 +272,51 @@ export function migrateToV4({ store = null, settings = null, sets = [] } = {}) {
     sets: loggedSets.length, dropped, workouts: t.workout.length, orphanSetups,
   };
   return { ok: true, v4, report, error: "" };
+}
+
+// All the gym_equipment rows of one gym, in the order a conversion lists them: its items, then its weight sets.
+export const equipmentRows = (gymId, g) => [
+  ...Object.entries(g.equipment || {}).map(([id, it]) => itemRow(gymId, id, it)),
+  ...weightSetRows(gymId, g),
+];
+
+// The exercise and exercise_type tables worked out from the other tables of a db (the same rows a conversion makes):
+// one exercise row for every exercise used by any gym's equipment, an added exercise, a personal setup or a logged set,
+// and a type row for each session type plus any other group in use. Gives { exercise, exercise_type }.
+// (An exercise first met only through a typed-in best can come in a different place in the list than a conversion puts it; no screen reads the order.)
+export function exerciseTables(t) {
+  const types = sessionTypes.map((s) => ({ id: s.id, label: s.label, dayTypes: s.weights ? [...DAY_TYPES] : [] }));
+  const typeIds = new Set(types.map((x) => x.id));
+  const addType = (id) => {
+    if (typeof id !== "string" || typeIds.has(id)) return;
+    typeIds.add(id);
+    types.push({ id, label: id, dayTypes: [] });
+  };
+  const used = new Map();
+  const note = (id, item) => { if (!used.has(id)) used.set(id, item ?? null); };
+  for (const r of t.gym_equipment) {
+    if (r.exerciseId === null || r.exerciseId === undefined) continue;
+    note(r.exerciseId, { name: r.name, group: r.exerciseTypeId });
+    addType(r.exerciseTypeId);
+  }
+  const customs = new Map(t.exercise.filter((e) => e.custom).sort((a, b) => a.custom.customIndex - b.custom.customIndex).map((e) => [e.id, e.custom]));
+  for (const id of customs.keys()) note(id, null);
+  for (const r of t.personal_setup) note(r.exerciseId, null);
+  for (const r of t.logged_set) if (r.manual) note(r.exerciseId, null);
+  for (const r of t.logged_set) if (!r.manual) note(r.exerciseId, null);
+  for (const r of t.workout_type) addType(r.exerciseTypeId);
+  const exercise = [];
+  for (const [id, firstItem] of used) {
+    const known = KNOWN.get(id);
+    const custom = customs.get(id);
+    const exerciseTypeId = known?.group ?? custom?.group ?? firstItem?.group ?? null;
+    addType(exerciseTypeId);
+    exercise.push(clean({
+      id, name: known?.name ?? custom?.name ?? firstItem?.name ?? id, exerciseTypeId, alsoUnder: ALSO_UNDER[id] ?? [],
+      custom: custom ? { ...custom } : undefined,
+    }));
+  }
+  return { exercise, exercise_type: types };
 }
 
 // ---------- Version 4 back to the version 3 shapes (for checking, and for the screens until they move) ----------

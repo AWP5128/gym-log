@@ -1,9 +1,10 @@
 import test from "node:test";
 import assert from "node:assert/strict";
-import { KEYS, openDb, rowsOf, rowOf, putRow, putRows, dropRows, useGym, setDefault, useDefault, gymsOf, gymNameOf, renameGym as renameGymDb, addBlankGym } from "./db.js";
+import { KEYS, openDb, rowsOf, rowOf, putRow, putRows, dropRows, useGym, setDefault, useDefault, gymsOf, gymNameOf, renameGym as renameGymDb, addBlankGym, putGym } from "./db.js";
 import { TABLES, toStoreV4, readStore, readSets } from "./schema4.js";
-import { emptyStore, addGym, setPersonal, setNever, setUse, setDefaults, setCurrentGym, setDefaultGym, useDefaultGym, gymList, renameGym, addGym as addGymOld } from "./store.js";
+import { emptyStore, addGym, setPersonal, setNever, setUse, setDefaults, setCurrentGym, setDefaultGym, useDefaultGym, addCustom, gymList, renameGym, addGym as addGymOld } from "./store.js";
 import { makeSet } from "./log.js";
+import { addItem, updateItem, hideItem, restoreItem, hideWeightSet, restoreWeightSet, updateWeightSet, setWeightSetUnit, setDefaultUnit, setListDefault, copyEquipment } from "./gym.js";
 import { makeCardioSet } from "./cardio.js";
 
 // A saved version 4 object with two gyms, personal settings, never/rare marks, strength sets, a cardio entry and a typed-in best.
@@ -255,4 +256,106 @@ test("a new gym belongs to every person, each listed with that person's other gy
   assert.deepEqual(rowsOf(db, "gym_equipment", { gymId: "garage" }).map((r) => r.id), ["set:dumbbells", "set:barbell"]);
   assert.equal(readStore(db).gyms.garage.name, "Garage");
   assert.deepEqual(Object.keys(readStore(db).people.sam.gyms).sort(), ["garage", "hotel", "main"]);
+});
+
+// ---------- A gym's equipment: the same rows the old way saves ----------
+// Each change is made with the gym.js function on the gym the screens see, saved with putGym, and compared with
+// converting the whole changed store the old way (the saved data must come out the same, row for row).
+test("putGym saves every kind of gym change exactly as the old way does", () => {
+  const { v4, sets, hotel } = saved();
+  const db0 = openDb(v4);
+  const store0 = readStore(db0);
+  const oldWay = (store, id, gym) => openDb(toStoreV4({ ...store, gyms: { ...store.gyms, [id]: gym } }, sets));
+  const main = store0.gyms.main;
+  const hot = store0.gyms[hotel];
+  const ids = Object.keys(main.equipment);
+  const steps = [
+    ["same gym", "main", main],
+    ["hide", "main", hideItem(main, ids[0])],
+    ["restore", "main", restoreItem(hideItem(main, ids[0]), ids[0])],
+    ["hide set", "main", hideWeightSet(main, "dumbbells")],
+    ["restore set", "main", restoreWeightSet(hideWeightSet(main, "dumbbells"), "dumbbells")],
+    ["list default", "main", setListDefault(main, "barbell")],
+    ["default unit", "main", setDefaultUnit(main, "stack", "kg")],
+    ["add machine", "main", addItem(main, { name: "Brand New Press", group: "legs", type: "stack", unit: "lb" }).gym],
+    ["add in a new group", "main", addItem(main, { name: "Neck Curl", group: "neck", type: "stack", unit: "lb" }).gym],
+    ["add dumbbell", "main", addItem(main, { name: "Fly", group: "arms", type: "dumbbell" }).gym],
+    ["edit item", "main", updateItem(main, ids[1], { name: "Renamed Item", step: 7, muscle: "chest" })],
+    ["move item to a new group", "main", updateItem(main, ids[1], { group: "neck" })],
+    ["weight set", "main", updateWeightSet(main, "barbell", { top: 300 })],
+    ["set unit", hotel, setWeightSetUnit(hot, "dumbbells", "lb").gym ?? setWeightSetUnit(hot, "dumbbells", "lb")],
+    ["copy equipment", hotel, copyEquipment(main, ids.slice(0, 6), hot).gym],
+    ["copy over", hotel, copyEquipment(main, ids.slice(0, 6), hot, { overwrite: true }).gym],
+    ["rename", hotel, { ...hot, name: "Renamed" }],
+  ];
+  for (const [label, id, gym] of steps) assert.deepEqual(putGym(db0, id, gym), oldWay(store0, id, gym), label);
+  // one change after another, as the screens do them
+  let db = db0, store = store0;
+  for (const [, id, gym] of steps) {
+    store = { ...store, gyms: { ...store.gyms, [id]: gym } };
+    db = putGym(db, id, gym);
+    assert.deepEqual(db, openDb(toStoreV4(store, sets)));
+  }
+});
+
+test("putGym adds a whole new gym with copied equipment as the old add does", () => {
+  const { store, sets, v4 } = saved();
+  const db0 = openDb(v4);
+  const s0 = readStore(db0);
+  const old = addGymOld(s0, "Garage", { from: "main", ids: Object.keys(s0.gyms.main.equipment).slice(0, 9) });
+  const next = putGym(db0, old.id, old.store.gyms[old.id]);
+  assert.deepEqual(next, openDb(toStoreV4(old.store, sets)));
+  assert.equal(old.copied, 9);
+  assert.deepEqual(rowsOf(next, "gym_member").map((r) => r.gymId).filter((g, i, a) => a.indexOf(g) === i), ["main", "hotel", "garage"]);
+  assert.ok(store);
+});
+
+test("putGym leaves the rows of the other gyms, the other tables and the old db alone", () => {
+  const { v4, hotel } = saved();
+  const db = openDb(v4);
+  const before = JSON.stringify(db);
+  const gym = readStore(db).gyms[hotel];
+  const next = putGym(db, hotel, hideItem(gym, Object.keys(gym.equipment)[0]));
+  assert.equal(JSON.stringify(db), before);
+  assert.deepEqual(rowsOf(next, "gym_equipment", { gymId: "main" }), rowsOf(db, "gym_equipment", { gymId: "main" }));
+  assert.equal(next.tables.personal_setup, db.tables.personal_setup);
+  assert.equal(next.tables.logged_set, db.tables.logged_set);
+  assert.equal(rowsOf(next, "gym_equipment", { gymId: hotel })[0].hidden, true);
+});
+
+test("putGym keeps the exercise tables right when exercises come from added exercises, personal setups and logged sets only", () => {
+  let s = emptyStore();
+  s = addCustom(s, { name: "Face Pull", group: "arms", unit: "lb", step: 5 });
+  s = addCustom(s, { name: "Stretch", group: "yoga", unit: "min" });
+  s = addCustom(s, { name: "Mobility", group: "mobility", unit: "min" });   // no gym item, no set: only the added exercise itself
+  s = addGym(s, "Hotel").store;
+  s = setPersonal(s, "awp", "main", "pb-only", { pbWeight: 50 });   // a typed-in best and nothing else
+  s = setPersonal(s, "awp", "main", "ghost-machine", { notes: "no longer at the gym" });   // an exercise no gym has
+  s = setPersonal(s, "awp", "main", "custom-face-pull", { notes: "mine", pbWeight: 40 });
+  s = setNever(s, "awp", "main", ["old-never"], true);
+  const at = (m) => new Date(2026, 10, 18, 9, m);
+  const sets = [
+    makeSet({ exerciseId: "history-only", weight: 20, reps: 5, gymId: "main", unit: "lb", now: at(0) }),
+    makeSet({ exerciseId: "custom-stretch", weight: 20, reps: 5, gymId: "main", unit: "lb", now: at(5) }),
+    makeSet({ exerciseId: "leg-press", weight: 90, reps: 5, gymId: "hotel", unit: "lb", now: at(9) }),
+  ];
+  const v4 = toStoreV4(s, sets);
+  const db = openDb(v4);
+  const store = readStore(db);
+  const gym = addItem(store.gyms.main, { name: "Neck Curl", group: "neck", type: "stack", unit: "lb" }).gym;
+  const next = putGym(db, "main", gym);
+  // The exercise rows (and the typed-in bests, whose order a second conversion of the store can change) are compared in id order:
+  // an exercise known only from a setup, a typed-in best or the never list can come in a different place than a conversion
+  // puts it, and no screen reads that order.
+  const byId = (rows) => [...rows].sort((x, y) => (x.id < y.id ? -1 : 1));
+  const inIdOrder = (d) => ({ ...d, tables: { ...d.tables, exercise: byId(d.tables.exercise), logged_set: byId(d.tables.logged_set) } });
+  assert.deepEqual(inIdOrder(next), inIdOrder(openDb(toStoreV4({ ...store, gyms: { ...store.gyms, main: gym } }, sets))));
+  const ids = rowsOf(next, "exercise").map((e) => e.id);
+  for (const id of ["pb-only", "custom-mobility", "ghost-machine", "history-only", "custom-face-pull", "custom-stretch", "old-never", "neck-curl"]) assert.ok(ids.includes(id), id);
+  assert.ok(rowsOf(next, "exercise_type").some((x) => x.id === "neck"));
+  assert.ok(rowsOf(next, "exercise_type").some((x) => x.id === "yoga"));
+  assert.ok(rowsOf(next, "exercise_type").some((x) => x.id === "mobility"));
+  assert.deepEqual(readStore(next).custom, store.custom);
+  // taking the only item of an unusual group out of every gym's list (hiding keeps it) and putting a gym back as it was changes nothing
+  assert.deepEqual(putGym(next, "main", gym), next);
 });

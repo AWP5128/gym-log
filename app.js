@@ -29,7 +29,7 @@ import { makeBackup, backupFileName, parseBackup, fileKind, dataSummary, describ
 import { MUSCLES, muscleOf, muscleLabel, partnerGroups, pairedPartners, getPairs, setPairs, addPair, removePair, pairedWith, isSuitable, setSuitable, hasPair, pairCandidates } from "./superset.js";
 import { KEY, load, loadList, save } from "./storage.js";
 import { checkV4, toStoreV4, readStore, readSets } from "./schema4.js";
-import { openDb, useGym, setDefault, useDefault, gymsOf, gymNameOf, renameGym as renameGymDb, addBlankGym } from "./db.js";
+import { openDb, useGym, setDefault, useDefault, gymsOf, gymNameOf, renameGym as renameGymDb, putGym } from "./db.js";
 import { SYNC } from "./config.js";
 import { emptySync } from "./sync.js";
 import { runSync } from "./syncglue.js";
@@ -1081,7 +1081,7 @@ const stackToSave = (spec) => ({ low: spec.low, step: spec.step, top: spec.top, 
 // adds a new one (blank, or with chosen equipment copied from another gym).
 const typeLabel = (t) => TYPES.find((x) => x.id === t)?.label ?? "Equipment";
 const gymItems = (id) => visibleEntries(store.gyms[id] || {});   // the items in use (hidden ones are left out)
-const saveGym = (id, gym) => saveStore({ ...store, gyms: { ...store.gyms, [id]: gym } });
+const saveGym = (id, gym) => (db ? saveDb(putGym(db, id, gym)) : saveStore({ ...store, gyms: { ...store.gyms, [id]: gym } }));
 const flashHtml = () => (flash ? '<div class="note">' + esc(flash) + "</div>" : "");
 
 function renderGyms() {
@@ -1458,11 +1458,10 @@ function renderGymAdd() {
     allBtn: () => { draft.ids = new Set(items.map(([id]) => id)); render(); },
     noneBtn: () => { draft.ids = new Set(); render(); },
     addBtn: () => {
-      // A gym with no equipment is added to the tables; one with copied equipment still goes the old way (until equipment moves over).
-      const blank = db && !draft.from;
-      const r = blank ? addBlankGym(db, draft.name) : addGym(store, draft.name, draft.from ? { from: draft.from, ids: [...draft.ids] } : {});
+      // The old add works out the new gym (its name, id and the copied equipment); it is saved as table rows.
+      const r = addGym(store, draft.name, draft.from ? { from: draft.from, ids: [...draft.ids] } : {});
       if (r.id === null) { alert("Enter a name for the gym."); return; }
-      if (blank) saveDb(r.db); else saveStore(r.store);
+      saveGym(r.id, r.store.gyms[r.id]);
       gymId = r.id;
       flash = "Added " + gymName(r.id) + (r.copied > 0 ? " with " + r.copied + (r.copied === 1 ? " item" : " items") + " copied" : "");
       go("gymEdit");
