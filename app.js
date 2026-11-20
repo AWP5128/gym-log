@@ -29,7 +29,7 @@ import { makeBackup, backupFileName, parseBackup, fileKind, dataSummary, describ
 import { MUSCLES, muscleOf, muscleLabel, partnerGroups, pairedPartners, getPairs, setPairs, addPair, removePair, pairedWith, isSuitable, setSuitable, hasPair, pairCandidates } from "./superset.js";
 import { KEY, load, loadList, save } from "./storage.js";
 import { checkV4, toStoreV4, readStore, readSets } from "./schema4.js";
-import { openDb } from "./db.js";
+import { openDb, useGym, setDefault, useDefault } from "./db.js";
 import { SYNC } from "./config.js";
 import { emptySync } from "./sync.js";
 import { runSync } from "./syncglue.js";
@@ -77,7 +77,9 @@ const persistStore = (st) => {
   scheduleSync();
 };
 if (!savedStore || savedStore.version !== 4 || savedStore.setsInTables !== true) persistStore(store);
-store = useDefaultGym(store);   // every visit starts in the default gym
+// Every visit starts in the default gym (not saved until something else is).
+if (db) { db = useDefault(db); store = readStore(db) ?? store; }
+else store = useDefaultGym(store);
 
 // Sets logged before gyms existed belong to the first gym, in the unit their exercise used.
 {
@@ -97,12 +99,28 @@ store = useDefaultGym(store);   // every visit starts in the default gym
 let exCache = null;
 
 // Stage C: the screens read the current person's settings at the current gym straight from the store.
-const myConfig = (id) => configOf(store, store.currentPerson, store.currentGym, id);                  // this machine's own settings
-const myEffective = (id) => effectiveConfigOf(store, store.currentPerson, store.currentGym, id);      // with the every-machine defaults filled in
-const myDefaults = () => globalDefaultsOf(store, store.currentPerson);
-const myWarmupReps = (id, key) => warmupRepsOf(store, store.currentPerson, store.currentGym, id, key);
-const myOwnWarmupReps = (id, key) => ownWarmupRepsOf(store, store.currentPerson, store.currentGym, id, key);
-const mySavedExtra = (id, kind, key) => savedExtraOf(store, store.currentPerson, store.currentGym, id, kind, key);
+const myConfig = (id) => configOf(store, curPerson(), curGym(), id);                  // this machine's own settings
+const myEffective = (id) => effectiveConfigOf(store, curPerson(), curGym(), id);      // with the every-machine defaults filled in
+const myDefaults = () => globalDefaultsOf(store, curPerson());
+const myWarmupReps = (id, key) => warmupRepsOf(store, curPerson(), curGym(), id, key);
+const myOwnWarmupReps = (id, key) => ownWarmupRepsOf(store, curPerson(), curGym(), id, key);
+const mySavedExtra = (id, kind, key) => savedExtraOf(store, curPerson(), curGym(), id, kind, key);
+
+// Which gym and which person: read from the tables. (If the tables could not be made, from the store.)
+const curGym = () => (db ?? store).currentGym;
+const curPerson = () => (db ?? store).currentPerson;
+const curDefaultGym = () => (db ?? store).defaultGym;
+
+// Saves changed tables, works out the store the unconverted screens use, and clears the kept exercise list.
+function saveDb(next) {
+  saveV4(next);
+  store = readStore(db) ?? store;
+  exCache = null;
+  dataVersion++;
+  scheduleSync();
+}
+
+const chooseGym = (id) => (db ? saveDb(useGym(db, id)) : saveStore(setCurrentGym(store, id)));
 
 // Saves a changed store (gyms, current gym, default gym, personal settings) and clears the kept exercise list.
 function saveStore(next) {
@@ -114,10 +132,10 @@ function saveStore(next) {
 // The current gym's equipment in the shape the screens use, plus any exercises you added that the gym
 // has not saved anything for yet.
 const exList = () => (exCache ??= [
-  ...exerciseList(store.gyms[store.currentGym] || {}),
-  ...(store.custom || []).filter((c) => !store.gyms[store.currentGym]?.equipment?.[c.id]),
+  ...exerciseList(store.gyms[curGym()] || {}),
+  ...(store.custom || []).filter((c) => !store.gyms[curGym()]?.equipment?.[c.id]),
 ]);
-const gymSets = () => setsForGym(sets, store.currentGym);   // only the sets done at the current gym
+const gymSets = () => setsForGym(sets, curGym());   // only the sets done at the current gym
 const gymName = (id) => store.gyms[id]?.name ?? id;
 
 // The selected session. Whatever is selected is remembered and is what Quick start uses.
@@ -277,7 +295,7 @@ function renderStart() {
   app.innerHTML =
     "<h1>Gym Log</h1>" + timeBar() +
     "<label>Gym</label>" +
-    selectHtml("gymSel", optionsHtml(gymList(store).map((g) => g.id), store.currentGym, (id) => esc(gymName(id))), "field") +
+    selectHtml("gymSel", optionsHtml(gymList(store).map((g) => g.id), curGym(), (id) => esc(gymName(id))), "field") +
     '<button class="primary" id="quick">Quick start: ' + esc(sessionLabel(session)) + "</button>" +
     "<label>Session</label>" +
     L.chips("types", sessionTypes.map((st) => [st.label, st.id === session.type, () => choose({ type: st.id })])) +
@@ -293,7 +311,7 @@ function renderStart() {
     gymsBtn: () => go("gyms"),
     backupBtn: () => go("backup"),
   });
-  $("gymSel").onchange = (ev) => { listKind = null; saveStore(setCurrentGym(store, ev.target.value)); render(); };
+  $("gymSel").onchange = (ev) => { listKind = null; chooseGym(ev.target.value); render(); };
 }
 
 // ---------- Exercise list ----------
@@ -304,7 +322,7 @@ function renderList() {
   // One kind of exercise at a time keeps the list short (machines, dumbbells, barbells, body weight).
   const present = LIST_KINDS.map((k) => k.id).filter((k) => all.some((e) => listKindOf(e) === k));
   const openCounts = kindCounts(open);
-  const kind = chooseListKind(present, openCounts, listKind, listDefaultOf(store.gyms[store.currentGym]));
+  const kind = chooseListKind(present, openCounts, listKind, listDefaultOf(store.gyms[curGym()]));
   const openKind = open.filter((e) => listKindOf(e) === kind);
   const small = isSmallList(openKind.length);   // the number the chip shows: finished exercises are not counted
   const { shown, toggle } = commonSplit(openKind, showMore, "more", small);
@@ -393,7 +411,7 @@ const extraSelectHtml = (id, e, chosen) =>
 
 // The personal bests for an exercise at the current gym: a machine shows the best here and the best ever
 // (one line when they are the same), free weights show the best ever only. All logged sets count, from every gym.
-const bestsFor = (e) => personalBests(sets, e, store.currentGym, manualPb(myConfig(e.id)));
+const bestsFor = (e) => personalBests(sets, e, curGym(), manualPb(myConfig(e.id)));
 
 function bestsHtml(e) {
   if (e.kind === "time") return "";
@@ -499,10 +517,10 @@ function bindPanel(p, i) {
     rPlus: () => { p.reps += 1; p.pb = null; render(); },
     logBtn: () => {
       p.pb = e.kind === "time" ? null : newBestLevel(bestsFor(e), { weight: p.weight, reps: p.reps });   // judged before the set is saved
-      sets.push(makeSet({ exerciseId: e.id, weight: p.weight, reps: p.reps, mode: dayMode() || undefined, gymId: store.currentGym, unit: e.unit }));
+      sets.push(makeSet({ exerciseId: e.id, weight: p.weight, reps: p.reps, mode: dayMode() || undefined, gymId: curGym(), unit: e.unit }));
       setsChanged();
     },
-    undo: () => { p.pb = null; sets = removeLastSet(sets, e.id, store.currentGym); setsChanged(); },
+    undo: () => { p.pb = null; sets = removeLastSet(sets, e.id, curGym()); setsChanged(); },
     // Sets are saved as you log them. Finish marks only this exercise as done for today and takes it
     // off the list. If it was one of a superset, the other exercise stays on the page.
     finish: () => {
@@ -547,7 +565,7 @@ function cardioPanelHtml(p, i) {
   const cfg = myConfig(e.id);
   const today = todaysEntries(gymSets(), e.id);
   const showWatts = e.watts !== false;
-  const lines = bestLines(cardioBests(sets, e.id, store.currentGym), showWatts);
+  const lines = bestLines(cardioBests(sets, e.id, curGym()), showWatts);
   const bests = '<div class="muted small" style="margin-top:8px">' +
     (lines.length > 0 ? lines.map(([label, text]) => "<div>" + esc(label) + ' <b style="color:#eee">' + esc(text) + "</b></div>").join("") : "<div>No personal best yet</div>") + "</div>";
   const notes = cfg.notes ? '<div class="note">' + esc(cfg.notes).replace(/\n/g, "<br>") + "</div>" : "";
@@ -617,8 +635,8 @@ function bindCardioPanel(p, i) {
       const distance = toNumber(p.distance);
       const hasDistance = distance !== null && distance > 0;
       if (!hasDistance && !confirm("No distance entered, so no speed or new best. Finish without it?")) return;
-      const entry = makeCardioSet({ exerciseId: e.id, minutes: duration.minutes, distance: hasDistance ? distance : null, unit: e.unit, watts: e.watts === false ? undefined : toNumber(p.watts), gymId: store.currentGym, start, now });
-      p.pb = newBestLines(newCardioBests(cardioBests(sets, e.id, store.currentGym), entry));   // judged before the entry is saved
+      const entry = makeCardioSet({ exerciseId: e.id, minutes: duration.minutes, distance: hasDistance ? distance : null, unit: e.unit, watts: e.watts === false ? undefined : toNumber(p.watts), gymId: curGym(), start, now });
+      p.pb = newBestLines(newCardioBests(cardioBests(sets, e.id, curGym()), entry));   // judged before the entry is saved
       sets.push(entry);
       persistStore(store);
       setDone(markDone(done, e.id));   // Finish also finishes the exercise; the card stays up to show the new best
@@ -627,7 +645,7 @@ function bindCardioPanel(p, i) {
     undo: () => {
       const entry = todaysEntries(gymSets(), e.id).pop();
       Object.assign(p, entry ? entryBoxes(entry, e.unit) : {}, { pb: null });   // the old start and duration come back as overrides
-      sets = removeLastSet(sets, e.id, store.currentGym);
+      sets = removeLastSet(sets, e.id, curGym());
       persistStore(store);
       setDone(unmarkDone(done, e.id));   // back to the stopped card: fix the details and Finish again
       render();
@@ -662,15 +680,15 @@ function sessionPool() {
 }
 
 // "Never used here" (personal, per gym): left out of the lists and the superset picker, unless already done today.
-const neverNow = () => neverIds(store, store.currentPerson, store.currentGym);
+const neverNow = () => neverIds(store, curPerson(), curGym());
 const inLists = (e) => !neverNow()[e.id] || isDoneToday(done, e.id);
 // Rare (under "Show less common") or Normal (main list) as this person has set it; otherwise the exercise's own default.
-const personal = (e) => { const u = useIds(store, store.currentPerson, store.currentGym)[e.id]; return u ? { ...e, common: u === "normal" } : e; };
+const personal = (e) => { const u = useIds(store, curPerson(), curGym())[e.id]; return u ? { ...e, common: u === "normal" } : e; };
 
 // The "At this gym" choice on an exercise's Set up screen: Normal, Rare or Never. Saved with Save.
 function neverBoxHtml() { return box("At this gym", '<div class="choices" id="neverSw"></div>' + muted("Rare goes under Show less common. Never hides it from all your lists here. The gym keeps it.")); }
 function bindNever(e) {
-  if (!neverDraft || neverDraft.id !== e.id) neverDraft = { id: e.id, state: useOf(store, store.currentPerson, store.currentGym, e) };
+  if (!neverDraft || neverDraft.id !== e.id) neverDraft = { id: e.id, state: useOf(store, curPerson(), curGym(), e) };
   const draw = () => {
     $("neverSw").innerHTML = "";
     addChoices("neverSw", [["Normal", "normal"], ["Rare", "rare"], ["Never", "never"]].map(([label, state]) =>
@@ -678,11 +696,11 @@ function bindNever(e) {
   };
   draw();
 }
-const saveNever = (e) => { if (neverDraft?.id === e.id) saveStore(setUse(store, store.currentPerson, store.currentGym, e, neverDraft.state)); };
+const saveNever = (e) => { if (neverDraft?.id === e.id) saveStore(setUse(store, curPerson(), curGym(), e, neverDraft.state)); };
 
 // Your saved superset pairs (kept per person; each pair works both ways).
-const pairPrefs = () => getPairs(store, store.currentPerson);
-const savePairs = (prefs) => saveStore(setPairs(store, store.currentPerson, prefs));
+const pairPrefs = () => getPairs(store, curPerson());
+const savePairs = (prefs) => saveStore(setPairs(store, curPerson(), prefs));
 
 // Offers partners for the exercise already on the page: opposite muscles in this session first, then
 // the rest of the session, then (behind a button) other sessions as exceptions you can save as a pair.
@@ -796,7 +814,7 @@ function renderSetup() {
   const key = modeKey();
   const g = myDefaults();
   const rowFor = (e) => [
-    esc(e.name) + "<small>" + (never[e.id] ? "Never used here" : (useOf(store, store.currentPerson, store.currentGym, e) === "rare" ? "Rare · " : "") + esc(summary(e, myConfig(e.id), key))) + "</small>",
+    esc(e.name) + "<small>" + (never[e.id] ? "Never used here" : (useOf(store, curPerson(), curGym(), e) === "rare" ? "Rare · " : "") + esc(summary(e, myConfig(e.id), key))) + "</small>",
     () => { editId = e.id; go("edit"); },
   ];
   const L = blocks();
@@ -812,7 +830,7 @@ function renderSetup() {
       ? box("Never use at this gym",
           L.chips("neverKinds", groups.map((g) => {
             const on = g.ids.every((id) => never[id]);
-            return [g.label, on, () => { saveStore(setNever(store, store.currentPerson, store.currentGym, g.ids, !on)); render(); }];
+            return [g.label, on, () => { saveStore(setNever(store, curPerson(), curGym(), g.ids, !on)); render(); }];
           }), "choices fit", "display:grid;grid-template-columns:repeat(" + (groups.length <= 3 ? groups.length : Math.ceil(groups.length / 2)) + ",1fr);overflow:visible") +
           muted("Hides a whole group from all your lists here. Single exercises can be set on their own screens."))
       : "") +
@@ -824,7 +842,7 @@ function renderSetup() {
   wire({
     back: goBack,
     saveDefaults: () => {
-      saveStore(setDefaults(store, store.currentPerson, { [key === "Heavy" ? "heavy" : "volume"]: { reps: wholeOrNull($("g_reps").value), sets: wholeOrNull($("g_sets").value) } }));
+      saveStore(setDefaults(store, curPerson(), { [key === "Heavy" ? "heavy" : "volume"]: { reps: wholeOrNull($("g_reps").value), sets: wholeOrNull($("g_sets").value) } }));
       flash = "Defaults saved";
       render();
     },
@@ -858,7 +876,7 @@ function renderEditCardio(e) {
   wire({
     back: goBack,
     save: () => {
-      saveStore(setPersonal(store, store.currentPerson, store.currentGym, e.id, { notes: d.notes, volume: { working: { weight: makeMinutes(toNumber(d.tmin), toNumber(d.tsec)) } } }));
+      saveStore(setPersonal(store, curPerson(), curGym(), e.id, { notes: d.notes, volume: { working: { weight: makeMinutes(toNumber(d.tmin), toNumber(d.tsec)) } } }));
       saveNever(e);
       go("setup");
     },
@@ -976,7 +994,7 @@ function renderEdit() {
       if (withWarmup) patch[mode].warmup.reps = wholeOrNull(d.warmReps);
       patch[mode].working.reps = wholeOrNull(d.reps);
       patch[mode].working.sets = wholeOrNull(d.sets);
-      saveStore(setPersonal(store, store.currentPerson, store.currentGym, e.id, patch));
+      saveStore(setPersonal(store, curPerson(), curGym(), e.id, patch));
       savePairs(ssDraft.prefs);
       saveNever(e);
       go("setup");
@@ -1071,7 +1089,7 @@ function renderGyms() {
     muted("Each gym has its own equipment. Tap a gym to rename it, make it your default or see its equipment.") +
     L.items("list", gymList(store).map((g) => [
       esc(g.name) + "<small>" +
-        [g.id === store.defaultGym && "Default", g.id === store.currentGym && "In use now", gymItems(g.id).length + " items"].filter(Boolean).join(" &middot; ") +
+        [g.id === curDefaultGym() && "Default", g.id === curGym() && "In use now", gymItems(g.id).length + " items"].filter(Boolean).join(" &middot; ") +
         "</small>",
       () => { gymId = g.id; gsTab = "equipment"; go("gymEdit"); },
     ])) +
@@ -1171,8 +1189,8 @@ function renderGymEdit() {
     backBtn() + "<h2>" + esc(g.name) + "</h2>" + flashHtml() +
     field("ge_name", "Gym name", '<input class="field" id="ge_name" type="text" value="' + esc(g.name) + '">') +
     '<button class="secondary" id="saveName">Save name</button>' +
-    (store.defaultGym === gymId ? muted("This is your default gym. The app starts here.") : '<button class="secondary" id="makeDefault">Make this my default gym</button>') +
-    (store.currentGym === gymId ? muted("You are using this gym now.") : '<button class="primary" id="useNow">Use this gym now</button>') +
+    (curDefaultGym() === gymId ? muted("This is your default gym. The app starts here.") : '<button class="secondary" id="makeDefault">Make this my default gym</button>') +
+    (curGym() === gymId ? muted("You are using this gym now.") : '<button class="primary" id="useNow">Use this gym now</button>') +
     "<h2>Gym settings</h2>" +
     L.chips("gsTabs", [["Units", "units"], ["Free weights", "free"], ["Equipment", "equipment"]].map(([label, id]) => [label, gsTab === id, () => { gsTab = id; render(); }]), "choices fit") +
     (gsTab === "units" ? unitsPart() : gsTab === "free" ? freePart() : equipmentPart());
@@ -1188,8 +1206,8 @@ function renderGymEdit() {
       flash = "Name saved";
       render();
     },
-    makeDefault: () => { saveStore(setDefaultGym(store, gymId)); flash = "Default gym changed"; render(); },
-    useNow: () => { saveStore(setCurrentGym(store, gymId)); flash = "Now using " + gymName(gymId); render(); },
+    makeDefault: () => { db ? saveDb(setDefault(db, gymId)) : saveStore(setDefaultGym(store, gymId)); flash = "Default gym changed"; render(); },
+    useNow: () => { chooseGym(gymId); flash = "Now using " + gymName(gymId); render(); },
     addItemBtn: () => { itemDraft = { name: "", type: "stack", group: "legs", unit: g.units?.stack ?? "lb" }; go("gymItemAdd"); },
   });
 }
@@ -1470,7 +1488,7 @@ async function importFile(ev) {
 
   const kind = fileKind(text);
   if (kind === "machines") {
-    const r = importMachines(store, store.currentGym, text);
+    const r = importMachines(store, curGym(), text);
     if (r.error) backupMsg = r.error;
     else {
       store = r.store;
@@ -1525,7 +1543,7 @@ function renderBackup() {
     back: goBack,
     backupNow: () => shareFile("backup", JSON.stringify(makeBackup({ store, sets }), null, 2),
       "Backup sent. Check that you saved it somewhere safe.", "Backup downloaded.", true),
-    shareMachines: () => shareFile("machines", exportMachines(store, store.currentGym), "Machines file sent.", "Machines file downloaded."),
+    shareMachines: () => shareFile("machines", exportMachines(store, curGym()), "Machines file sent.", "Machines file downloaded."),
     importBtn: () => $("importFile").click(),
   });
   $("importFile").onchange = importFile;

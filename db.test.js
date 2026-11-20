@@ -1,8 +1,8 @@
 import test from "node:test";
 import assert from "node:assert/strict";
-import { KEYS, openDb, rowsOf, rowOf, putRow, putRows, dropRows } from "./db.js";
+import { KEYS, openDb, rowsOf, rowOf, putRow, putRows, dropRows, useGym, setDefault, useDefault } from "./db.js";
 import { TABLES, toStoreV4, readStore, readSets } from "./schema4.js";
-import { emptyStore, addGym, setPersonal, setNever, setUse, setDefaults } from "./store.js";
+import { emptyStore, addGym, setPersonal, setNever, setUse, setDefaults, setCurrentGym, setDefaultGym, useDefaultGym } from "./store.js";
 import { makeSet } from "./log.js";
 import { makeCardioSet } from "./cardio.js";
 
@@ -172,4 +172,35 @@ test("saving a row back as it is changes nothing, and a changed row shows in wha
   const noNever = dropRows(db, "personal_setup", { personId: "awp", gymId: "main", exerciseId: "calf-press" });
   assert.equal(readStore(db).people.awp.gyms.main.never["calf-press"], true);
   assert.equal(readStore(noNever).people.awp.gyms.main.never?.["calf-press"], undefined);
+});
+
+// ---------- Which gym: the same result as the old store functions, saved as tables ----------
+test("useGym, setDefault and useDefault give exactly what the old store functions give once saved", () => {
+  const { store, sets, hotel } = saved();
+  const open = (s) => openDb(toStoreV4(s, sets));
+  const db = open(store);
+  for (const id of [hotel, "main", "nowhere", "", null, undefined, 7, "set:dumbbells"]) {
+    assert.deepEqual(useGym(db, id), open(setCurrentGym(store, id)), "useGym " + id);
+    assert.deepEqual(setDefault(db, id), open(setDefaultGym(store, id)), "setDefault " + id);
+  }
+  const away = setDefault(useGym(db, hotel), hotel);   // default and current differ, then back
+  assert.deepEqual(useDefault(useGym(db, "main")), open(useDefaultGym(setCurrentGym(setDefaultGym(store, "main"), "main"))));
+  assert.equal(useDefault(setDefault(db, hotel)).currentGym, hotel);
+  assert.equal(away.currentGym, hotel);
+  assert.deepEqual(useDefault(away), away);
+});
+
+test("choosing a gym changes only the gym fields and leaves the old db alone", () => {
+  const { v4, hotel } = saved();
+  const db = openDb(v4);
+  const before = JSON.stringify(db);
+  const next = useGym(db, hotel);
+  assert.equal(next.currentGym, hotel);
+  assert.equal(next.defaultGym, db.defaultGym);
+  assert.equal(next.tables, db.tables);
+  assert.equal(JSON.stringify(db), before);
+  assert.equal(useGym(db, "nowhere"), db);
+  assert.equal(setDefault(db, "nowhere"), db);
+  assert.equal(setDefault(db, hotel).currentGym, db.currentGym);
+  assert.equal(setDefault(db, hotel).defaultGym, hotel);
 });

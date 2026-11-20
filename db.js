@@ -73,3 +73,16 @@ export function dropRows(db, table, where) {
   const kept = rows.filter((r) => !matches(r, where));
   return kept.length === rows.length ? db : { ...db, tables: { ...db.tables, [table]: kept } };
 }
+
+// ---------- Which gym and which person (the saved data's own fields, not table rows) ----------
+// Each gives the same db when the gym does not exist, as a choice of an unknown gym is ignored.
+const hasGym = (db, id) => typeof id === "string" && rowOf(db, "gym", { id }) !== null;
+
+// The gym in use now.
+export const useGym = (db, id) => (hasGym(db, id) ? { ...db, currentGym: id } : db);
+
+// The gym the app starts in.
+export const setDefault = (db, id) => (hasGym(db, id) ? { ...db, defaultGym: id } : db);
+
+// Back to the default gym.
+export const useDefault = (db) => useGym(db, db.defaultGym);
