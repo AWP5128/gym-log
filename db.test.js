@@ -1,6 +1,6 @@
 import test from "node:test";
 import assert from "node:assert/strict";
-import { KEYS, openDb, rowsOf, rowOf, putRow, putRows, dropRows, useGym, setDefault, useDefault, gymsOf, gymNameOf, renameGym as renameGymDb, addBlankGym, putGym, putPerson, putSets, gymOf } from "./db.js";
+import { KEYS, openDb, rowsOf, rowOf, putRow, putRows, dropRows, useGym, setDefault, useDefault, gymsOf, gymNameOf, renameGym as renameGymDb, addBlankGym, putGym, putPerson, putSets, gymOf, customOfDb } from "./db.js";
 import { TABLES, toStoreV4, readStore, readSets } from "./schema4.js";
 import { emptyStore, addGym, setPersonal, setNever, setUse, setDefaults, setCurrentGym, setDefaultGym, useDefaultGym, addCustom, gymList, renameGym, addGym as addGymOld } from "./store.js";
 import { makeSet } from "./log.js";
@@ -352,6 +352,24 @@ test("gymOf gives each gym exactly as the whole store read from the same tables 
   // another gym's equipment never leaks in
   assert.ok(!("calf-press-hotel" in gymOf(db0, hotel).equipment));
   for (const id of Object.keys(gymOf(db0, hotel).equipment)) assert.ok(db0.tables.gym_equipment.some((r) => r.gymId === hotel && r.exerciseId === id));
+});
+
+test("customOfDb gives the added exercises in the order they were added, as the whole store does", () => {
+  const { store: s0, sets } = saved();
+  const none = openDb(toStoreV4(s0, sets));
+  assert.deepEqual(customOfDb(none), []);
+  let s = addCustom(s0, { name: "Zz Curl", group: "arms", unit: "lb", step: 5 });
+  s = addCustom(s, { name: "Aa Press", group: "legs", unit: "lb", step: 10 });
+  const db = openDb(toStoreV4(s, sets));
+  assert.deepEqual(customOfDb(db), readStore(db).custom);
+  assert.deepEqual(customOfDb(db).map((c) => c.id), ["custom-zz-curl", "custom-aa-press"]);
+  assert.equal(customOfDb(db)[0].name, "Zz Curl");
+  assert.ok(!("customIndex" in customOfDb(db)[0]));
+  // the order comes from the saved numbering, not from where the rows sit
+  const shuffled = { ...db, tables: { ...db.tables, exercise: [...db.tables.exercise].reverse() } };
+  assert.deepEqual(customOfDb(shuffled).map((c) => c.id), ["custom-zz-curl", "custom-aa-press"]);
+  // a later save of sets or a gym keeps them
+  assert.deepEqual(customOfDb(putSets(db, sets.slice(0, 1))).map((c) => c.id), ["custom-zz-curl", "custom-aa-press"]);
 });
 
 test("putGym adds a whole new gym with copied equipment as the old add does", () => {

@@ -29,7 +29,7 @@ import { makeBackup, backupFileName, parseBackup, fileKind, dataSummary, describ
 import { MUSCLES, muscleOf, muscleLabel, partnerGroups, pairedPartners, getPairs, setPairs, addPair, removePair, pairedWith, isSuitable, setSuitable, hasPair, pairCandidates } from "./superset.js";
 import { KEY, load, loadList, save } from "./storage.js";
 import { checkV4, toStoreV4, readStore, readSets } from "./schema4.js";
-import { openDb, useGym, setDefault, useDefault, gymsOf, gymNameOf, renameGym as renameGymDb, putGym, putPerson, putSets, gymOf } from "./db.js";
+import { openDb, useGym, setDefault, useDefault, gymsOf, gymNameOf, renameGym as renameGymDb, putGym, putPerson, putSets, gymOf, customOfDb } from "./db.js";
 import { SYNC } from "./config.js";
 import { emptySync } from "./sync.js";
 import { runSync } from "./syncglue.js";
@@ -146,7 +146,7 @@ function saveStore(next) {
 // has not saved anything for yet.
 const exList = () => (exCache ??= [
   ...exerciseList(gymById(curGym()) || {}),
-  ...(store.custom || []).filter((c) => !gymById(curGym())?.equipment?.[c.id]),
+  ...(db ? customOfDb(db) : store.custom || []).filter((c) => !gymById(curGym())?.equipment?.[c.id]),
 ]);
 const gymSets = () => setsForGym(sets, curGym());   // only the sets done at the current gym
 // The gyms and their names, read from the tables (from the store if the tables could not be made).

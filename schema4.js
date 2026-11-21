@@ -383,6 +383,12 @@ export function gymFromRows(t, g) {
   return gym;
 }
 
+// The exercises you added, in the order you added them, from the exercise rows.
+export function customFromRows(t) {
+  return t.exercise.filter((e) => e.custom).sort((a, b) => a.custom.customIndex - b.custom.customIndex)
+    .map((e) => { const { customIndex, ...def } = e.custom; return def; });
+}
+
 export function fromV4(v4) {
   const t = v4.tables;
   const gyms = {};
@@ -407,8 +413,7 @@ export function fromV4(v4) {
     if (Number.isFinite(r.weight)) m.pbWeight = r.weight;
     if (Number.isFinite(r.reps)) m.pbReps = r.reps;
   }
-  const custom = t.exercise.filter((e) => e.custom).sort((a, b) => a.custom.customIndex - b.custom.customIndex)
-    .map((e) => { const { customIndex, ...def } = e.custom; return def; });
+  const custom = customFromRows(t);
   const store = {
     version: 3,
     currentGym: v4.currentGym,
