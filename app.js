@@ -112,6 +112,15 @@ const curGym = () => (db ?? store).currentGym;
 const curPerson = () => (db ?? store).currentPerson;
 const curDefaultGym = () => (db ?? store).defaultGym;
 
+// The whole nested store (for the backup file, the safety copy, the summaries and the sync), read from the tables when it is
+// needed. Worked out once per saved version of the tables; the kept `store` itself is only used if the tables could not be made.
+let wholeMemo = { db: null, store: null };
+const wholeStore = () => {
+  if (!db) return store;
+  if (wholeMemo.db !== db) wholeMemo = { db, store: readStore(db) ?? store };
+  return wholeMemo.store;
+};
+
 // The gyms and added exercises as the machines-file and add-gym functions want them, read from the tables.
 let gymsMemo = { db: null, view: null };
 const gymsView = () => {
@@ -133,10 +142,9 @@ const peopleView = () => {
   return peopleMemo.view;
 };
 
-// Saves tables and works out the store and the sets the unconverted screens use from them; clears the kept exercise list.
+// Saves tables and works out the sets the unconverted screens use from them; clears the kept exercise list.
 function adopt(v4) {
   saveV4(v4);
-  store = readStore(db) ?? store;
   sets = readSets(db) ?? sets;   // the sets are read back from the tables too
   exCache = null;
 }
@@ -1533,11 +1541,11 @@ async function importFile(ev) {
     if (r.error) backupMsg = r.error;
     else if (!confirm(
       "Restore this backup?\n\nIn the file: " + describeData(dataSummary(r.backup.store, r.backup.sets)) +
-      "\nOn this phone now: " + describeData(dataSummary(store, sets)) +
+      "\nOn this phone now: " + describeData(dataSummary(wholeStore(), sets)) +
       "\n\nThis replaces what is on this phone."
     )) backupMsg = "Restore cancelled.";
     else {
-      save(KEY.beforeRestore, { at: new Date().toISOString(), store, sets });   // a safety copy, in case of a mistake
+      save(KEY.beforeRestore, { at: new Date().toISOString(), store: wholeStore(), sets });   // a safety copy, in case of a mistake
       const v4 = toStoreV4(r.backup.store, r.backup.sets);
       if (v4) saveDb(v4); else { sets = r.backup.sets; persistStore(r.backup.store); }
       save(KEY.sync, emptySync());   // a restored copy is sent as new data; it never deletes anything online
@@ -1557,7 +1565,7 @@ function renderBackup() {
     backBtn() + "<h2>Backup &amp; restore</h2>" +
     (backupMsg ? '<div class="note">' + esc(backupMsg) + "</div>" : "") +
     box("Back up everything",
-      muted("On this phone now: " + esc(describeData(dataSummary(store, sets))) + ".") +
+      muted("On this phone now: " + esc(describeData(dataSummary(wholeStore(), sets))) + ".") +
       muted("Last backup: " + age.text + (age.stale ? " (a new backup is due)" : "")) +
       muted("Saves your machines, settings and logged sets to one file. Keep it somewhere safe, such as Files, iCloud Drive or an email to yourself.", "small") +
       '<button class="primary" id="backupNow">Back up now</button>') +
@@ -1573,7 +1581,7 @@ function renderBackup() {
 
   wire({
     back: goBack,
-    backupNow: () => shareFile("backup", JSON.stringify(makeBackup({ store, sets }), null, 2),
+    backupNow: () => shareFile("backup", JSON.stringify(makeBackup({ store: wholeStore(), sets }), null, 2),
       "Backup sent. Check that you saved it somewhere safe.", "Backup downloaded.", true),
     shareMachines: () => shareFile("machines", exportMachines(gymsView(), curGym()), "Machines file sent.", "Machines file downloaded."),
     importBtn: () => $("importFile").click(),
@@ -1662,7 +1670,7 @@ async function syncNow() {
   syncing = true;
   const started = dataVersion;
   try {
-    const r = await runSync({ store, sets, state: syncState, remote: makeRemote({ url: SYNC.url, key: SYNC.key, getToken }) });
+    const r = await runSync({ store: wholeStore(), sets, state: syncState, remote: makeRemote({ url: SYNC.url, key: SYNC.key, getToken }) });
     if (started !== dataVersion) { scheduleSync(1000); return; }   // something was saved meanwhile: try again
     syncState = r.state;
     save(KEY.sync, syncState);
