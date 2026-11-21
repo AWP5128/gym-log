@@ -383,6 +383,32 @@ export function gymFromRows(t, g) {
   return gym;
 }
 
+// One person (the nested form the screens use) from the person row, the gyms they are a member of, their setups
+// and their typed-in bests.
+export function personFromRows(t, p) {
+  const person = clean({ name: p.name, defaults: p.defaults, gyms: {}, superset: p.superset });
+  for (const m of t.gym_member) if (m.personId === p.id) person.gyms[m.gymId] ??= { machines: {} };
+  const machine = (r) => person.gyms[r.gymId]?.machines && (person.gyms[r.gymId].machines[r.exerciseId] ??= {});
+  for (const r of t.personal_setup) {
+    if (r.personId !== p.id) continue;
+    if (r.never) { const pg = person.gyms[r.gymId]; if (pg) (pg.never ??= {})[r.exerciseId] = true; }
+    if (r.use) { const pg = person.gyms[r.gymId]; if (pg) (pg.use ??= {})[r.exerciseId] = r.use; }
+    if (!r.notes && !r.dayType) continue;   // a row that only carries the never mark has no machine settings
+    const m = machine(r);
+    if (!m) continue;
+    if (r.notes && !m.notes) m.notes = r.notes;
+    if (r.dayType) m[r.dayType] = { warmup: r.warmup, working: r.working };
+  }
+  for (const r of t.logged_set) {
+    if (!r.manual || r.personId !== p.id) continue;
+    const m = machine(r);
+    if (!m) continue;
+    if (Number.isFinite(r.weight)) m.pbWeight = r.weight;
+    if (Number.isFinite(r.reps)) m.pbReps = r.reps;
+  }
+  return person;
+}
+
 // The exercises you added, in the order you added them, from the exercise rows.
 export function customFromRows(t) {
   return t.exercise.filter((e) => e.custom).sort((a, b) => a.custom.customIndex - b.custom.customIndex)
@@ -394,25 +420,7 @@ export function fromV4(v4) {
   const gyms = {};
   for (const g of t.gym) gyms[g.id] = gymFromRows(t, g);
   const people = {};
-  for (const p of t.person) people[p.id] = clean({ name: p.name, defaults: p.defaults, gyms: {}, superset: p.superset });
-  for (const m of t.gym_member) if (people[m.personId]) people[m.personId].gyms[m.gymId] ??= { machines: {} };
-  const machine = (r) => people[r.personId]?.gyms[r.gymId]?.machines && (people[r.personId].gyms[r.gymId].machines[r.exerciseId] ??= {});
-  for (const r of t.personal_setup) {
-    if (r.never) { const pg = people[r.personId]?.gyms[r.gymId]; if (pg) (pg.never ??= {})[r.exerciseId] = true; }
-    if (r.use) { const pg = people[r.personId]?.gyms[r.gymId]; if (pg) (pg.use ??= {})[r.exerciseId] = r.use; }
-    if (!r.notes && !r.dayType) continue;   // a row that only carries the never mark has no machine settings
-    const m = machine(r);
-    if (!m) continue;
-    if (r.notes && !m.notes) m.notes = r.notes;
-    if (r.dayType) m[r.dayType] = { warmup: r.warmup, working: r.working };
-  }
-  for (const r of t.logged_set) {
-    if (!r.manual) continue;
-    const m = machine(r);
-    if (!m) continue;
-    if (Number.isFinite(r.weight)) m.pbWeight = r.weight;
-    if (Number.isFinite(r.reps)) m.pbReps = r.reps;
-  }
+  for (const p of t.person) people[p.id] = personFromRows(t, p);
   const custom = customFromRows(t);
   const store = {
     version: 3,

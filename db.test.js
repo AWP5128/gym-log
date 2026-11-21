@@ -1,6 +1,6 @@
 import test from "node:test";
 import assert from "node:assert/strict";
-import { KEYS, openDb, rowsOf, rowOf, putRow, putRows, dropRows, useGym, setDefault, useDefault, gymsOf, gymNameOf, renameGym as renameGymDb, addBlankGym, putGym, putPerson, putSets, gymOf, customOfDb } from "./db.js";
+import { KEYS, openDb, rowsOf, rowOf, putRow, putRows, dropRows, useGym, setDefault, useDefault, gymsOf, gymNameOf, renameGym as renameGymDb, addBlankGym, putGym, putPerson, putSets, gymOf, customOfDb, personOf } from "./db.js";
 import { TABLES, toStoreV4, readStore, readSets } from "./schema4.js";
 import { emptyStore, addGym, setPersonal, setNever, setUse, setDefaults, setCurrentGym, setDefaultGym, useDefaultGym, addCustom, gymList, renameGym, addGym as addGymOld } from "./store.js";
 import { makeSet } from "./log.js";
@@ -472,6 +472,59 @@ test("putPerson saves every kind of personal change exactly as the old way does"
     db = putPerson(db, pid, next.people[pid]);
     assert.deepEqual(db, openDb(toStoreV4(store, sets)));
   }
+});
+
+test("personOf gives each person exactly as the whole store read from the same tables gives them, and no one else's settings", () => {
+  const { v4, sets, hotel } = saved();
+  const store0 = readStore(openDb(v4));
+  const db0 = openDb(toStoreV4(store0, sets));
+  const leg = { id: "leg-press", common: true };
+  const dbs = [
+    db0,
+    putPerson(db0, "awp", setPersonal(store0, "awp", "main", "leg-press", { notes: "", heavy: { working: { weight: 120, extra: 2.5, reps: 4, sets: 3 } } }).people.awp),
+    putPerson(db0, "awp", setPersonal(store0, "awp", hotel, "deadlift", { notes: "Hotel bar", pbWeight: 70, pbReps: 2 }).people.awp),
+    putPerson(db0, "awp", setNever(store0, "awp", "main", ["leg-press"], true).people.awp),
+    putPerson(db0, "awp", setUse(store0, "awp", "main", leg, "rare").people.awp),
+    putPerson(db0, "awp", setDefaults(store0, "awp", { volume: { reps: 12, sets: 4, warmupReps: 8 } }).people.awp),
+    putPerson(db0, "awp", setPairs(store0, "awp", { pairs: [["leg-press", "calf-press"]], suitable: ["pull-up"] }).people.awp),
+    putPerson(db0, "kim", setPersonal(store0, "kim", "main", "leg-press", { notes: "Kim", heavy: { working: { weight: 50 } } }).people.kim),
+    putPerson(db0, "sam", setPersonal(store0, "sam", "main", "chest-press", { pbWeight: 30, pbReps: 5 }).people.sam),
+  ];
+  for (const [n, db] of dbs.entries()) {
+    const st = readStore(db);
+    for (const id of Object.keys(st.people)) assert.deepEqual(personOf(db, id), st.people[id], "db " + n + " person " + id);
+    assert.equal(personOf(db, "nobody"), undefined);
+  }
+  // direct facts (the builder is shared with reading the whole store, so the comparison alone cannot show a slip in it)
+  const awp = personOf(db0, "awp");
+  assert.equal(awp.name, store0.people.awp.name);
+  assert.equal(awp.gyms.main.machines["leg-press"].notes, "Seat 4");
+  assert.deepEqual(awp.gyms.main.machines["leg-press"].heavy.working, { weight: 100, extra: 5, reps: 5, sets: 4 });
+  assert.equal(awp.gyms.main.machines["leg-press"].volume.warmup.weight, 50);
+  assert.equal(awp.gyms.main.machines["leg-press"].pbWeight, 200);
+  assert.equal(awp.gyms.main.machines["leg-press"].pbReps, 3);
+  assert.equal(awp.gyms[hotel].machines["leg-press"].notes, "Hotel seat");
+  assert.equal(awp.gyms.main.never["calf-press"], true);
+  assert.equal(awp.gyms.main.use["hip-abduction"], "rare");
+  assert.equal(awp.defaults.heavy.reps, 6);
+  assert.equal(awp.defaults.heavy.sets, 3);
+  assert.deepEqual(personOf(dbs[6], "awp").superset, { pairs: [["leg-press", "calf-press"]], suitable: ["pull-up"] });
+  // another person's rows and bests never leak across
+  const sam = personOf(dbs[8], "sam");
+  assert.equal(sam.gyms.main.machines["chest-press"].pbWeight, 30);
+  assert.equal(sam.gyms.main.machines["chest-press"].notes, "s");
+  assert.equal(personOf(dbs[8], "awp").gyms.main.machines["chest-press"]?.pbWeight, undefined);
+  assert.equal(personOf(dbs[7], "kim").gyms.main.machines["leg-press"].notes, "Kim");
+  assert.equal(personOf(dbs[7], "awp").gyms.main.machines["leg-press"].notes, "Seat 4");
+  assert.deepEqual(sam.gyms[hotel]?.machines ?? {}, {});
+  // gym membership is per person
+  const two = openDb({ version: 4, currentGym: "g1", defaultGym: "g1", currentPerson: "a", tables: {
+    gym: [{ id: "g1", name: "One" }, { id: "g2", name: "Two" }],
+    person: [{ id: "a", name: "A" }, { id: "b", name: "B" }],
+    gym_member: [{ personId: "a", gymId: "g1" }, { personId: "b", gymId: "g2" }],
+  } });
+  assert.deepEqual(Object.keys(personOf(two, "a").gyms), ["g1"]);
+  assert.deepEqual(Object.keys(personOf(two, "b").gyms), ["g2"]);
 });
 
 test("putPerson keeps typed-in bests in person order, ahead of the real sets, and leaves other tables alone", () => {

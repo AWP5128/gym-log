@@ -5,7 +5,7 @@
 // every table it did not touch with the old one, so a screen can tell by `===` that a table is unchanged.
 // A row is found by its key fields (KEYS). A row's other fields are whatever schema4.js saves; this file does not look at them.
 
-import { TABLES, SCHEMA_VERSION, gymFromRows, customFromRows, gymRow, equipmentRows, exerciseTables, personRow, setupRows, setTables, groupLookup } from "./schema4.js";
+import { TABLES, SCHEMA_VERSION, gymFromRows, customFromRows, personFromRows, gymRow, equipmentRows, exerciseTables, personRow, setupRows, setTables, groupLookup } from "./schema4.js";
 import { blankGym, cleanGym } from "./store.js";
 import { uniqueId } from "./gym.js";
 
@@ -205,3 +205,10 @@ export function gymOf(db, id) {
 
 // The exercises you added, from the tables (the same list the whole store gives as `custom`).
 export const customOfDb = (db) => customFromRows(db.tables);
+
+// One person as the screens use them (name, defaults, gyms with machines, never and use marks, supersets), read from the tables.
+// undefined when there is no such person.
+export function personOf(db, id) {
+  const p = rowOf(db, "person", { id });
+  return p ? personFromRows(db.tables, p) : undefined;
+}
