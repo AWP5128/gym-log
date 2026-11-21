@@ -1,6 +1,6 @@
 import test from "node:test";
 import assert from "node:assert/strict";
-import { KEYS, openDb, rowsOf, rowOf, putRow, putRows, dropRows, useGym, setDefault, useDefault, gymsOf, gymNameOf, renameGym as renameGymDb, addBlankGym, putGym, putPerson, putSets, gymOf, customOfDb, personOf } from "./db.js";
+import { KEYS, openDb, rowsOf, rowOf, putRow, putRows, dropRows, useGym, setDefault, useDefault, gymsOf, gymNameOf, renameGym as renameGymDb, addBlankGym, putGym, putPerson, putSets, gymOf, customOfDb, personOf, gymsViewOf } from "./db.js";
 import { TABLES, toStoreV4, readStore, readSets } from "./schema4.js";
 import { emptyStore, addGym, setPersonal, setNever, setUse, setDefaults, setCurrentGym, setDefaultGym, useDefaultGym, addCustom, gymList, renameGym, addGym as addGymOld } from "./store.js";
 import { makeSet } from "./log.js";
@@ -525,6 +525,36 @@ test("personOf gives each person exactly as the whole store read from the same t
   } });
   assert.deepEqual(Object.keys(personOf(two, "a").gyms), ["g1"]);
   assert.deepEqual(Object.keys(personOf(two, "b").gyms), ["g2"]);
+});
+
+test("gymsViewOf lets the machines-file and add-gym functions give what they give on the whole store", () => {
+  const { v4, sets, hotel } = saved();
+  const store0 = readStore(openDb(v4));
+  let s = addCustom(store0, { name: "Zz Curl", group: "arms", unit: "lb", step: 5 });
+  const db = openDb(toStoreV4(s, sets));
+  const st = readStore(db), view = gymsViewOf(db);
+  assert.deepEqual(view.gyms, st.gyms);
+  assert.deepEqual(view.custom, st.custom);
+  assert.deepEqual(Object.keys(view.gyms), db.tables.gym.map((g) => g.id));
+  for (const id of Object.keys(st.gyms)) {
+    assert.equal(exportMachines(view, id), exportMachines(st, id), "export " + id);
+    const file = exportMachines(st, hotel === id ? "main" : hotel);
+    assert.deepEqual(importMachines(view, id, file).store.gyms[id], importMachines(st, id, file).store.gyms[id], "import " + id);
+    assert.equal(importMachines(view, id, file).count, importMachines(st, id, file).count);
+  }
+  assert.deepEqual(importMachines(view, "new-gym", exportMachines(st, "main")).store.gyms["new-gym"], importMachines(st, "new-gym", exportMachines(st, "main")).store.gyms["new-gym"]);
+  assert.equal(importMachines(view, "main", "not json").error, importMachines(st, "main", "not json").error);
+  const ids = Object.keys(st.gyms.main.equipment).slice(0, 5);
+  for (const arg of [{}, { from: "main", ids }, { from: hotel, ids }, { from: "nowhere", ids }]) {
+    const a = addGym(view, "Main", arg), b = addGym(st, "Main", arg);
+    assert.equal(a.id, b.id);
+    assert.equal(a.copied, b.copied);
+    assert.deepEqual(a.store.gyms[a.id], b.store.gyms[b.id]);
+    assert.deepEqual(Object.keys(a.store.gyms), Object.keys(b.store.gyms));
+  }
+  assert.equal(addGym(view, "  ", {}).id, null);
+  // the custom exercise shows up in the export, so the view carries the added exercises
+  assert.ok(view.custom.some((c) => c.name === "Zz Curl"));
 });
 
 test("putPerson keeps typed-in bests in person order, ahead of the real sets, and leaves other tables alone", () => {

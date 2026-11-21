@@ -29,7 +29,7 @@ import { makeBackup, backupFileName, parseBackup, fileKind, dataSummary, describ
 import { MUSCLES, muscleOf, muscleLabel, partnerGroups, pairedPartners, getPairs, setPairs, addPair, removePair, pairedWith, isSuitable, setSuitable, hasPair, pairCandidates } from "./superset.js";
 import { KEY, load, loadList, save } from "./storage.js";
 import { checkV4, toStoreV4, readStore, readSets } from "./schema4.js";
-import { openDb, useGym, setDefault, useDefault, gymsOf, gymNameOf, renameGym as renameGymDb, putGym, putPerson, putSets, gymOf, customOfDb, personOf } from "./db.js";
+import { openDb, useGym, setDefault, useDefault, gymsOf, gymNameOf, renameGym as renameGymDb, putGym, putPerson, putSets, gymOf, gymsViewOf, customOfDb, personOf } from "./db.js";
 import { SYNC } from "./config.js";
 import { emptySync } from "./sync.js";
 import { runSync } from "./syncglue.js";
@@ -111,6 +111,14 @@ const mySavedExtra = (id, kind, key) => savedExtraOf(peopleView(), curPerson(), 
 const curGym = () => (db ?? store).currentGym;
 const curPerson = () => (db ?? store).currentPerson;
 const curDefaultGym = () => (db ?? store).defaultGym;
+
+// The gyms and added exercises as the machines-file and add-gym functions want them, read from the tables.
+let gymsMemo = { db: null, view: null };
+const gymsView = () => {
+  if (!db) return store;
+  if (gymsMemo.db !== db) gymsMemo = { db, view: gymsViewOf(db) };
+  return gymsMemo.view;
+};
 
 // The current person as the settings functions want them ({ people: { id: person } }), read from the tables
 // (the whole store if the tables could not be made). Worked out once per saved version of the tables.
@@ -1482,7 +1490,7 @@ function renderGymAdd() {
     noneBtn: () => { draft.ids = new Set(); render(); },
     addBtn: () => {
       // The old add works out the new gym (its name, id and the copied equipment); it is saved as table rows.
-      const r = addGym(store, draft.name, draft.from ? { from: draft.from, ids: [...draft.ids] } : {});
+      const r = addGym(gymsView(), draft.name, draft.from ? { from: draft.from, ids: [...draft.ids] } : {});
       if (r.id === null) { alert("Enter a name for the gym."); return; }
       saveGym(r.id, r.store.gyms[r.id]);
       gymId = r.id;
@@ -1514,7 +1522,7 @@ async function importFile(ev) {
 
   const kind = fileKind(text);
   if (kind === "machines") {
-    const r = importMachines(store, curGym(), text);
+    const r = importMachines(gymsView(), curGym(), text);
     if (r.error) backupMsg = r.error;
     else {
       saveGym(curGym(), r.store.gyms[curGym()]);   // the import only changes this gym's equipment
@@ -1567,7 +1575,7 @@ function renderBackup() {
     back: goBack,
     backupNow: () => shareFile("backup", JSON.stringify(makeBackup({ store, sets }), null, 2),
       "Backup sent. Check that you saved it somewhere safe.", "Backup downloaded.", true),
-    shareMachines: () => shareFile("machines", exportMachines(store, curGym()), "Machines file sent.", "Machines file downloaded."),
+    shareMachines: () => shareFile("machines", exportMachines(gymsView(), curGym()), "Machines file sent.", "Machines file downloaded."),
     importBtn: () => $("importFile").click(),
   });
   $("importFile").onchange = importFile;

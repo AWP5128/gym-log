@@ -212,3 +212,10 @@ export function personOf(db, id) {
   const p = rowOf(db, "person", { id });
   return p ? personFromRows(db.tables, p) : undefined;
 }
+
+// The gyms and added exercises together, in the shape the machines-file and add-gym functions take ({ gyms, custom }).
+export function gymsViewOf(db) {
+  const gyms = {};
+  for (const g of rowsOf(db, "gym")) gyms[g.id] = gymOf(db, g.id);
+  return { gyms, custom: customOfDb(db) };
+}
