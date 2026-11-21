@@ -509,6 +509,25 @@ test("putSets saves every kind of change to the list of sets exactly as the old 
   }
 });
 
+test("the sets read back from the tables are the sets that were saved (the app now uses the read-back list)", () => {
+  const { v4, sets: sets0, hotel } = saved();
+  const db0 = openDb(toStoreV4(readStore(openDb(v4)), sets0));
+  const at = (day, min, sec = 0) => new Date(2026, 10, day, 9, min, sec);
+  const one = (extra) => [...sets0, ...extra];
+  const steps = [
+    ["no change", sets0],
+    ["one more", one([makeSet({ exerciseId: "leg-press", weight: 110, reps: 5, mode: "heavy", gymId: "main", unit: "lb", now: at(18, 20) })])],
+    ["another gym, no mode", one([makeSet({ exerciseId: "chest-press", weight: 40, reps: 8, gymId: hotel, unit: "kg", now: at(18, 25) })])],
+    ["an exercise no gym has", one([makeSet({ exerciseId: "mystery-lift", weight: 5, reps: 5, gymId: "main", unit: "lb", now: at(18, 40) })])],
+    ["a cardio entry", one([makeCardioSet({ exerciseId: "rowing-machine", minutes: 12, distance: 2400, unit: "m", watts: 90, gymId: "main", start: at(18, 50), now: at(18, 55) })])],
+    ["undo", removeLastSet(sets0, "leg-press", "main")],
+    ["empty", []],
+  ];
+  for (const [label, sets] of steps) {
+    assert.deepEqual(readSets(putSets(db0, sets)), sets, label);
+  }
+});
+
 test("putSets keeps the typed-in bests and every table that is not about sets", () => {
   const { v4, sets } = saved();
   const db = openDb(v4);

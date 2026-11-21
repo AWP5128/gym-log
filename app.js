@@ -115,6 +115,7 @@ const curDefaultGym = () => (db ?? store).defaultGym;
 function saveDb(next) {
   saveV4(next);
   store = readStore(db) ?? store;
+  sets = readSets(db) ?? sets;   // the sets are read back from the tables too
   exCache = null;
   dataVersion++;
   scheduleSync();
@@ -123,8 +124,9 @@ function saveDb(next) {
 // Saves what the store functions give for one person (the current one): that person's rows go into the tables.
 const savePerson = (next, pid = curPerson()) => (db ? saveDb(putPerson(db, pid, next.people[pid])) : saveStore(next));
 
-// Saves the list of sets (after one was logged or taken back): the session rows are worked out from the list again.
-const saveSets = () => (db ? saveDb(putSets(db, sets)) : persistStore(store));
+// Saves the new list of sets (after one was logged or taken back): the session rows are worked out from the list again,
+// and `sets` is read back from the tables.
+const saveSets = (next) => { if (db) saveDb(putSets(db, next)); else { sets = next; persistStore(store); } };
 
 const chooseGym = (id) => (db ? saveDb(useGym(db, id)) : saveStore(setCurrentGym(store, id)));
 
@@ -494,7 +496,7 @@ function bindPanel(p, i) {
   if (isCardio(p.ex)) return bindCardioPanel(p, i);
   const e = p.ex;
   // After the logged sets change: save them, work out the next defaults and redraw.
-  const setsChanged = () => { saveSets(); resetPanel(p); render(); };
+  const setsChanged = (next) => { saveSets(next); resetPanel(p); render(); };
 
   $("weightSel" + i).onchange = (ev) => {
     const v = Number(ev.target.value);
@@ -525,10 +527,9 @@ function bindPanel(p, i) {
     rPlus: () => { p.reps += 1; p.pb = null; render(); },
     logBtn: () => {
       p.pb = e.kind === "time" ? null : newBestLevel(bestsFor(e), { weight: p.weight, reps: p.reps });   // judged before the set is saved
-      sets.push(makeSet({ exerciseId: e.id, weight: p.weight, reps: p.reps, mode: dayMode() || undefined, gymId: curGym(), unit: e.unit }));
-      setsChanged();
+      setsChanged([...sets, makeSet({ exerciseId: e.id, weight: p.weight, reps: p.reps, mode: dayMode() || undefined, gymId: curGym(), unit: e.unit })]);
     },
-    undo: () => { p.pb = null; sets = removeLastSet(sets, e.id, curGym()); setsChanged(); },
+    undo: () => { p.pb = null; setsChanged(removeLastSet(sets, e.id, curGym())); },
     // Sets are saved as you log them. Finish marks only this exercise as done for today and takes it
     // off the list. If it was one of a superset, the other exercise stays on the page.
     finish: () => {
@@ -645,16 +646,14 @@ function bindCardioPanel(p, i) {
       if (!hasDistance && !confirm("No distance entered, so no speed or new best. Finish without it?")) return;
       const entry = makeCardioSet({ exerciseId: e.id, minutes: duration.minutes, distance: hasDistance ? distance : null, unit: e.unit, watts: e.watts === false ? undefined : toNumber(p.watts), gymId: curGym(), start, now });
       p.pb = newBestLines(newCardioBests(cardioBests(sets, e.id, curGym()), entry));   // judged before the entry is saved
-      sets.push(entry);
-      saveSets();
+      saveSets([...sets, entry]);
       setDone(markDone(done, e.id));   // Finish also finishes the exercise; the card stays up to show the new best
       render();
     },
     undo: () => {
       const entry = todaysEntries(gymSets(), e.id).pop();
       Object.assign(p, entry ? entryBoxes(entry, e.unit) : {}, { pb: null });   // the old start and duration come back as overrides
-      sets = removeLastSet(sets, e.id, curGym());
-      saveSets();
+      saveSets(removeLastSet(sets, e.id, curGym()));
       setDone(unmarkDone(done, e.id));   // back to the stopped card: fix the details and Finish again
       render();
     },
