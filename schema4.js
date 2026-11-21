@@ -131,6 +131,77 @@ export function setupRows(personId, p, gymIds) {
 // The person table row.
 export const personRow = (id, p) => clean({ id, name: p.name, defaults: p.defaults ?? {}, superset: p.superset });
 
+// The workout, workout_type, workout_exercise and logged_set rows for a list of sets (the old flat list the screens keep):
+// one workout per person, gym and day; a set that is not valid is left out (but still counts in `seq`, its place in the list).
+// groupOf(gymId, exerciseId) says which group an exercise is in at a gym. Also gives, in the order a conversion meets them,
+// the exercise ids and the group ids the sets mention. migrateToV4 and db.js both use it.
+export function setTables(personId, sets, groupOf) {
+  const good = [];
+  sets.forEach((s, seq) => { if (validSet(s)) good.push({ s, seq }); });
+  const dropped = sets.length - good.length;
+  const workouts = new Map();
+  const wtypes = new Map();
+  const wexes = new Map();
+  const loggedSets = [];
+  const setIds = new Map();
+  const exerciseIds = [];
+  const typeIds = [];
+  for (const { s, seq } of good) {
+    const gymId = s.gymId ?? DEFAULT_GYM;
+    exerciseIds.push(s.exerciseId);
+    const date = ymd(s.time);
+    const wid = personId + ":" + gymId + ":" + date;   // person first: ids stay unique when several people share a database
+    let w = workouts.get(wid);
+    if (!w) {
+      w = { id: wid, personId, gymId, date, start: s.time, end: s.time };
+      workouts.set(wid, w);
+    }
+    if (s.time < w.start) w.start = s.time;
+    if (s.time > w.end) w.end = s.time;
+    const typeId = groupOf(gymId, s.exerciseId);
+    typeIds.push(typeId);
+    const wtid = wid + ":" + typeId;
+    let wt = wtypes.get(wtid);
+    if (!wt) {
+      wt = { id: wtid, workoutId: wid, exerciseTypeId: typeId, dayType: s.mode ?? null, start: s.time, end: s.time };
+      wtypes.set(wtid, wt);
+    }
+    if (s.time < wt.start) wt.start = s.time;
+    if (s.time > wt.end) wt.end = s.time;
+    if (wt.dayType === null && s.mode) wt.dayType = s.mode;
+    const weid = wtid + ":" + s.exerciseId;
+    if (!wexes.has(weid)) {
+      wexes.set(weid, {
+        id: weid, workoutTypeId: wtid, exerciseId: s.exerciseId,
+        // a cardio entry (one per machine per day) keeps its distance (metres) and watts here; weights have none
+        distance: Number.isFinite(s.distance) ? s.distance : null, avgHeartRate: null, zoneMinutes: null,
+        watts: Number.isFinite(s.watts) ? s.watts : null, level: null,
+        start: typeof s.start === "string" ? s.start : null, end: typeof s.end === "string" ? s.end : null,
+      });
+    }
+    // a set's id comes from who, when and what, so it stays the same however the list changes and differs between phones
+    const base = personId + ":" + s.time + ":" + s.exerciseId;
+    const dup = setIds.get(base) ?? 0;
+    setIds.set(base, dup + 1);
+    loggedSets.push(clean({
+      id: dup ? base + "#" + dup : base, seq, personId, workoutExerciseId: weid, exerciseId: s.exerciseId, gymId, time: s.time,
+      weight: s.weight, reps: s.reps, minutes: s.minutes, unit: s.unit, mode: s.mode,
+    }));
+  }
+  return {
+    workout: [...workouts.values()], workout_type: [...wtypes.values()], workout_exercise: [...wexes.values()],
+    logged_set: loggedSets, exerciseIds, typeIds, dropped,
+  };
+}
+
+// groupOf(gymId, exerciseId) worked out from the tables: the group of the gym's own item, else the built-in or added exercise's group.
+export function groupLookup(t) {
+  const own = new Map();
+  for (const r of t.gym_equipment) if (r.exerciseId !== null && r.exerciseId !== undefined) own.set(r.gymId + "\u0000" + r.exerciseId, r.exerciseTypeId);
+  const customs = new Map(t.exercise.filter((e) => e.custom).map((e) => [e.id, e.custom]));
+  return (gymId, exerciseId) => own.get(gymId + "\u0000" + exerciseId) ?? KNOWN.get(exerciseId)?.group ?? customs.get(exerciseId)?.group ?? "unknown";
+}
+
 export function migrateToV4({ store = null, settings = null, sets = [] } = {}) {
   const fail = (error) => ({ ok: false, v4: null, report: null, error });
   let v3;
@@ -204,61 +275,16 @@ export function migrateToV4({ store = null, settings = null, sets = [] } = {}) {
   }
 
   // the logged sets: one workout per gym per day
-  const good = [];
-  sets.forEach((s, seq) => { if (validSet(s)) good.push({ s, seq }); });
-  const dropped = sets.length - good.length;
   const groupOf = (gymId, exerciseId) => v3.gyms[gymId]?.equipment?.[exerciseId]?.group
     ?? KNOWN.get(exerciseId)?.group ?? customs.get(exerciseId)?.def.group ?? "unknown";
-  const workouts = new Map();
-  const wtypes = new Map();
-  const wexes = new Map();
-  const loggedSets = [];
-  const setIds = new Map();
-  for (const { s, seq } of good) {
-    const gymId = s.gymId ?? DEFAULT_GYM;
-    note(s.exerciseId, null);
-    const date = ymd(s.time);
-    const wid = v3.currentPerson + ":" + gymId + ":" + date;   // person first: ids stay unique when several people share a database
-    let w = workouts.get(wid);
-    if (!w) {
-      w = { id: wid, personId: v3.currentPerson, gymId, date, start: s.time, end: s.time };
-      workouts.set(wid, w);
-    }
-    if (s.time < w.start) w.start = s.time;
-    if (s.time > w.end) w.end = s.time;
-    const typeId = groupOf(gymId, s.exerciseId);
-    addType(typeId);
-    const wtid = wid + ":" + typeId;
-    let wt = wtypes.get(wtid);
-    if (!wt) {
-      wt = { id: wtid, workoutId: wid, exerciseTypeId: typeId, dayType: s.mode ?? null, start: s.time, end: s.time };
-      wtypes.set(wtid, wt);
-    }
-    if (s.time < wt.start) wt.start = s.time;
-    if (s.time > wt.end) wt.end = s.time;
-    if (wt.dayType === null && s.mode) wt.dayType = s.mode;
-    const weid = wtid + ":" + s.exerciseId;
-    if (!wexes.has(weid)) {
-      wexes.set(weid, {
-        id: weid, workoutTypeId: wtid, exerciseId: s.exerciseId,
-        // a cardio entry (one per machine per day) keeps its distance (metres) and watts here; weights have none
-        distance: Number.isFinite(s.distance) ? s.distance : null, avgHeartRate: null, zoneMinutes: null,
-        watts: Number.isFinite(s.watts) ? s.watts : null, level: null,
-        start: typeof s.start === "string" ? s.start : null, end: typeof s.end === "string" ? s.end : null,
-      });
-    }
-    // a set's id comes from who, when and what, so it stays the same however the list changes and differs between phones
-    const base = v3.currentPerson + ":" + s.time + ":" + s.exerciseId;
-    const dup = setIds.get(base) ?? 0;
-    setIds.set(base, dup + 1);
-    loggedSets.push(clean({
-      id: dup ? base + "#" + dup : base, seq, personId: v3.currentPerson, workoutExerciseId: weid, exerciseId: s.exerciseId, gymId, time: s.time,
-      weight: s.weight, reps: s.reps, minutes: s.minutes, unit: s.unit, mode: s.mode,
-    }));
-  }
-  t.workout.push(...workouts.values());
-  t.workout_type.push(...wtypes.values());
-  t.workout_exercise.push(...wexes.values());
+  const made = setTables(v3.currentPerson, sets, groupOf);
+  const dropped = made.dropped;
+  const loggedSets = made.logged_set;
+  for (const id of made.exerciseIds) note(id, null);
+  for (const id of made.typeIds) addType(id);
+  t.workout.push(...made.workout);
+  t.workout_type.push(...made.workout_type);
+  t.workout_exercise.push(...made.workout_exercise);
   t.logged_set.push(...loggedSets);
 
   // exercise: one row per movement

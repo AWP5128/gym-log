@@ -1,10 +1,12 @@
 import test from "node:test";
 import assert from "node:assert/strict";
-import { KEYS, openDb, rowsOf, rowOf, putRow, putRows, dropRows, useGym, setDefault, useDefault, gymsOf, gymNameOf, renameGym as renameGymDb, addBlankGym, putGym, putPerson } from "./db.js";
+import { KEYS, openDb, rowsOf, rowOf, putRow, putRows, dropRows, useGym, setDefault, useDefault, gymsOf, gymNameOf, renameGym as renameGymDb, addBlankGym, putGym, putPerson, putSets } from "./db.js";
 import { TABLES, toStoreV4, readStore, readSets } from "./schema4.js";
 import { emptyStore, addGym, setPersonal, setNever, setUse, setDefaults, setCurrentGym, setDefaultGym, useDefaultGym, addCustom, gymList, renameGym, addGym as addGymOld } from "./store.js";
 import { makeSet } from "./log.js";
 import { exportMachines, importMachines } from "./store.js";
+import { setTables } from "./schema4.js";
+import { removeLastSet } from "./log.js";
 import { setupRows } from "./schema4.js";
 import { setPairs } from "./superset.js";
 import { addItem, updateItem, hideItem, restoreItem, hideWeightSet, restoreWeightSet, updateWeightSet, setWeightSetUnit, setDefaultUnit, setListDefault, copyEquipment } from "./gym.js";
@@ -471,4 +473,114 @@ test("putGym saves a machines-file import exactly as the old way does", () => {
     assert.ok(r.count >= 4, label);
     assert.deepEqual(putGym(db0, gymId, r.store.gyms[gymId]), openDb(toStoreV4(r.store, sets)), label);
   }
+});
+
+// ---------- Logged sets ----------
+test("putSets saves every kind of change to the list of sets exactly as the old way does", () => {
+  const { v4, sets: sets0, hotel } = saved();
+  const store0 = readStore(openDb(v4));
+  const db0 = openDb(toStoreV4(store0, sets0));
+  const at = (day, min, sec = 0, ms = 0) => new Date(2026, 10, day, 9, min, sec, ms);
+  const logged = (extra) => [...sets0, ...extra];
+  const steps = [
+    ["no change", sets0],
+    ["empty", []],
+    ["one more", logged([makeSet({ exerciseId: "leg-press", weight: 110, reps: 5, mode: "heavy", gymId: "main", unit: "lb", now: at(18, 20) })])],
+    ["another day", logged([makeSet({ exerciseId: "leg-press", weight: 110, reps: 5, mode: "heavy", gymId: "main", unit: "lb", now: at(19, 20) })])],
+    ["another gym", logged([makeSet({ exerciseId: "chest-press", weight: 40, reps: 8, mode: "volume", gymId: hotel, unit: "kg", now: at(18, 25) })])],
+    ["same moment twice", logged([makeSet({ exerciseId: "leg-press", weight: 1, reps: 1, gymId: "main", unit: "lb", now: at(18, 0) }), makeSet({ exerciseId: "leg-press", weight: 2, reps: 1, gymId: "main", unit: "lb", now: at(18, 0) })])],
+    ["no mode, then a mode", logged([makeSet({ exerciseId: "calf-press", weight: 30, reps: 9, gymId: "main", unit: "lb", now: at(18, 30) }), makeSet({ exerciseId: "calf-press", weight: 30, reps: 9, mode: "volume", gymId: "main", unit: "lb", now: at(18, 31) })])],
+    ["out of order times", logged([makeSet({ exerciseId: "leg-press", weight: 5, reps: 5, mode: "heavy", gymId: "main", unit: "lb", now: at(18, 59) }), makeSet({ exerciseId: "leg-press", weight: 5, reps: 5, mode: "heavy", gymId: "main", unit: "lb", now: at(18, 2) })])],
+    ["an exercise no gym has", logged([makeSet({ exerciseId: "mystery-lift", weight: 5, reps: 5, gymId: "main", unit: "lb", now: at(18, 40) })])],
+    ["a cardio entry", logged([makeCardioSet({ exerciseId: "rowing-machine", minutes: 12, distance: 2400, unit: "m", watts: 90, gymId: "main", start: at(18, 50), now: at(18, 55) })])],
+    ["not valid sets", logged([{ junk: true }, { exerciseId: "", time: "2026-11-18T09:00:00.000Z" }, { exerciseId: "x", time: "not a date" }, null])],
+    ["undo the last", removeLastSet(sets0, "leg-press", "main")],
+    ["undo the only one of a kind", removeLastSet(sets0, "deadlift", hotel)],
+  ];
+  for (const [label, sets] of steps) {
+    assert.deepEqual(putSets(db0, sets), openDb(toStoreV4(store0, sets)), label);
+  }
+  // one change after another, as logging and undoing do
+  let db = db0, sets = sets0;
+  for (const [, next] of steps.slice(2)) {
+    sets = next;
+    db = putSets(db, sets);
+    assert.deepEqual(db, openDb(toStoreV4(store0, sets)));
+  }
+});
+
+test("putSets keeps the typed-in bests and every table that is not about sets", () => {
+  const { v4, sets } = saved();
+  const db = openDb(v4);
+  const before = JSON.stringify(db);
+  const next = putSets(db, sets.slice(0, 2));
+  assert.equal(JSON.stringify(db), before);
+  assert.deepEqual(rowsOf(next, "logged_set").filter((r) => r.manual), rowsOf(db, "logged_set").filter((r) => r.manual));
+  assert.ok(rowsOf(next, "logged_set").some((r) => r.manual));
+  for (const table of ["person", "gym", "gym_member", "gym_equipment", "personal_setup", "equipment_type", "exercise_type"]) {
+    assert.deepEqual(next.tables[table], db.tables[table], table);
+  }
+  assert.equal(rowsOf(next, "logged_set").filter((r) => !r.manual).length, 2);
+});
+
+// The builder is shared with the conversion, so these check its rows directly.
+test("setTables: workouts, day types, bounds, ids and seq", () => {
+  const T = (m, s = 0) => new Date(2026, 10, 18, 9, m, s).toISOString();
+  const group = (gym, ex) => (ex === "bike" ? "cardio" : "legs");
+  const sets = [
+    { exerciseId: "a", time: T(10), weight: 1, reps: 1, gymId: "g1", unit: "lb" },
+    { junk: true },
+    { exerciseId: "a", time: T(5), weight: 2, reps: 2, gymId: "g1", unit: "lb", mode: "heavy" },
+    { exerciseId: "a", time: T(5), weight: 3, reps: 3, gymId: "g1", unit: "lb", mode: "volume" },
+    { exerciseId: "bike", time: T(20), minutes: 10, distance: 4000, watts: 100, start: T(10), end: T(20), gymId: "g1" },
+    { exerciseId: "bike", time: T(40), minutes: 1, distance: 1, watts: 1, gymId: "g1" },
+    { exerciseId: "a", time: T(1), weight: 4, reps: 4, unit: "lb" },
+  ];
+  const r = setTables("awp", sets, group);
+  assert.equal(r.dropped, 1);
+  assert.deepEqual(r.workout.map((w) => [w.id, w.start === T(5) && w.end === T(40)]), [["awp:g1:2026-11-18", true], ["awp:main:2026-11-18", false]]);
+  assert.equal(r.workout[0].start, T(5));
+  assert.equal(r.workout[0].end, T(40));
+  assert.deepEqual(r.workout_type.map((x) => [x.id, x.dayType, x.start, x.end]), [
+    ["awp:g1:2026-11-18:legs", "heavy", T(5), T(10)],
+    ["awp:g1:2026-11-18:cardio", null, T(20), T(40)],
+    ["awp:main:2026-11-18:legs", null, T(1), T(1)],
+  ]);
+  assert.deepEqual(r.workout_exercise.map((x) => [x.id, x.distance, x.watts, x.start, x.end]), [
+    ["awp:g1:2026-11-18:legs:a", null, null, null, null],
+    ["awp:g1:2026-11-18:cardio:bike", 4000, 100, T(10), T(20)],
+    ["awp:main:2026-11-18:legs:a", null, null, null, null],
+  ]);
+  assert.deepEqual(r.logged_set.map((s) => [s.id.replace(/^awp:/, "").slice(-12), s.seq, s.gymId]).map(([, q, g]) => [q, g]), [[0, "g1"], [2, "g1"], [3, "g1"], [4, "g1"], [5, "g1"], [6, "main"]]);
+  assert.deepEqual(r.exerciseIds, ["a", "a", "a", "bike", "bike", "a"]);
+  assert.deepEqual(r.typeIds, ["legs", "legs", "legs", "cardio", "cardio", "legs"]);
+  const same = setTables("awp", [{ exerciseId: "a", time: T(1) }, { exerciseId: "a", time: T(1) }, { exerciseId: "a", time: T(1) }], group);
+  assert.deepEqual(same.logged_set.map((s) => s.id), ["awp:" + T(1) + ":a", "awp:" + T(1) + ":a#1", "awp:" + T(1) + ":a#2"]);
+});
+
+test("putSets uses the current person, and the group of an added exercise", () => {
+  const { v4, sets: sets0 } = saved();
+  const store0 = addCustom(readStore(openDb(v4)), { name: "Stretch", group: "yoga", unit: "min" });
+  const sets = [...sets0, makeSet({ exerciseId: "custom-stretch", weight: 1, reps: 1, gymId: "main", unit: "lb", now: new Date(2026, 10, 18, 10, 0) })];
+  for (const person of ["awp", "sam"]) {
+    const s0 = { ...store0, currentPerson: person };
+    const db0 = openDb(toStoreV4(s0, sets0));
+    const next = putSets(db0, sets);
+    assert.deepEqual(next, openDb(toStoreV4(s0, sets)), person);
+    assert.ok(rowsOf(next, "workout").every((w) => w.personId === person));
+    assert.ok(rowsOf(next, "logged_set").filter((r) => !r.manual).every((r) => r.personId === person));
+    assert.ok(rowsOf(next, "workout_type").some((w) => w.exerciseTypeId === "yoga"));
+  }
+});
+
+test("putSets files a set under the group the gym's own item has, even when it is not the built-in group", () => {
+  const { v4, sets: sets0 } = saved();
+  const base = readStore(openDb(v4));
+  const id = Object.keys(base.gyms.main.equipment)[1];
+  const store0 = { ...base, gyms: { ...base.gyms, main: updateItem(base.gyms.main, id, { group: "neck" }) } };
+  const db0 = openDb(toStoreV4(store0, sets0));
+  const sets = [...sets0, makeSet({ exerciseId: id, weight: 10, reps: 5, gymId: "main", unit: "lb", now: new Date(2026, 10, 18, 11, 0) })];
+  const next = putSets(db0, sets);
+  assert.deepEqual(next, openDb(toStoreV4(store0, sets)));
+  assert.ok(rowsOf(next, "workout_type").some((w) => w.exerciseTypeId === "neck"));
 });

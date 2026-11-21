@@ -5,7 +5,7 @@
 // every table it did not touch with the old one, so a screen can tell by `===` that a table is unchanged.
 // A row is found by its key fields (KEYS). A row's other fields are whatever schema4.js saves; this file does not look at them.
 
-import { TABLES, SCHEMA_VERSION, gymRow, equipmentRows, exerciseTables, personRow, setupRows } from "./schema4.js";
+import { TABLES, SCHEMA_VERSION, gymRow, equipmentRows, exerciseTables, personRow, setupRows, setTables, groupLookup } from "./schema4.js";
 import { blankGym, cleanGym } from "./store.js";
 import { uniqueId } from "./gym.js";
 
@@ -173,6 +173,25 @@ export function putPerson(db, id, person) {
   const people = rowsOf(next, "person").map((p) => p.id);
   const ordered = people.flatMap((pid) => (pid === id ? manual : bests.filter((r) => r.personId === pid)));
   next = { ...next, tables: { ...next.tables, logged_set: [...ordered, ...logged.filter((r) => r.manual !== true)] } };
+  const { exercise, exercise_type } = exerciseTables(next.tables);
+  return { ...next, tables: { ...next.tables, exercise, exercise_type } };
+}
+
+// ---------- Logged sets ----------
+// Saves the list of sets the screens keep (the old flat list): the workout, workout_type, workout_exercise and logged_set rows
+// are worked out from the whole list again (they depend on it: a workout's start and end, a day's first mode, seq), the typed-in
+// bests are kept as they are, and the exercise and exercise_type tables are brought up to date. Every other table is untouched.
+export function putSets(db, sets) {
+  const made = setTables(db.currentPerson, sets, groupLookup(db.tables));
+  const bests = rowsOf(db, "logged_set").filter((r) => r.manual === true);
+  const next = {
+    ...db,
+    tables: {
+      ...db.tables,
+      workout: made.workout, workout_type: made.workout_type, workout_exercise: made.workout_exercise,
+      logged_set: [...bests, ...made.logged_set],
+    },
+  };
   const { exercise, exercise_type } = exerciseTables(next.tables);
   return { ...next, tables: { ...next.tables, exercise, exercise_type } };
 }

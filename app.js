@@ -29,7 +29,7 @@ import { makeBackup, backupFileName, parseBackup, fileKind, dataSummary, describ
 import { MUSCLES, muscleOf, muscleLabel, partnerGroups, pairedPartners, getPairs, setPairs, addPair, removePair, pairedWith, isSuitable, setSuitable, hasPair, pairCandidates } from "./superset.js";
 import { KEY, load, loadList, save } from "./storage.js";
 import { checkV4, toStoreV4, readStore, readSets } from "./schema4.js";
-import { openDb, useGym, setDefault, useDefault, gymsOf, gymNameOf, renameGym as renameGymDb, putGym, putPerson } from "./db.js";
+import { openDb, useGym, setDefault, useDefault, gymsOf, gymNameOf, renameGym as renameGymDb, putGym, putPerson, putSets } from "./db.js";
 import { SYNC } from "./config.js";
 import { emptySync } from "./sync.js";
 import { runSync } from "./syncglue.js";
@@ -122,6 +122,9 @@ function saveDb(next) {
 
 // Saves what the store functions give for one person (the current one): that person's rows go into the tables.
 const savePerson = (next, pid = curPerson()) => (db ? saveDb(putPerson(db, pid, next.people[pid])) : saveStore(next));
+
+// Saves the list of sets (after one was logged or taken back): the session rows are worked out from the list again.
+const saveSets = () => (db ? saveDb(putSets(db, sets)) : persistStore(store));
 
 const chooseGym = (id) => (db ? saveDb(useGym(db, id)) : saveStore(setCurrentGym(store, id)));
 
@@ -491,7 +494,7 @@ function bindPanel(p, i) {
   if (isCardio(p.ex)) return bindCardioPanel(p, i);
   const e = p.ex;
   // After the logged sets change: save them, work out the next defaults and redraw.
-  const setsChanged = () => { persistStore(store); resetPanel(p); render(); };
+  const setsChanged = () => { saveSets(); resetPanel(p); render(); };
 
   $("weightSel" + i).onchange = (ev) => {
     const v = Number(ev.target.value);
@@ -643,7 +646,7 @@ function bindCardioPanel(p, i) {
       const entry = makeCardioSet({ exerciseId: e.id, minutes: duration.minutes, distance: hasDistance ? distance : null, unit: e.unit, watts: e.watts === false ? undefined : toNumber(p.watts), gymId: curGym(), start, now });
       p.pb = newBestLines(newCardioBests(cardioBests(sets, e.id, curGym()), entry));   // judged before the entry is saved
       sets.push(entry);
-      persistStore(store);
+      saveSets();
       setDone(markDone(done, e.id));   // Finish also finishes the exercise; the card stays up to show the new best
       render();
     },
@@ -651,7 +654,7 @@ function bindCardioPanel(p, i) {
       const entry = todaysEntries(gymSets(), e.id).pop();
       Object.assign(p, entry ? entryBoxes(entry, e.unit) : {}, { pb: null });   // the old start and duration come back as overrides
       sets = removeLastSet(sets, e.id, curGym());
-      persistStore(store);
+      saveSets();
       setDone(unmarkDone(done, e.id));   // back to the stopped card: fix the details and Finish again
       render();
     },
