@@ -67,6 +67,8 @@ let dataVersion = 0;
 // Stage D: `db` is the saved version 4 data as tables (see db.js), kept equal to what was last saved. The screens still read
 // `store` and `sets`, which are worked out from the same data; later steps move the screens over to `db` one part at a time.
 let db = openDb(savedStore);
+// The exercise list of the current gym is worked out once and kept here; anything that changes the store clears it.
+let exCache = null;
 const saveV4 = (v4) => { save(KEY.store, v4); db = openDb(v4); };
 // If the conversion ever failed, the store and the flat sets are saved the old way so nothing is lost.
 const persistStore = (st) => {
@@ -85,7 +87,7 @@ else store = useDefaultGym(store);
 {
   const firstGym = store.gyms[DEFAULT_GYM] || {};
   const tagged = tagSets(sets, DEFAULT_GYM, (id) => firstGym.equipment?.[id]?.unit);
-  if (tagged.some((s, i) => s !== sets[i])) { sets = tagged; persistStore(store); }
+  if (tagged.some((s, i) => s !== sets[i])) { if (db) saveDb(putSets(db, tagged)); else { sets = tagged; persistStore(store); } }
 }
 
 // Step 26a: a dry run of the version 4 conversion.
@@ -94,9 +96,6 @@ else store = useDefaultGym(store);
   const v4 = checkV4({ store, sets });
   (v4.ok ? console.info : console.warn)("Version 4 check:", v4.ok ? "OK" : v4.problems, v4.bytes3 + " -> " + v4.bytes4 + " bytes");
 }
-
-// The exercise list of the current gym is worked out once and kept here; anything that changes the store clears it.
-let exCache = null;
 
 // Stage C: the screens read the current person's settings at the current gym straight from the store.
 const myConfig = (id) => configOf(store, curPerson(), curGym(), id);                  // this machine's own settings
@@ -111,12 +110,16 @@ const curGym = () => (db ?? store).currentGym;
 const curPerson = () => (db ?? store).currentPerson;
 const curDefaultGym = () => (db ?? store).defaultGym;
 
-// Saves changed tables, works out the store the unconverted screens use, and clears the kept exercise list.
-function saveDb(next) {
-  saveV4(next);
+// Saves tables and works out the store and the sets the unconverted screens use from them; clears the kept exercise list.
+function adopt(v4) {
+  saveV4(v4);
   store = readStore(db) ?? store;
   sets = readSets(db) ?? sets;   // the sets are read back from the tables too
   exCache = null;
+}
+// A change made here: saved as tables, and a sync is planned.
+function saveDb(next) {
+  adopt(next);
   dataVersion++;
   scheduleSync();
 }
@@ -1512,8 +1515,8 @@ async function importFile(ev) {
     )) backupMsg = "Restore cancelled.";
     else {
       save(KEY.beforeRestore, { at: new Date().toISOString(), store, sets });   // a safety copy, in case of a mistake
-      sets = r.backup.sets;
-      persistStore(r.backup.store);
+      const v4 = toStoreV4(r.backup.store, r.backup.sets);
+      if (v4) saveDb(v4); else { sets = r.backup.sets; persistStore(r.backup.store); }
       save(KEY.sync, emptySync());   // a restored copy is sent as new data; it never deletes anything online
       alert("Backup restored. The app will now reload.");
       location.reload();
@@ -1641,11 +1644,9 @@ async function syncNow() {
     syncState = r.state;
     save(KEY.sync, syncState);
     if (r.changed) {
-      store = r.store;
-      sets = r.sets;
-      const v4 = toStoreV4(store, sets);
-      if (v4) saveV4(v4); else { save(KEY.store, store); db = null; }
-      exCache = null;
+      const v4 = toStoreV4(r.store, r.sets);
+      if (v4) adopt(v4);   // what came from the other devices is saved as tables (no new sync is planned for it)
+      else { store = r.store; sets = r.sets; save(KEY.store, store); db = null; exCache = null; }
       render();
     }
     console.info("Sync:", r.report);
