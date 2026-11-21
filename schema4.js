@@ -361,18 +361,14 @@ export function exerciseTables(t) {
 
 // ---------- Version 4 back to the version 3 shapes (for checking, and for the screens until they move) ----------
 // Returns { store, sets }: the version 3 store (as cleanStore gives it) and the flat list of logged sets.
-export function fromV4(v4) {
-  const t = v4.tables;
-  const gyms = {};
-  for (const g of t.gym) {
-    gyms[g.id] = clean({
-      name: g.name, units: g.units, equipment: {}, weightSets: {},
-      starterFree: g.starterFree, starterAbs: g.starterAbs, starterCardio: g.starterCardio, pullUpsMoved: g.pullUpsMoved, listDefault: g.listDefault,
-    });
-  }
+// One gym (the nested form the screens use) from its gym row and the gym_equipment rows of that gym.
+export function gymFromRows(t, g) {
+  const gym = clean({
+    name: g.name, units: g.units, equipment: {}, weightSets: {},
+    starterFree: g.starterFree, starterAbs: g.starterAbs, starterCardio: g.starterCardio, pullUpsMoved: g.pullUpsMoved, listDefault: g.listDefault,
+  });
   for (const r of t.gym_equipment) {
-    const gym = gyms[r.gymId];
-    if (!gym) continue;
+    if (r.gymId !== g.id) continue;
     if (r.id.startsWith(SET_PREFIX)) {
       gym.weightSets[r.id.slice(SET_PREFIX.length)] = clean({
         name: r.name, type: r.equipmentTypeId, unit: r.unit, pins: r.pins, stackSpec: r.stackSpec, top: r.top, hidden: r.hidden,
@@ -384,6 +380,13 @@ export function fromV4(v4) {
       });
     }
   }
+  return gym;
+}
+
+export function fromV4(v4) {
+  const t = v4.tables;
+  const gyms = {};
+  for (const g of t.gym) gyms[g.id] = gymFromRows(t, g);
   const people = {};
   for (const p of t.person) people[p.id] = clean({ name: p.name, defaults: p.defaults, gyms: {}, superset: p.superset });
   for (const m of t.gym_member) if (people[m.personId]) people[m.personId].gyms[m.gymId] ??= { machines: {} };

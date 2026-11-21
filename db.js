@@ -5,7 +5,7 @@
 // every table it did not touch with the old one, so a screen can tell by `===` that a table is unchanged.
 // A row is found by its key fields (KEYS). A row's other fields are whatever schema4.js saves; this file does not look at them.
 
-import { TABLES, SCHEMA_VERSION, gymRow, equipmentRows, exerciseTables, personRow, setupRows, setTables, groupLookup } from "./schema4.js";
+import { TABLES, SCHEMA_VERSION, gymFromRows, gymRow, equipmentRows, exerciseTables, personRow, setupRows, setTables, groupLookup } from "./schema4.js";
 import { blankGym, cleanGym } from "./store.js";
 import { uniqueId } from "./gym.js";
 
@@ -194,4 +194,11 @@ export function putSets(db, sets) {
   };
   const { exercise, exercise_type } = exerciseTables(next.tables);
   return { ...next, tables: { ...next.tables, exercise, exercise_type } };
+}
+
+// One gym as the screens use it (name, units, equipment, weight sets ...), read from the gym and gym_equipment rows.
+// undefined when there is no such gym. It is tidied the same way reading a whole store tidies each gym.
+export function gymOf(db, id) {
+  const g = rowOf(db, "gym", { id });
+  return g ? cleanGym(gymFromRows(db.tables, g)) : undefined;
 }

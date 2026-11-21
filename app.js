@@ -29,7 +29,7 @@ import { makeBackup, backupFileName, parseBackup, fileKind, dataSummary, describ
 import { MUSCLES, muscleOf, muscleLabel, partnerGroups, pairedPartners, getPairs, setPairs, addPair, removePair, pairedWith, isSuitable, setSuitable, hasPair, pairCandidates } from "./superset.js";
 import { KEY, load, loadList, save } from "./storage.js";
 import { checkV4, toStoreV4, readStore, readSets } from "./schema4.js";
-import { openDb, useGym, setDefault, useDefault, gymsOf, gymNameOf, renameGym as renameGymDb, putGym, putPerson, putSets } from "./db.js";
+import { openDb, useGym, setDefault, useDefault, gymsOf, gymNameOf, renameGym as renameGymDb, putGym, putPerson, putSets, gymOf } from "./db.js";
 import { SYNC } from "./config.js";
 import { emptySync } from "./sync.js";
 import { runSync } from "./syncglue.js";
@@ -69,6 +69,8 @@ let dataVersion = 0;
 let db = openDb(savedStore);
 // The exercise list of the current gym is worked out once and kept here; anything that changes the store clears it.
 let exCache = null;
+// One gym as the screens use it, read from the tables (from the store if the tables could not be made).
+const gymById = (id) => (db ? gymOf(db, id) : store.gyms[id]);
 const saveV4 = (v4) => { save(KEY.store, v4); db = openDb(v4); };
 // If the conversion ever failed, the store and the flat sets are saved the old way so nothing is lost.
 const persistStore = (st) => {
@@ -85,7 +87,7 @@ else store = useDefaultGym(store);
 
 // Sets logged before gyms existed belong to the first gym, in the unit their exercise used.
 {
-  const firstGym = store.gyms[DEFAULT_GYM] || {};
+  const firstGym = gymById(DEFAULT_GYM) || {};
   const tagged = tagSets(sets, DEFAULT_GYM, (id) => firstGym.equipment?.[id]?.unit);
   if (tagged.some((s, i) => s !== sets[i])) { if (db) saveDb(putSets(db, tagged)); else { sets = tagged; persistStore(store); } }
 }
@@ -143,13 +145,13 @@ function saveStore(next) {
 // The current gym's equipment in the shape the screens use, plus any exercises you added that the gym
 // has not saved anything for yet.
 const exList = () => (exCache ??= [
-  ...exerciseList(store.gyms[curGym()] || {}),
-  ...(store.custom || []).filter((c) => !store.gyms[curGym()]?.equipment?.[c.id]),
+  ...exerciseList(gymById(curGym()) || {}),
+  ...(store.custom || []).filter((c) => !gymById(curGym())?.equipment?.[c.id]),
 ]);
 const gymSets = () => setsForGym(sets, curGym());   // only the sets done at the current gym
 // The gyms and their names, read from the tables (from the store if the tables could not be made).
 const gyms = () => (db ? gymsOf(db) : gymList(store));
-const gymName = (id) => (db ? gymNameOf(db, id) : store.gyms[id]?.name ?? id);
+const gymName = (id) => (db ? gymNameOf(db, id) : gymById(id)?.name ?? id);
 
 // The selected session. Whatever is selected is remembered and is what Quick start uses.
 let session = { type: "legs", mode: "heavy", ...load(KEY.session, {}) };
@@ -335,7 +337,7 @@ function renderList() {
   // One kind of exercise at a time keeps the list short (machines, dumbbells, barbells, body weight).
   const present = LIST_KINDS.map((k) => k.id).filter((k) => all.some((e) => listKindOf(e) === k));
   const openCounts = kindCounts(open);
-  const kind = chooseListKind(present, openCounts, listKind, listDefaultOf(store.gyms[curGym()]));
+  const kind = chooseListKind(present, openCounts, listKind, listDefaultOf(gymById(curGym())));
   const openKind = open.filter((e) => listKindOf(e) === kind);
   const small = isSmallList(openKind.length);   // the number the chip shows: finished exercises are not counted
   const { shown, toggle } = commonSplit(openKind, showMore, "more", small);
@@ -1088,7 +1090,7 @@ const stackToSave = (spec) => ({ low: spec.low, step: spec.step, top: spec.top, 
 // Each gym has its own equipment list. This screen shows the gyms, renames them, sets the default gym and
 // adds a new one (blank, or with chosen equipment copied from another gym).
 const typeLabel = (t) => TYPES.find((x) => x.id === t)?.label ?? "Equipment";
-const gymItems = (id) => visibleEntries(store.gyms[id] || {});   // the items in use (hidden ones are left out)
+const gymItems = (id) => visibleEntries(gymById(id) || {});   // the items in use (hidden ones are left out)
 const saveGym = (id, gym) => (db ? saveDb(putGym(db, id, gym)) : saveStore({ ...store, gyms: { ...store.gyms, [id]: gym } }));
 const flashHtml = () => (flash ? '<div class="note">' + esc(flash) + "</div>" : "");
 
@@ -1113,7 +1115,7 @@ function renderGyms() {
 }
 
 function renderGymEdit() {
-  const g = store.gyms[gymId];
+  const g = gymById(gymId);
   if (!g) return go("gyms");
   const items = gymItems(gymId);
   const hidden = hiddenEntries(g);
@@ -1224,7 +1226,7 @@ function renderGymEdit() {
 
 // Adds a piece of equipment to the gym. A dumbbell or barbell exercise uses the gym's weight set for it.
 function renderGymItemAdd() {
-  const g = store.gyms[gymId];
+  const g = gymById(gymId);
   if (!g) return go("gyms");
   const d = itemDraft;
   const set = setIdFor(d.type) ? g.weightSets?.[setIdFor(d.type)] : null;
@@ -1299,7 +1301,7 @@ function renderGymItemEditCardio(g, it) {
 }
 
 function renderGymItemEdit() {
-  const g = store.gyms[gymId];
+  const g = gymById(gymId);
   const it = g?.equipment?.[editItemId];
   if (!it) return go("gymEdit");
   if (it.type === "cardio") return renderGymItemEditCardio(g, it);
@@ -1378,7 +1380,7 @@ function renderGymItemEdit() {
 // Edits the weights of the gym's dumbbell set (add or remove weights, or start again from the usual ones) or
 // the top weight of its barbell set.
 function renderGymSet() {
-  const g = store.gyms[gymId];
+  const g = gymById(gymId);
   const ws = g?.weightSets?.[editSetId];
   if (!ws) return go("gymEdit");
   const bar = ws.type === "barbell";

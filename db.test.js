@@ -1,6 +1,6 @@
 import test from "node:test";
 import assert from "node:assert/strict";
-import { KEYS, openDb, rowsOf, rowOf, putRow, putRows, dropRows, useGym, setDefault, useDefault, gymsOf, gymNameOf, renameGym as renameGymDb, addBlankGym, putGym, putPerson, putSets } from "./db.js";
+import { KEYS, openDb, rowsOf, rowOf, putRow, putRows, dropRows, useGym, setDefault, useDefault, gymsOf, gymNameOf, renameGym as renameGymDb, addBlankGym, putGym, putPerson, putSets, gymOf } from "./db.js";
 import { TABLES, toStoreV4, readStore, readSets } from "./schema4.js";
 import { emptyStore, addGym, setPersonal, setNever, setUse, setDefaults, setCurrentGym, setDefaultGym, useDefaultGym, addCustom, gymList, renameGym, addGym as addGymOld } from "./store.js";
 import { makeSet } from "./log.js";
@@ -301,6 +301,57 @@ test("putGym saves every kind of gym change exactly as the old way does", () => 
     db = putGym(db, id, gym);
     assert.deepEqual(db, openDb(toStoreV4(store, sets)));
   }
+});
+
+test("gymOf gives each gym exactly as the whole store read from the same tables gives it", () => {
+  const { v4, hotel } = saved();
+  const db0 = openDb(v4);
+  const store0 = readStore(db0);
+  const main = store0.gyms.main;
+  const ids = Object.keys(main.equipment);
+  const dbs = [
+    db0,
+    putGym(db0, "main", hideItem(main, ids[0])),
+    putGym(db0, "main", hideWeightSet(main, "dumbbells")),
+    putGym(db0, "main", addItem(main, { name: "Neck Curl", group: "neck", type: "stack", unit: "lb" }).gym),
+    putGym(db0, "main", addItem(main, { name: "Fly", group: "arms", type: "dumbbell" }).gym),
+    putGym(db0, "main", updateWeightSet(main, "barbell", { top: 300 })),
+    putGym(db0, "main", setListDefault(main, "barbell")),
+    putGym(db0, hotel, copyEquipment(main, ids.slice(0, 6), store0.gyms[hotel]).gym),
+    putGym(db0, "main", setDefaultUnit(main, "stack", "kg")),
+    addBlankGym(db0, "Third").db,
+  ];
+  for (const [n, db] of dbs.entries()) {
+    const st = readStore(db);
+    for (const id of Object.keys(st.gyms)) assert.deepEqual(gymOf(db, id), st.gyms[id], "db " + n + " gym " + id);
+    assert.equal(gymOf(db, "no-such-gym"), undefined);
+    assert.equal(gymOf(db, undefined), undefined);
+  }
+  // direct facts, not only the comparison
+  const g = gymOf(dbs[3], "main");
+  assert.equal(g.name, store0.gyms.main.name);
+  assert.deepEqual(Object.keys(g.equipment).slice(0, 2), ids.slice(0, 2));
+  assert.equal(g.equipment["neck-curl"]?.group, "neck");
+  assert.ok(g.weightSets.dumbbells && g.weightSets.barbell);
+  assert.equal(gymOf(dbs[2], "main").weightSets.dumbbells.hidden, true);
+  assert.equal(gymOf(dbs[1], "main").equipment[ids[0]].hidden, true);
+  assert.deepEqual(Object.keys(gymOf(dbs[9], "main").equipment), Object.keys(gymOf(db0, "main").equipment));
+  assert.equal(gymOf(dbs[9], dbs[9].tables.gym.at(-1).id).name, "Third");
+  assert.equal(gymOf(dbs[6], "main").listDefault, "barbell");
+  assert.equal(gymOf(dbs[5], "main").weightSets.barbell.top, 300);
+  assert.equal(gymOf(dbs[8], "main").units.stack, "kg");
+  // a gym row that needs tidying (no name, no units) is tidied as reading the whole store tidies it
+  const odd = openDb({ version: 4, currentGym: "g", defaultGym: "g", currentPerson: "awp", tables: { gym: [{ id: "g", name: "  " }] } });
+  assert.equal(gymOf(odd, "g").name, "My gym");
+  assert.ok(gymOf(odd, "g").units && typeof gymOf(odd, "g").units === "object");
+  assert.deepEqual(gymOf(odd, "g"), readStore(odd).gyms.g);
+  // an item's watts mark comes through
+  const w = { ...dbs[0], tables: { ...dbs[0].tables, gym_equipment: dbs[0].tables.gym_equipment.map((r, i) => (i === 0 ? { ...r, watts: false } : r)) } };
+  const first = w.tables.gym_equipment[0];
+  assert.equal(gymOf(w, first.gymId).equipment[first.exerciseId].watts, false);
+  // another gym's equipment never leaks in
+  assert.ok(!("calf-press-hotel" in gymOf(db0, hotel).equipment));
+  for (const id of Object.keys(gymOf(db0, hotel).equipment)) assert.ok(db0.tables.gym_equipment.some((r) => r.gymId === hotel && r.exerciseId === id));
 });
 
 test("putGym adds a whole new gym with copied equipment as the old add does", () => {
