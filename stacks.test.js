@@ -1,6 +1,6 @@
 import { test } from "node:test";
 import assert from "node:assert/strict";
-import { buildPins, addPin, removePin, describePins, hasPins } from "./stacks.js";
+import { buildPins, addPin, removePin, hasPins } from "./stacks.js";
 import { weightOptions } from "./log.js";
 
 const build = (low, step, top, changes = []) => buildPins({ low, step, top, changes });
@@ -50,12 +50,6 @@ test("addPin and removePin keep the list in order", () => {
   const original = [10, 20];
   addPin(original, 15);
   assert.deepEqual(original, [10, 20]);
-});
-
-test("describePins summarises the steps", () => {
-  assert.equal(describePins([]), "Not set up");
-  assert.equal(describePins([5]), "5 only (1 pin)");
-  assert.equal(describePins([10, 20, 30, 45, 60]), "10 to 30 by 10, 30 to 60 by 15 (5 pins)");
 });
 
 test("weightOptions uses a saved pin list", () => {

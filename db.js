@@ -6,8 +6,7 @@
 // A row is found by its key fields (KEYS). A row's other fields are whatever schema4.js saves; this file does not look at them.
 
 import { TABLES, SCHEMA_VERSION, gymFromRows, customFromRows, personFromRows, gymRow, equipmentRows, exerciseTables, personRow, setupRows, setTables, groupLookup } from "./schema4.js";
-import { blankGym, cleanGym } from "./store.js";
-import { uniqueId } from "./gym.js";
+import { cleanGym } from "./store.js";
 
 // The fields that identify a row in each table (a field that is missing counts as null, as dayType does on a person's
 // per-machine row that is not for one day type).
@@ -102,16 +101,6 @@ export function renameGym(db, id, name) {
   const gym = rowOf(db, "gym", { id });
   if (!gym || !clean) return db;
   return putRow(db, "gym", { ...gym, name: clean });
-}
-
-// Adds a gym with no equipment (but its own Dumbbells and Barbell), owned by every person. It does not change the current gym.
-// Gives { db, id }; id is null when the name is blank and the db is then unchanged.
-export function addBlankGym(db, name) {
-  const clean = String(name ?? "").trim();
-  if (!clean) return { db, id: null };
-  const id = uniqueId(clean, rowsOf(db, "gym").map((g) => g.id), "gym");
-  const gym = blankGym(clean);
-  return { db: putGym(db, id, gym), id };
 }
 
 // Every person owns the gym: a member row after that person's other gyms, as a conversion lists them.

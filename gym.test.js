@@ -2,8 +2,8 @@ import test from "node:test";
 import assert from "node:assert/strict";
 import {
   DEFAULT_UNITS, extraList, mainStep, stepChoices, makeItem, uniqueId, newGym, starterEquipment, withMachineData,
-  addItem, updateItem, removeItem, setDefaultUnit, copyEquipment, toExercise, exerciseList, convert, formatBoth,
-  checkName, isHidden, hideItem, restoreItem, visibleEntries, hiddenEntries, unitChangeImpact, dumbbellBands,
+  addItem, updateItem, setDefaultUnit, copyEquipment, toExercise, exerciseList, convert,
+  checkName, isHidden, hideItem, restoreItem, visibleEntries, hiddenEntries, dumbbellBands,
 } from "./gym.js";
 import { buildPins } from "./stacks.js";
 import { emptyStore, setPersonal, DEFAULT_GYM, DEFAULT_PERSON } from "./store.js";
@@ -124,10 +124,8 @@ test("updateItem renames, clears a stack and resets the weights when the unit ch
   assert.deepEqual(g.equipment.lp.pins, [10, 20]);
 });
 
-test("removeItem and setDefaultUnit", () => {
+test("setDefaultUnit", () => {
   const g = newGym("Gym", {}, { a: makeItem({ name: "A" }), b: makeItem({ name: "B" }) });
-  assert.deepEqual(Object.keys(removeItem(g, "a").equipment), ["b"]);
-  assert.equal(Object.keys(g.equipment).length, 2);
   const g2 = setDefaultUnit(g, "stack", "kg");
   assert.equal(g2.units.stack, "kg");
   assert.equal(g2.equipment.a.unit, "lb");
@@ -170,14 +168,10 @@ test("toExercise gives the shape the exercise code uses", () => {
   assert.deepEqual(exerciseList({ name: "x" }), []);
 });
 
-test("convert and formatBoth", () => {
+test("convert", () => {
   assert.equal(convert(100, "lb", "lb"), 100);
   assert.ok(Math.abs(convert(100, "lb", "kg") - 45.359237) < 1e-9);
   assert.ok(Math.abs(convert(100, "kg", "lb") - 220.4622622) < 1e-6);
-  assert.equal(formatBoth(100, "lb"), "100 lb (45.4 kg)");
-  assert.equal(formatBoth(100, "lb", "kg"), "45.4 kg (100 lb)");
-  assert.equal(formatBoth(100, "kg"), "100 kg (220.5 lb)");
-  assert.equal(formatBoth(62.5, "kg", "lb"), "137.8 lb (62.5 kg)");
 });
 
 // ---------- Stage 3B: editing equipment ----------
@@ -233,18 +227,6 @@ test("hiding an item keeps it, leaves it out of the exercise list and can be und
   assert.deepEqual(exerciseList(back).map((e) => e.id), ["a", "b"]);
   assert.equal(hideItem(g, "missing"), g);
   assert.equal(uniqueId("A", Object.keys(h.equipment)), "a-2");   // a hidden item keeps its id
-});
-
-test("unitChangeImpact counts the items that would change and the saved lists that would be cleared", () => {
-  const g = newGym("G", {}, {
-    a: makeItem({ name: "A", type: "stack", unit: "lb", pins: [10, 20] }),
-    b: makeItem({ name: "B", type: "stack", unit: "lb" }),
-    c: makeItem({ name: "C", type: "stack", unit: "kg", pins: [5] }),
-    d: makeItem({ name: "D", type: "dumbbell", unit: "lb" }),
-  });
-  assert.deepEqual(unitChangeImpact(g, "stack", "kg"), { items: 2, lists: 1 });
-  assert.deepEqual(unitChangeImpact(g, "stack", "lb"), { items: 1, lists: 1 });
-  assert.deepEqual(unitChangeImpact(g, "barbell", "kg"), { items: 0, lists: 0 });
 });
 
 test("dumbbell bands build the usual weights through the stack builder", () => {

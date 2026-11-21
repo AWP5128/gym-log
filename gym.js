@@ -258,11 +258,6 @@ export function editItem(gym, id, patch, historyIds = new Set()) {
   return { gym: { ...gym, equipment: { ...gym.equipment, [id]: makeItem(next) } }, ok: true, reason: "", existing: null };
 }
 
-export function removeItem(gym, id) {
-  const { [id]: gone, ...equipment } = gym.equipment || {};
-  return { ...gym, equipment };
-}
-
 // ---------- Hiding and bringing back ----------
 export const isHidden = (item) => item?.hidden === true;
 export const hideItem = (gym, id) => updateItem(gym, id, { hidden: true });
@@ -280,13 +275,6 @@ export const restoreWeightSet = (gym, id) => updateWeightSet(gym, id, { hidden: 
 export const hiddenSetIds = (gym) => Object.keys(gym.weightSets || {}).filter((id) => isSetHidden(gym, id));
 
 // ---------- Units ----------
-// What changing the unit of every item of this type in a gym would do, for a warning before it happens:
-// how many items would change, and how many of those have a saved weight list that would be cleared.
-export function unitChangeImpact(gym, type, unit) {
-  const affected = Object.values(gym.equipment || {}).filter((i) => i.type === type && i.unit !== unit);
-  return { items: affected.length, lists: affected.filter((i) => Array.isArray(i.pins) && i.pins.length > 0).length };
-}
-
 // ---------- Dumbbell weights ----------
 // The usual dumbbell weights as a spec for the stack builder: kg goes up by 1 to 10 and then by 2 to 50;
 // lb goes up by 2.5 to 10 and then by 5 to 100. stacks.js (buildPins) turns a spec into the weight list;
@@ -626,11 +614,3 @@ export const KG_PER_LB = 0.45359237;
 export const convert = (weight, from, to) =>
   from === to ? weight : from === "lb" ? weight * KG_PER_LB : weight / KG_PER_LB;
 const tidy = (n) => Math.round(n * 10) / 10;
-
-// A weight in both units, such as "100 lb (45.4 kg)". The weight is in unit; first is the unit shown
-// first (the weight's own unit unless you say otherwise). The converted figure has one decimal place.
-export function formatBoth(weight, unit, first = unit) {
-  const second = first === "kg" ? "lb" : "kg";
-  const show = (u) => (u === unit ? weight : tidy(convert(weight, unit, u))) + " " + u;
-  return show(first) + " (" + show(second) + ")";
-}

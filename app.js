@@ -28,7 +28,7 @@ import {
 import { makeBackup, backupFileName, parseBackup, fileKind, dataSummary, describeData, backupAge } from "./backup.js";
 import { MUSCLES, muscleOf, muscleLabel, partnerGroups, pairedPartners, getPairs, setPairs, addPair, removePair, pairedWith, isSuitable, setSuitable, hasPair, pairCandidates } from "./superset.js";
 import { KEY, load, loadList, save } from "./storage.js";
-import { checkV4, toStoreV4, readStore, readSets } from "./schema4.js";
+import { toStoreV4, readStore, readSets } from "./schema4.js";
 import { openDb, useGym, setDefault, useDefault, gymsOf, gymNameOf, renameGym as renameGymDb, putGym, putPerson, putSets, gymOf, gymsViewOf, customOfDb, personOf } from "./db.js";
 import { SYNC } from "./config.js";
 import { emptySync } from "./sync.js";
@@ -90,13 +90,6 @@ else store = useDefaultGym(store);
   const firstGym = gymById(DEFAULT_GYM) || {};
   const tagged = tagSets(sets, DEFAULT_GYM, (id) => firstGym.equipment?.[id]?.unit);
   if (tagged.some((s, i) => s !== sets[i])) { if (db) saveDb(putSets(db, tagged)); else { sets = tagged; persistStore(store); } }
-}
-
-// Step 26a: a dry run of the version 4 conversion.
-// Nothing is changed; a problem only shows in the browser console.
-{
-  const v4 = checkV4({ store, sets });
-  (v4.ok ? console.info : console.warn)("Version 4 check:", v4.ok ? "OK" : v4.problems, v4.bytes3 + " -> " + v4.bytes4 + " bytes");
 }
 
 // Stage C: the screens read the current person's settings at the current gym straight from the store.

@@ -1,8 +1,8 @@
 import { test } from "node:test";
 import assert from "node:assert/strict";
 import {
-  makeSet, todaysSets, defaultsFor, minutesDefault, weightOptions, removeLastSet,
-  beats, bestSet, isNewPb, formatSet, isDoneToday, markDone, unmarkDone,
+  makeSet, todaysSets, defaultsFor, weightOptions, removeLastSet,
+  beats, bestSet, isNewPb, isDoneToday, markDone, unmarkDone,
 } from "./log.js";
 
 // Local-time dates, so the tests behave the same in any time zone.
@@ -32,11 +32,6 @@ test("makeSet records exercise, weight, reps, mode and time", () => {
 test("makeSet records minutes for timed exercises", () => {
   const s = makeSet({ exerciseId: "treadmill", minutes: 20, now: new Date("2026-10-26T12:00:00Z") });
   assert.deepEqual(s, { exerciseId: "treadmill", minutes: 20, time: "2026-10-26T12:00:00.000Z" });
-});
-
-test("formatSet shows weight x reps or minutes", () => {
-  assert.equal(formatSet(legPress, mk(100, 5)), "100 lb x 5");
-  assert.equal(formatSet({ unit: "min" }, { minutes: 20 }), "20 min");
 });
 
 // ---- todaysSets ----
@@ -83,13 +78,6 @@ test("defaultsFor falls back to the last weight ever logged when nothing is save
 
 test("defaultsFor ignores sets of other exercises", () => {
   assert.deepEqual(suggest([chestSet()], {}), { weight: 10, reps: 5 });
-});
-
-test("minutesDefault is 10 at first, then the last time used", () => {
-  const e = { id: "treadmill" };
-  assert.equal(minutesDefault(e, []), 10);
-  const sets = [makeSet({ exerciseId: "treadmill", minutes: 25, now: YESTERDAY })];
-  assert.equal(minutesDefault(e, sets), 25);
 });
 
 // ---- weightOptions ----

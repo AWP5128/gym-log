@@ -27,12 +27,6 @@ export const setGym = (set) => set.gymId ?? DEFAULT_GYM;
 // Only the sets done at one gym.
 export const setsForGym = (allSets, gymId) => allSets.filter((s) => setGym(s) === gymId);
 
-// Whether an exercise has any logged set at a gym. The Gym screens use it to decide whether a unit
-// change is safe: saved weights and "last weight" defaults carry no unit, so a machine with history
-// keeps its unit.
-export const hasHistory = (allSets, exerciseId, gymId) =>
-  allSets.some((s) => s.exerciseId === exerciseId && setGym(s) === gymId);
-
 // The ids of every exercise that has a logged set at a gym, in one pass (for a whole equipment list).
 export const idsWithHistory = (allSets, gymId) =>
   new Set(allSets.filter((s) => setGym(s) === gymId).map((s) => s.exerciseId));
@@ -71,12 +65,6 @@ export function defaultsFor(exercise, allSets, cfg = {}, mode = "heavy", now = n
   const history = setsForExercise(allSets, exercise.id);
   if (history.length > 0) return { weight: last(history).weight, reps };
   return { weight: exercise.min ?? exercise.step ?? 0, reps };
-}
-
-// Starting minutes for a timed exercise: the last time you did it, else 10.
-export function minutesDefault(exercise, allSets) {
-  const history = setsForExercise(allSets, exercise.id).filter((s) => s.minutes !== undefined);
-  return history.length > 0 ? last(history).minutes : 10;
 }
 
 // The list of weights offered for an exercise, always including the current one.
@@ -176,9 +164,6 @@ export function newBestLevel(before, set) {
   if (before.gym !== null && beats(set, before.gym)) return "gym";
   return null;
 }
-
-export const formatSet = (exercise, set) =>
-  set.minutes !== undefined ? set.minutes + " min" : set.weight + " " + exercise.unit + " x " + set.reps;
 
 // "Done today" markers: a list of { exerciseId, date }, one per finished exercise.
 export const isDoneToday = (done, exerciseId, now = new Date()) =>

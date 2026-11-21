@@ -4,8 +4,6 @@
 // (Messages keep the older word "pin" for a stack weight; change them here if you want "stack".)
 import { round2 } from "./extras.js";
 
-// The steps offered in the step lists. Add a number here if a machine ever needs another.
-export const STEP_CHOICES = [5, 10, 15, 20];
 export const MAX_PINS = 60;
 
 const fail = (error) => ({ pins: [], error, note: "" });
@@ -48,23 +46,3 @@ export const addPin = (pins, weight) =>
 export const removePin = (pins, weight) => pins.filter((p) => p !== weight);
 
 export const hasPins = (exercise) => Array.isArray(exercise.pins) && exercise.pins.length > 0;
-
-// A short description such as "10 to 100 by 10, 100 to 160 by 15 (14 pins)".
-export function describePins(pins) {
-  if (!pins || pins.length === 0) return "Not set up";
-  if (pins.length === 1) return pins[0] + " only (1 pin)";
-  const parts = [];
-  let start = pins[0];
-  let step = round2(pins[1] - pins[0]);
-  const close = (end) => parts.push(start + " to " + end + " by " + step);
-  for (let i = 2; i < pins.length; i++) {
-    const s = round2(pins[i] - pins[i - 1]);
-    if (s !== step) {
-      close(pins[i - 1]);
-      start = pins[i - 1];
-      step = s;
-    }
-  }
-  close(pins[pins.length - 1]);
-  return parts.join(", ") + " (" + pins.length + " pins)";
-}
