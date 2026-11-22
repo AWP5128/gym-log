@@ -228,15 +228,6 @@ test("there is no store yet: the old settings are used", () => {
   assert.equal(migrateToV4({ settings: undefined }).report.source, "legacy");
 });
 
-test("a version 2 store is upgraded on the way", () => {
-  const v2 = { version: 2, currentGym: "main", defaultGym: "main", currentPerson: "awp", custom: [],
-    gyms: { main: { name: "My gym", machines: { "leg-press": { name: "LP", step: 15 } } } },
-    people: { awp: { name: "Awp", defaults: {}, gyms: { main: { machines: {} } } } } };
-  const r = migrateToV4({ store: v2 });
-  assert.equal(r.ok, true);
-  assert.equal(r.v4.tables.gym_equipment.find((e) => e.id === "leg-press").name, "LP");
-});
-
 test("damaged input fails cleanly or is counted, and never throws", () => {
   for (const bad of [{ version: 99 }, "text", 7, [], { version: 3, gyms: 5, people: [] }]) {
     let r;
@@ -296,7 +287,7 @@ test("step26b: the store is saved as version 4 and read back the same; version 3
   assert.equal(readStore(null), null);
   assert.equal(readStore("junk"), null);
 });
-test("step26b: a full backup is written as version 4 and read back; a version 1 backup still reads", () => {
+test("step26b: a full backup is written as version 4 and read back", () => {
   const s = emptyStore();
   const sets = [makeSet({ exerciseId: "leg-press", weight: 100, reps: 5, mode: "heavy", gymId: "main", unit: "lb" })];
   const b = makeBackup({ store: s, sets });
@@ -306,9 +297,7 @@ test("step26b: a full backup is written as version 4 and read back; a version 1 
   assert.equal(r.error, "");
   assert.deepEqual(r.backup.store, cleanStore(s));
   assert.equal(r.backup.sets.length, 1);
-  const old = parseBackup(JSON.stringify({ type: "gymlog-backup", version: 1, store: s, sets }));
-  assert.equal(old.error, "");
-  assert.deepEqual(old.backup.store, cleanStore(s));
+  assert.ok(parseBackup(JSON.stringify({ type: "gymlog-backup", version: 1, store: s, sets })).error);   // older backup files are not read
 });
 
 test("step26c: every person is the owner of every gym, also gyms with no saved setup", () => {

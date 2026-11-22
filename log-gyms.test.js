@@ -1,7 +1,7 @@
 import test from "node:test";
 import assert from "node:assert/strict";
 import {
-  makeSet, setGym, setsForGym, tagSets, removeLastSet, bestSet, isNewPb, personalBests, GYM_SPECIFIC_TYPES,
+  makeSet, setGym, setsForGym, removeLastSet, bestSet, isNewPb, personalBests, GYM_SPECIFIC_TYPES,
   hasGymBest, describeBest, weightCaption, newBestLevel, idsWithHistory,
 } from "./log.js";
 
@@ -26,25 +26,6 @@ test("a set with no gym belongs to the first gym", () => {
   const all = [{ exerciseId: "a" }, { exerciseId: "b", gymId: "home" }, { exerciseId: "c", gymId: "main" }];
   assert.deepEqual(setsForGym(all, "main").map((s) => s.exerciseId), ["a", "c"]);
   assert.deepEqual(setsForGym(all, "home").map((s) => s.exerciseId), ["b"]);
-});
-
-test("tagSets stamps old sets with the first gym and a unit, and leaves stamped sets alone", () => {
-  const all = [
-    { exerciseId: "leg-press", weight: 100, reps: 5, time: "t1" },
-    { exerciseId: "deadlift", weight: 60, reps: 5, time: "t2", gymId: "home", unit: "kg" },
-    { exerciseId: "treadmill", minutes: 10, time: "t3" },
-  ];
-  const unitOf = (id) => (id === "leg-press" ? "lb" : "kg");
-  const out = tagSets(all, "main", unitOf);
-  assert.deepEqual(out[0], { exerciseId: "leg-press", weight: 100, reps: 5, time: "t1", gymId: "main", unit: "lb" });
-  assert.equal(out[1], all[1]);
-  assert.deepEqual(out[2], { exerciseId: "treadmill", minutes: 10, time: "t3", gymId: "main" });
-  assert.equal(all[0].gymId, undefined);
-  assert.equal(tagSets([{ exerciseId: "a", weight: 1, reps: 1 }])[0].gymId, "main");
-  assert.equal(tagSets([{ exerciseId: "a", weight: 1, reps: 1 }])[0].unit, undefined);
-  const stamped = tagSets([{ exerciseId: "a", weight: 1, reps: 1, gymId: "home" }], "main", () => "kg")[0];
-  assert.equal(stamped.gymId, "home");
-  assert.equal(stamped.unit, "kg");
 });
 
 test("removeLastSet can be limited to one gym", () => {

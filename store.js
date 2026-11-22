@@ -117,22 +117,10 @@ export function cleanGym(g) {
   });
 }
 
-// Version 2 kept only the shared machine data in each gym. Version 3 gives each gym its own equipment list.
-function upgradeV2(raw) {
-  const custom = Array.isArray(raw.custom) ? raw.custom : [];
-  const gyms = {};
-  for (const [id, g] of Object.entries(isObj(raw.gyms) ? raw.gyms : {})) {
-    const machines = isObj(g) && isObj(g.machines) ? g.machines : {};
-    gyms[id] = newGym(isObj(g) ? g.name : "", {}, buildEquipment(machines, custom));
-  }
-  return { ...raw, version: STORE_VERSION, gyms };
-}
-
-// A store read back from storage: tidied up (a version 2 store is upgraded), or null if it is
-// missing or not a version this file knows.
+// A store read back from storage: tidied up, or null if it is missing or not the version this file knows.
 export function cleanStore(raw) {
-  if (!isObj(raw) || (raw.version !== STORE_VERSION && raw.version !== 2)) return null;
-  const v3 = raw.version === 2 ? upgradeV2(raw) : raw;
+  if (!isObj(raw) || raw.version !== STORE_VERSION) return null;
+  const v3 = raw;
   const gyms = Object.fromEntries(Object.entries(isObj(v3.gyms) ? v3.gyms : {}).map(([id, g]) => [id, cleanGym(g)]));
   // The current and default gym must be gyms that exist (when there are any).
   const ids = Object.keys(gyms);

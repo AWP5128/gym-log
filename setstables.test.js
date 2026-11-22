@@ -45,10 +45,7 @@ test("backup version 3 holds the sets in the tables and reads back", () => {
   assert.equal(r.dropped, 0);
 });
 
-test("version 2 backups (flat sets list) are still read", () => {
+test("a version 2 backup file is not read", () => {
   const old = { type: BACKUP_TYPE, version: 2, createdAt: "2026-11-09T10:00:00.000Z", store: toStoreV4(emptyStore(), []), sets };
-  delete old.store.setsInTables;
-  const r = parseBackup(JSON.stringify(old));
-  assert.equal(r.error, "");
-  assert.deepEqual(r.backup.sets, sets);
+  assert.ok(parseBackup(JSON.stringify(old)).error);
 });

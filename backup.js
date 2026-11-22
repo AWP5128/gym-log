@@ -3,8 +3,7 @@ import { MACHINES_FILE_TYPE } from "./store.js";
 import { toStoreV4, readStore, readSets } from "./schema4.js";
 
 export const BACKUP_TYPE = "gymlog-backup";
-// Version 1 holds the version 3 store and a flat sets list; version 2 the version 4 store and a flat sets list;
-// version 3 the version 4 store with the sets inside its tables (no separate sets list). All are read.
+// Version 3 holds the version 4 store with the sets inside its tables. Older backup files are not read.
 export const BACKUP_VERSION = 3;
 
 const plural = (n, one, many) => n + " " + (n === 1 ? one : many);
@@ -25,15 +24,14 @@ export function backupFileName(kind, now = new Date()) {
 }
 
 // Reads a backup file. Returns { backup, dropped, error }; error is "" when it worked.
-// Damaged sets are left out and counted in dropped. A backup from before gyms had their own
-// equipment is upgraded by cleanStore.
+// Damaged sets are left out and counted in dropped.
 export function parseBackup(text) {
   const fail = (error) => ({ backup: null, dropped: 0, error });
   let data;
   try { data = JSON.parse(text); }
   catch { return fail("That is not a valid file."); }
   if (!data || data.type !== BACKUP_TYPE) return fail("That is not a Gym Log backup file.");
-  if (![1, 2, BACKUP_VERSION].includes(data.version)) return fail("This backup was made by a different version of the app.");
+  if (data.version !== BACKUP_VERSION) return fail("This backup was made by a different version of the app.");
   const store = readStore(data.store);
   if (!store) return fail("This backup was made by a different version of the app.");
   const raw = readSets(data.store) ?? (Array.isArray(data.sets) ? data.sets : []);
@@ -55,14 +53,8 @@ export function fileKind(text) {
   return null;
 }
 
-// The machines in a gym: its stack machines (the equipment that can have a stack), or, for a store
-// written before gyms had equipment, the old shared machine list.
-function gymMachines(gym) {
-  if (gym && gym.equipment && typeof gym.equipment === "object") {
-    return Object.values(gym.equipment).filter((m) => m && m.type === "stack");
-  }
-  return Object.values((gym && gym.machines) || {});
-}
+// The machines in a gym: its stack machines (the equipment that can have a stack).
+const gymMachines = (gym) => Object.values((gym && gym.equipment) || {}).filter((m) => m && m.type === "stack");
 
 // Counts for the screen: sets, the days they were logged on, machines, and machines with a stack.
 export function dataSummary(store, sets) {

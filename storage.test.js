@@ -27,6 +27,7 @@ test("the storage names never change", () => {
     beforeV4: "gymlog.beforeV4",
     beforeStageC: "gymlog.beforeStageC",
     sync: "gymlog.sync",
+    unreadable: "gymlog.unreadable",
   });
 });
 

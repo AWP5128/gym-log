@@ -4,7 +4,7 @@ import { sessionTypes, exercisesForGroup } from "./exercises.js";
 import { toNumber, manualPb } from "./settings.js";
 import { configOf, globalDefaultsOf, effectiveConfigOf, warmupRepsOf, ownWarmupRepsOf, savedExtraOf } from "./defaults.js";
 import {
-  makeSet, todaysSets, defaultsFor, removeLastSet, weightOptions, setsForGym, tagSets, setsForExercise,
+  makeSet, todaysSets, defaultsFor, removeLastSet, weightOptions, setsForGym, setsForExercise,
   isDoneToday, markDone, unmarkDone, personalBests, hasGymBest, describeBest, weightCaption, newBestLevel, idsWithHistory,
 } from "./log.js";
 import {
@@ -40,25 +40,21 @@ import {
 } from "./ui.js";
 
 // ---------- Saved data ----------
-// Logged sets live inside the saved version 4 data (step27a). The old flat gymlog.sets is only read the first
-// time (before the sets were moved) and is then left alone as a copy.
+// Logged sets live inside the saved version 4 data.
 const savedStore = load(KEY.store, null);
-let sets = readSets(savedStore) ?? loadList(KEY.sets);
+let sets = readSets(savedStore) ?? [];
 let done = loadList(KEY.done);       // exercises finished today: { exerciseId, date }
 // The workout timer: started by opening the first exercise, stopped by End workout. A workout
 // left over from an earlier day is dropped.
 let workout = cleanWorkout(load(KEY.workout, null), Date.now());
 
-// The permanent store. The first time, it is built from the old gymlog.settings data, which is left
-// untouched as a backup. A store saved before gyms had their own equipment (version 2) is upgraded, and a
-// copy of it is kept first under gymlog.beforeGyms.
+// The permanent store: read from the saved data, or a first store for a phone with nothing saved yet.
 let store = readStore(savedStore);
-if (!store) store = migrateLegacy(load(KEY.settings, {}));
-else if (savedStore.version === 2 && load(KEY.beforeGyms, null) === null) save(KEY.beforeGyms, savedStore);
-// Step 26: the safety copy of the data as it was before version 4 (kept once), then the store is saved as version 4.
-if (load(KEY.beforeV4, null) === null) save(KEY.beforeV4, { store, sets });
-// Stage C of the refactor: a safety copy of the store and sets as they were before the screens read settings a new way (kept once).
-if (load(KEY.beforeStageC, null) === null) save(KEY.beforeStageC, { store, sets });
+if (!store) {
+  if (savedStore) save(KEY.unreadable, savedStore);   // saved data this version cannot read is kept aside, not thrown away
+  store = migrateLegacy({});
+}
+
 // Step 29d: sync (off unless config.js says so). dataVersion counts saves, so a sync round that overlapped a save is thrown away.
 let syncState = load(KEY.sync, null) ?? emptySync();
 let syncTimer = null;
@@ -84,13 +80,6 @@ if (!savedStore || savedStore.version !== 4 || savedStore.setsInTables !== true)
 // Every visit starts in the default gym (not saved until something else is).
 if (db) { db = useDefault(db); store = readStore(db) ?? store; }
 else store = useDefaultGym(store);
-
-// Sets logged before gyms existed belong to the first gym, in the unit their exercise used.
-{
-  const firstGym = gymById(DEFAULT_GYM) || {};
-  const tagged = tagSets(sets, DEFAULT_GYM, (id) => firstGym.equipment?.[id]?.unit);
-  if (tagged.some((s, i) => s !== sets[i])) { if (db) saveDb(putSets(db, tagged)); else { sets = tagged; persistStore(store); } }
-}
 
 // Stage C: the screens read the current person's settings at the current gym straight from the store.
 const myConfig = (id) => configOf(peopleView(), curPerson(), curGym(), id);                  // this machine's own settings

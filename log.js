@@ -31,14 +31,6 @@ export const setsForGym = (allSets, gymId) => allSets.filter((s) => setGym(s) ==
 export const idsWithHistory = (allSets, gymId) =>
   new Set(allSets.filter((s) => setGym(s) === gymId).map((s) => s.exerciseId));
 
-// Stamps sets that have no gym (and no unit, when unitOf is given) with the first gym's details.
-// unitOf turns an exercise id into the unit its weights were logged in. Sets already stamped are left alone.
-export const tagSets = (allSets, gymId = DEFAULT_GYM, unitOf = null) =>
-  allSets.map((s) => {
-    const unit = !s.unit && s.weight !== undefined && unitOf ? unitOf(s.exerciseId) : null;
-    return s.gymId && !unit ? s : { ...s, gymId: s.gymId ?? gymId, ...(unit ? { unit } : {}) };
-  });
-
 export const todaysSets = (allSets, exerciseId, now = new Date()) =>
   setsForExercise(allSets, exerciseId).filter((s) => day(s.time) === day(now));
 

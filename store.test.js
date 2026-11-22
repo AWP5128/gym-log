@@ -24,23 +24,6 @@ const legacy = {
   defaults: { repsHeavy: 6, setsVolume: 3 },
 };
 
-// A version 2 store, as saved on the phone before gyms had their own equipment.
-const v2 = () => ({
-  version: 2,
-  currentGym: "main",
-  currentPerson: "awp",
-  custom: [],
-  gyms: {
-    main: {
-      name: "My gym",
-      machines: {
-        "leg-press": { name: "Leg Press", step: 15, pins: [10, 20, 35], stackSpec: { low: 10, step: 10, top: 35, changes: [] } },
-      },
-    },
-  },
-  people: { awp: { name: "Awp", defaults: {}, gyms: { main: { machines: { "leg-press": { notes: "Seat 4", pbWeight: 200, pbReps: 3 } } } } } },
-});
-
 test("emptyStore has a version, one gym with the built-in equipment and one person", () => {
   const s = emptyStore();
   assert.equal(s.version, STORE_VERSION);
@@ -165,35 +148,6 @@ test("cleanStore tidies a gym with missing parts", () => {
   assert.equal(s.gyms.b.name, "My gym");
 });
 
-test("cleanStore upgrades a version 2 store and keeps stacks and personal settings", () => {
-  const old = v2();
-  const s = cleanStore(old);
-  assert.equal(s.version, 3);
-  const lp = s.gyms.main.equipment["leg-press"];
-  assert.equal(lp.name, "Leg Press");
-  assert.deepEqual(lp.pins, [10, 20, 35]);
-  assert.equal(lp.unit, "lb");
-  assert.equal(Object.keys(s.gyms.main.equipment).length, exercises.length + STARTER_FREE.length + STARTER_ABS.length + STARTER_CARDIO.length);
-  assert.equal(s.gyms.main.machines, undefined);
-  assert.equal(s.people.awp.gyms.main.machines["leg-press"].notes, "Seat 4");
-  assert.equal(old.version, 2);
-  assert.ok(old.gyms.main.machines);
-});
-
-test("a version 2 store gives the screens the same settings as before", () => {
-  const s = cleanStore(v2());
-  const lp = s.gyms.main.equipment["leg-press"];
-  assert.equal(lp.name, "Leg Press");
-  assert.equal(lp.step, 15);
-  assert.deepEqual(lp.pins, [10, 20, 35]);
-  assert.deepEqual(lp.stackSpec, { low: 10, step: 10, top: 35, changes: [] });
-  const mine = personalOf(s, "awp", "main", "leg-press");
-  assert.equal(mine.notes, "Seat 4");
-  assert.equal(mine.pbWeight, 200);
-  assert.equal(mine.pbReps, 3);
-  assert.deepEqual(Object.keys(s.people.awp.gyms.main.machines), ["leg-press"]);
-});
-
 test("supportsWarmup: machines yes, free weights, pull-ups and timed no", () => {
   assert.equal(supportsWarmup({ unit: "lb" }), true);
   assert.equal(supportsWarmup({ unit: "kg" }), false);
@@ -264,12 +218,6 @@ test("cleanStore keeps the default gym, and falls back when it is missing or not
   assert.equal(cleanStore(two({ currentGym: "gone", defaultGym: "home" })).currentGym, "main");
   assert.equal(cleanStore(two({ currentGym: "gone", defaultGym: "gone" })).defaultGym, "main");
   assert.equal(cleanStore({ version: STORE_VERSION }).defaultGym, "main");
-});
-
-test("a version 2 store upgrades with its gym as both current and default", () => {
-  const s = cleanStore(v2());
-  assert.equal(s.currentGym, "main");
-  assert.equal(s.defaultGym, "main");
 });
 
 test("gymList gives each gym's id and name", () => {
