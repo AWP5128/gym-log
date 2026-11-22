@@ -31,13 +31,12 @@ test("parseBackup rejects files that are not usable backups", () => {
 
 test("parseBackup leaves out damaged sets and counts them", () => {
   const good = setAt("leg-press", when(2026, 10, 29));
-  const text = JSON.stringify({
-    type: BACKUP_TYPE, version: BACKUP_VERSION, store: emptyStore(),
-    sets: [good, { exerciseId: 1 }, null, { exerciseId: "x", time: "not a date" }],
-  });
-  const r = parseBackup(text);
+  const file = makeBackup({ store: emptyStore(), sets: [good] });
+  const row = file.store.tables.logged_set[0];
+  file.store.tables.logged_set.push({ ...row, id: "bad1", exerciseId: 1 }, { ...row, id: "bad2", time: "not a date" }, { ...row, id: "bad3", time: 5 });
+  const r = parseBackup(JSON.stringify(file));
   assert.equal(r.error, "");
-  assert.deepEqual(r.backup.sets, [good]);
+  assert.deepEqual(r.backup.sets.map((x) => x.exerciseId + x.time), [good.exerciseId + good.time]);
   assert.equal(r.dropped, 3);
 });
 

@@ -13,8 +13,9 @@ const validSet = (s) =>
 
 // Everything that is worth keeping: the store (gyms, equipment, settings) and the logged sets.
 export function makeBackup({ store, sets }, now = new Date()) {
-  const v4 = toStoreV4(store, sets);   // null only if the conversion fails: then the old layout is written
-  return { type: BACKUP_TYPE, version: BACKUP_VERSION, createdAt: now.toISOString(), ...(v4 ? { store: v4 } : { store, sets }) };
+  const v4 = toStoreV4(store, sets);
+  if (!v4) throw new Error("The backup could not be made.");
+  return { type: BACKUP_TYPE, version: BACKUP_VERSION, createdAt: now.toISOString(), store: v4 };
 }
 
 // kind is "backup" or "machines", e.g. gym-log-backup-2026-10-30.json (local date).
@@ -34,7 +35,7 @@ export function parseBackup(text) {
   if (data.version !== BACKUP_VERSION) return fail("This backup was made by a different version of the app.");
   const store = readStore(data.store);
   if (!store) return fail("This backup was made by a different version of the app.");
-  const raw = readSets(data.store) ?? (Array.isArray(data.sets) ? data.sets : []);
+  const raw = readSets(data.store) ?? [];
   const sets = raw.filter(validSet);
   return {
     backup: { store, sets, createdAt: typeof data.createdAt === "string" ? data.createdAt : null },

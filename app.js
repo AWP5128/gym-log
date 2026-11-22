@@ -22,8 +22,8 @@ import {
   setDefaultUnit, addItem, updateItem, editItem, checkName, LIST_KINDS, listKindOf, listDefaultOf, setListDefault, kindCounts, chooseListKind, entriesOfKind, kindCountsOfEntries, isSmallList, commonFirst, hideWeightSet, restoreWeightSet, isSetHidden, hiddenSetIds, weightSetUsers, setWeightSetUnit, updateWeightSet, dumbbellWeights,
 } from "./gym.js";
 import {
-  STORE_VERSION, DEFAULT_GYM, cleanStore, migrateLegacy, supportsWarmup,
-  exportMachines, importMachines, gymList, addGym, renameGym, setDefaultGym, setCurrentGym, useDefaultGym, neverIds, setNever, useIds, useOf, setUse, setDefaults, setPersonal,
+  migrateLegacy, supportsWarmup,
+  exportMachines, importMachines, addGym, neverIds, setNever, useIds, useOf, setUse, setDefaults, setPersonal,
 } from "./store.js";
 import { makeBackup, backupFileName, parseBackup, fileKind, dataSummary, describeData, backupAge } from "./backup.js";
 import { MUSCLES, muscleOf, muscleLabel, partnerGroups, pairedPartners, getPairs, setPairs, addPair, removePair, pairedWith, isSuitable, setSuitable, hasPair, pairCandidates } from "./superset.js";
@@ -42,44 +42,38 @@ import {
 // ---------- Saved data ----------
 // Logged sets live inside the saved version 4 data.
 const savedStore = load(KEY.store, null);
-let sets = readSets(savedStore) ?? [];
+// `db` is the saved version 4 data as tables (see db.js), kept equal to what was last saved. It always exists: a phone with
+// nothing saved gets a first store, and saved data this version cannot read is kept aside (never thrown away) before that.
+let db = savedStore && savedStore.setsInTables === true ? openDb(savedStore) : null;
+let sets = db ? readSets(db) ?? [] : [];
+let dbIsNew = false;   // true when the tables were made just now and still have to be saved
+if (!db) {
+  const old = readStore(savedStore);
+  db = openDb(old ? toStoreV4(old, []) : null);
+  if (!db) {
+    if (savedStore) save(KEY.unreadable, savedStore);
+    db = openDb(toStoreV4(migrateLegacy({}), []));
+  }
+  dbIsNew = true;
+}
 let done = loadList(KEY.done);       // exercises finished today: { exerciseId, date }
 // The workout timer: started by opening the first exercise, stopped by End workout. A workout
 // left over from an earlier day is dropped.
 let workout = cleanWorkout(load(KEY.workout, null), Date.now());
-
-// The permanent store: read from the saved data, or a first store for a phone with nothing saved yet.
-let store = readStore(savedStore);
-if (!store) {
-  if (savedStore) save(KEY.unreadable, savedStore);   // saved data this version cannot read is kept aside, not thrown away
-  store = migrateLegacy({});
-}
 
 // Step 29d: sync (off unless config.js says so). dataVersion counts saves, so a sync round that overlapped a save is thrown away.
 let syncState = load(KEY.sync, null) ?? emptySync();
 let syncTimer = null;
 let syncing = false;
 let dataVersion = 0;
-// Stage D: `db` is the saved version 4 data as tables (see db.js), kept equal to what was last saved. The screens still read
-// `store` and `sets`, which are worked out from the same data; later steps move the screens over to `db` one part at a time.
-let db = openDb(savedStore);
-// The exercise list of the current gym is worked out once and kept here; anything that changes the store clears it.
+// The exercise list of the current gym is worked out once and kept here; anything that changes the data clears it.
 let exCache = null;
-// One gym as the screens use it, read from the tables (from the store if the tables could not be made).
-const gymById = (id) => (db ? gymOf(db, id) : store.gyms[id]);
+// One gym as the screens use it, read from the tables.
+const gymById = (id) => gymOf(db, id);
 const saveV4 = (v4) => { save(KEY.store, v4); db = openDb(v4); };
-// If the conversion ever failed, the store and the flat sets are saved the old way so nothing is lost.
-const persistStore = (st) => {
-  const v4 = toStoreV4(st, sets);
-  if (v4) saveV4(v4);
-  else { save(KEY.store, st); save(KEY.sets, sets); db = null; }
-  dataVersion++;
-  scheduleSync();
-};
-if (!savedStore || savedStore.version !== 4 || savedStore.setsInTables !== true) persistStore(store);
+if (dbIsNew) { save(KEY.store, db); dataVersion++; scheduleSync(); }
 // Every visit starts in the default gym (not saved until something else is).
-if (db) { db = useDefault(db); store = readStore(db) ?? store; }
-else store = useDefaultGym(store);
+db = useDefault(db);
 
 // Stage C: the screens read the current person's settings at the current gym straight from the store.
 const myConfig = (id) => configOf(peopleView(), curPerson(), curGym(), id);                  // this machine's own settings
@@ -89,33 +83,30 @@ const myWarmupReps = (id, key) => warmupRepsOf(peopleView(), curPerson(), curGym
 const myOwnWarmupReps = (id, key) => ownWarmupRepsOf(peopleView(), curPerson(), curGym(), id, key);
 const mySavedExtra = (id, kind, key) => savedExtraOf(peopleView(), curPerson(), curGym(), id, kind, key);
 
-// Which gym and which person: read from the tables. (If the tables could not be made, from the store.)
-const curGym = () => (db ?? store).currentGym;
-const curPerson = () => (db ?? store).currentPerson;
-const curDefaultGym = () => (db ?? store).defaultGym;
+// Which gym and which person: read from the tables.
+const curGym = () => db.currentGym;
+const curPerson = () => db.currentPerson;
+const curDefaultGym = () => db.defaultGym;
 
 // The whole nested store (for the backup file, the safety copy, the summaries and the sync), read from the tables when it is
-// needed. Worked out once per saved version of the tables; the kept `store` itself is only used if the tables could not be made.
+// needed. Worked out once per saved version of the tables.
 let wholeMemo = { db: null, store: null };
 const wholeStore = () => {
-  if (!db) return store;
-  if (wholeMemo.db !== db) wholeMemo = { db, store: readStore(db) ?? store };
+  if (wholeMemo.db !== db) wholeMemo = { db, store: readStore(db) };
   return wholeMemo.store;
 };
 
 // The gyms and added exercises as the machines-file and add-gym functions want them, read from the tables.
 let gymsMemo = { db: null, view: null };
 const gymsView = () => {
-  if (!db) return store;
   if (gymsMemo.db !== db) gymsMemo = { db, view: gymsViewOf(db) };
   return gymsMemo.view;
 };
 
 // The current person as the settings functions want them ({ people: { id: person } }), read from the tables
-// (the whole store if the tables could not be made). Worked out once per saved version of the tables.
+// Worked out once per saved version of the tables.
 let peopleMemo = { db: null, pid: null, view: null };
 const peopleView = () => {
-  if (!db) return store;
   const pid = curPerson();
   if (peopleMemo.db !== db || peopleMemo.pid !== pid) {
     const p = personOf(db, pid);
@@ -138,31 +129,24 @@ function saveDb(next) {
 }
 
 // Saves what the store functions give for one person (the current one): that person's rows go into the tables.
-const savePerson = (next, pid = curPerson()) => (db ? saveDb(putPerson(db, pid, next.people[pid])) : saveStore(next));
+const savePerson = (next, pid = curPerson()) => saveDb(putPerson(db, pid, next.people[pid]));
 
 // Saves the new list of sets (after one was logged or taken back): the session rows are worked out from the list again,
 // and `sets` is read back from the tables.
-const saveSets = (next) => { if (db) saveDb(putSets(db, next)); else { sets = next; persistStore(store); } };
+const saveSets = (next) => saveDb(putSets(db, next));
 
-const chooseGym = (id) => (db ? saveDb(useGym(db, id)) : saveStore(setCurrentGym(store, id)));
-
-// Saves a changed store (gyms, current gym, default gym, personal settings) and clears the kept exercise list.
-function saveStore(next) {
-  store = next;
-  persistStore(store);
-  exCache = null;
-}
+const chooseGym = (id) => saveDb(useGym(db, id));
 
 // The current gym's equipment in the shape the screens use, plus any exercises you added that the gym
 // has not saved anything for yet.
 const exList = () => (exCache ??= [
   ...exerciseList(gymById(curGym()) || {}),
-  ...(db ? customOfDb(db) : store.custom || []).filter((c) => !gymById(curGym())?.equipment?.[c.id]),
+  ...customOfDb(db).filter((c) => !gymById(curGym())?.equipment?.[c.id]),
 ]);
 const gymSets = () => setsForGym(sets, curGym());   // only the sets done at the current gym
-// The gyms and their names, read from the tables (from the store if the tables could not be made).
-const gyms = () => (db ? gymsOf(db) : gymList(store));
-const gymName = (id) => (db ? gymNameOf(db, id) : gymById(id)?.name ?? id);
+// The gyms and their names, read from the tables.
+const gyms = () => gymsOf(db);
+const gymName = (id) => gymNameOf(db, id);
 
 // The selected session. Whatever is selected is remembered and is what Quick start uses.
 let session = { type: "legs", mode: "heavy", ...load(KEY.session, {}) };
@@ -1102,7 +1086,7 @@ const stackToSave = (spec) => ({ low: spec.low, step: spec.step, top: spec.top, 
 // adds a new one (blank, or with chosen equipment copied from another gym).
 const typeLabel = (t) => TYPES.find((x) => x.id === t)?.label ?? "Equipment";
 const gymItems = (id) => visibleEntries(gymById(id) || {});   // the items in use (hidden ones are left out)
-const saveGym = (id, gym) => (db ? saveDb(putGym(db, id, gym)) : saveStore({ ...store, gyms: { ...store.gyms, [id]: gym } }));
+const saveGym = (id, gym) => saveDb(putGym(db, id, gym));
 const flashHtml = () => (flash ? '<div class="note">' + esc(flash) + "</div>" : "");
 
 function renderGyms() {
@@ -1223,13 +1207,13 @@ function renderGymEdit() {
   wire({
     back: goBack,
     saveName: () => {
-      const next = db ? renameGymDb(db, gymId, $("ge_name").value) : renameGym(store, gymId, $("ge_name").value);
-      if (next === (db ?? store)) { alert("Enter a name for the gym."); return; }
-      if (db) saveDb(next); else saveStore(next);
+      const next = renameGymDb(db, gymId, $("ge_name").value);
+      if (next === db) { alert("Enter a name for the gym."); return; }
+      saveDb(next);
       flash = "Name saved";
       render();
     },
-    makeDefault: () => { db ? saveDb(setDefault(db, gymId)) : saveStore(setDefaultGym(store, gymId)); flash = "Default gym changed"; render(); },
+    makeDefault: () => { saveDb(setDefault(db, gymId)); flash = "Default gym changed"; render(); },
     useNow: () => { chooseGym(gymId); flash = "Now using " + gymName(gymId); render(); },
     addItemBtn: () => { itemDraft = { name: "", type: "stack", group: "legs", unit: g.units?.stack ?? "lb" }; go("gymItemAdd"); },
   });
@@ -1527,13 +1511,16 @@ async function importFile(ev) {
       "\n\nThis replaces what is on this phone."
     )) backupMsg = "Restore cancelled.";
     else {
-      save(KEY.beforeRestore, { at: new Date().toISOString(), store: wholeStore(), sets });   // a safety copy, in case of a mistake
       const v4 = toStoreV4(r.backup.store, r.backup.sets);
-      if (v4) saveDb(v4); else { sets = r.backup.sets; persistStore(r.backup.store); }
-      save(KEY.sync, emptySync());   // a restored copy is sent as new data; it never deletes anything online
-      alert("Backup restored. The app will now reload.");
-      location.reload();
-      return;
+      if (!v4) backupMsg = "That backup could not be restored. Nothing was changed.";
+      else {
+        save(KEY.beforeRestore, { at: new Date().toISOString(), store: wholeStore(), sets });   // a safety copy, in case of a mistake
+        saveDb(v4);
+        save(KEY.sync, emptySync());   // a restored copy is sent as new data; it never deletes anything online
+        alert("Backup restored. The app will now reload.");
+        location.reload();
+        return;
+      }
     }
   } else {
     backupMsg = "That is not a Gym Log file.";
@@ -1658,9 +1645,7 @@ async function syncNow() {
     save(KEY.sync, syncState);
     if (r.changed) {
       const v4 = toStoreV4(r.store, r.sets);
-      if (v4) adopt(v4);   // what came from the other devices is saved as tables (no new sync is planned for it)
-      else { store = r.store; sets = r.sets; save(KEY.store, store); db = null; exCache = null; }
-      render();
+      if (v4) { adopt(v4); render(); }   // what came from the other devices is saved as tables (no new sync is planned for it)
     }
     console.info("Sync:", r.report);
   } catch (e) {
