@@ -27,7 +27,7 @@ import {
 } from "./store.js";
 import { makeBackup, backupFileName, parseBackup, fileKind, dataSummary, describeData, backupAge } from "./backup.js";
 import { MUSCLES, muscleOf, muscleLabel, partnerGroups, pairedPartners, getPairs, setPairs, addPair, removePair, pairedWith, isSuitable, setSuitable, hasPair, pairCandidates } from "./superset.js";
-import { KEY, load, loadList, save } from "./storage.js";
+import { KEY, load, loadList, save, removeOldKeys } from "./storage.js";
 import { toStoreV4, readStore, readSets } from "./schema4.js";
 import { openDb, useGym, setDefault, useDefault, gymsOf, gymNameOf, renameGym as renameGymDb, putGym, putPerson, putSets, gymOf, gymsViewOf, customOfDb, personOf } from "./db.js";
 import { SYNC } from "./config.js";
@@ -72,6 +72,7 @@ let exCache = null;
 const gymById = (id) => gymOf(db, id);
 const saveV4 = (v4) => { save(KEY.store, v4); db = openDb(v4); };
 if (dbIsNew) { save(KEY.store, db); dataVersion++; scheduleSync(); }
+else removeOldKeys();   // the saved tables were read as they are: the old flat copies and upgrade safety copies are not needed any more
 // Every visit starts in the default gym (not saved until something else is).
 db = useDefault(db);
 
