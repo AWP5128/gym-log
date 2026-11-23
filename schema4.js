@@ -34,6 +34,10 @@
 //     logged_set      { id (person:time:exercise), seq, personId, workoutExerciseId, exerciseId, gymId, time, weight, reps, minutes, unit, mode }
 //                     seq is the place in the old flat list. A typed-in best from before the app is a manual
 //                     logged_set: { id, personId, gymId, exerciseId, manual: true, weight, reps, time: null }.
+//   Garmin (private heart-rate data from the watch, added step 74)
+//     garmin_activity { id (person:garmin:activityId), personId, garminId, activityType, name, start, end, durationS, distanceM,
+//                       avgHr, maxHr, calories, zone1S..zone5S (seconds in each heart-rate zone), workoutId, workoutTypeId, workoutExerciseId }
+//                     the three links are blank until a session is matched to a workout; workoutId is what reports add up by
 //
 // Not carried over (they are about today, not history): the running workout timer, the done-today list and
 // the chosen session. Total weight, bests and times per machine are calculated, never stored.
@@ -45,7 +49,7 @@ import { TYPES, STARTER_FREE, STARTER_ABS, STARTER_CARDIO } from "./gym.js";
 export const SCHEMA_VERSION = 4;
 export const TABLES = [
   "person", "gym", "gym_member", "gym_equipment", "equipment_type", "exercise_type", "exercise",
-  "personal_setup", "workout", "workout_type", "workout_exercise", "logged_set",
+  "personal_setup", "workout", "workout_type", "workout_exercise", "logged_set", "garmin_activity",
 ];
 
 // Exercises that also appear under another session's list (pull-ups are filed under arms and done alongside legs day).

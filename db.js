@@ -23,6 +23,7 @@ export const KEYS = {
   workout_type: ["id"],
   workout_exercise: ["id"],
   logged_set: ["id"],
+  garmin_activity: ["id"],
 };
 
 const isObj = (v) => !!v && typeof v === "object" && !Array.isArray(v);

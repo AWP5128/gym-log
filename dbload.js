@@ -24,11 +24,16 @@ const COLS = {
     id: "t", seq: "i", personId: "t", workoutExerciseId: "t", exerciseId: "t", gymId: "t", time: "s", weight: "n", reps: "n",
     minutes: "n", unit: "t", mode: "t", manual: "b",
   },
+  garmin_activity: {
+    id: "t", personId: "t", garminId: "t", activityType: "t", name: "t", start: "s", end: "s", durationS: "n", distanceM: "n",
+    avgHr: "n", maxHr: "n", calories: "n", zone1S: "n", zone2S: "n", zone3S: "n", zone4S: "n", zone5S: "n",
+    workoutId: "t", workoutTypeId: "t", workoutExerciseId: "t",
+  },
 };
 // parents before children
 export const LOAD_ORDER = [
   "equipment_type", "exercise_type", "exercise", "person", "gym", "gym_member", "gym_equipment", "personal_setup",
-  "workout", "workout_type", "workout_exercise", "logged_set",
+  "workout", "workout_type", "workout_exercise", "logged_set", "garmin_activity",
 ];
 export const snake = (k) => k.replace(/[A-Z]/g, (c) => "_" + c.toLowerCase());
 const camel = (k) => k.replace(/_([a-z])/g, (_, c) => c.toUpperCase());

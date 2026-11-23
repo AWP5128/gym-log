@@ -13,7 +13,7 @@ import { LOAD_ORDER } from "./dbload.js";
 const PK = {
   exercise: ["id"], person: ["id"], gym: ["id"], gym_member: ["personId", "gymId"], gym_equipment: ["gymId", "id"],
   personal_setup: ["personId", "gymId", "exerciseId", "dayType"], workout: ["id"], workout_type: ["id"],
-  workout_exercise: ["id"], logged_set: ["id"],
+  workout_exercise: ["id"], logged_set: ["id"], garmin_activity: ["id"],
 };
 // equipment_type and exercise_type are fixed lists that only the laptop changes, so they are never synced.
 export const SYNC_PK = PK;

@@ -151,5 +151,5 @@ test("toDbRow leaves out blanks, fills what the database needs and uses snake_ca
     { person_id: "awp", gym_id: "main", exercise_id: "x", day_type: "none", notes: "n" });
   assert.deepEqual(fromDbRow("logged_set", { id: "s", seq: "3", person_id: "awp", exercise_id: "x", gym_id: "main", time: "2026-11-02T10:00:00+00:00", weight: 5, manual: false, mode: null, updated_at: "z" }),
     { id: "s", seq: 3, personId: "awp", exerciseId: "x", gymId: "main", time: "2026-11-02T10:00:00.000Z", weight: 5 });
-  assert.ok(LOAD_ORDER.length === 12);
+  assert.ok(LOAD_ORDER.length === 13);
 });

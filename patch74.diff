@@ -1,0 +1,129 @@
+diff --git a/db.js b/db.js
+index f5c6c61..5f7b8c0 100644
+--- a/db.js
++++ b/db.js
+@@ -25,2 +25,3 @@ export const KEYS = {
+   logged_set: ["id"],
++  garmin_activity: ["id"],
+ };
+diff --git a/dbload.js b/dbload.js
+index 245c8c3..717d430 100644
+--- a/dbload.js
++++ b/dbload.js
+@@ -26,2 +26,7 @@ const COLS = {
+   },
++  garmin_activity: {
++    id: "t", personId: "t", garminId: "t", activityType: "t", name: "t", start: "s", end: "s", durationS: "n", distanceM: "n",
++    avgHr: "n", maxHr: "n", calories: "n", zone1S: "n", zone2S: "n", zone3S: "n", zone4S: "n", zone5S: "n",
++    workoutId: "t", workoutTypeId: "t", workoutExerciseId: "t",
++  },
+ };
+@@ -30,3 +35,3 @@ export const LOAD_ORDER = [
+   "equipment_type", "exercise_type", "exercise", "person", "gym", "gym_member", "gym_equipment", "personal_setup",
+-  "workout", "workout_type", "workout_exercise", "logged_set",
++  "workout", "workout_type", "workout_exercise", "logged_set", "garmin_activity",
+ ];
+diff --git a/remote.test.js b/remote.test.js
+index e9ea134..23b9e32 100644
+--- a/remote.test.js
++++ b/remote.test.js
+@@ -153,3 +153,3 @@ test("toDbRow leaves out blanks, fills what the database needs and uses snake_ca
+     { id: "s", seq: 3, personId: "awp", exerciseId: "x", gymId: "main", time: "2026-11-02T10:00:00.000Z", weight: 5 });
+-  assert.ok(LOAD_ORDER.length === 12);
++  assert.ok(LOAD_ORDER.length === 13);
+ });
+diff --git a/schema4.js b/schema4.js
+index a080a3c..905f0a2 100644
+--- a/schema4.js
++++ b/schema4.js
+@@ -36,2 +36,6 @@
+ //                     logged_set: { id, personId, gymId, exerciseId, manual: true, weight, reps, time: null }.
++//   Garmin (private heart-rate data from the watch, added step 74)
++//     garmin_activity { id (person:garmin:activityId), personId, garminId, activityType, name, start, end, durationS, distanceM,
++//                       avgHr, maxHr, calories, zone1S..zone5S (seconds in each heart-rate zone), workoutId, workoutTypeId, workoutExerciseId }
++//                     the three links are blank until a session is matched to a workout; workoutId is what reports add up by
+ //
+@@ -47,3 +51,3 @@ export const TABLES = [
+   "person", "gym", "gym_member", "gym_equipment", "equipment_type", "exercise_type", "exercise",
+-  "personal_setup", "workout", "workout_type", "workout_exercise", "logged_set",
++  "personal_setup", "workout", "workout_type", "workout_exercise", "logged_set", "garmin_activity",
+ ];
+diff --git a/schema4.test.js b/schema4.test.js
+index b3bfcd9..0d14d70 100644
+--- a/schema4.test.js
++++ b/schema4.test.js
+@@ -62,5 +62,5 @@ const sets = (gyms) => [
+ 
+-test("the version and the twelve tables", () => {
++test("the version and the thirteen tables", () => {
+   assert.equal(SCHEMA_VERSION, 4);
+-  assert.equal(TABLES.length, 12);
++  assert.equal(TABLES.length, 13);
+   const r = migrateToV4({ store: emptyStore() });
+diff --git a/security.test.js b/security.test.js
+index 10fd46b..3e6d012 100644
+--- a/security.test.js
++++ b/security.test.js
+@@ -68,2 +68,5 @@ async function freshDb(t) {
+         ('fam:1:curl','fam','fam:famgym:2026-11-02:arms:curl','curl','famgym',now(),20,10,'kg','heavy');
++      insert into garmin_activity (id, person_id, garmin_id, activity_type, start, avg_hr, zone2_s, workout_id) values
++        ('awp:garmin:1','awp','1','strength_training','2026-11-02T10:00:00Z',97,600,'awp:main:2026-11-02'),
++        ('fam:garmin:2','fam','2','strength_training','2026-11-02T10:00:00Z',88,500,'fam:famgym:2026-11-02');
+       insert into personal_setup (person_id, gym_id, exercise_id, day_type, notes) values
+@@ -78,3 +81,3 @@ async function freshDb(t) {
+ const ofAwp = (t) => `${t} where ${t === "workout_type" || t === "workout_exercise" ? "id like 'awp:%'" : "person_id = 'awp'"}`;
+-const PRIVATE = ["workout", "workout_type", "workout_exercise", "logged_set", "personal_setup"];
++const PRIVATE = ["workout", "workout_type", "workout_exercise", "logged_set", "personal_setup", "garmin_activity"];
+ const tablesOf = async (db) => (await su(db, "select tablename from pg_tables where schemaname='public' order by 1")).map((r) => r.tablename);
+@@ -84,3 +87,3 @@ test("the list of tables is the one this check was written for (a new table must
+   const db = await freshDb(t);
+-  assert.deepEqual(await tablesOf(db), ["deleted_row", "equipment_type", "exercise", "exercise_type", "gym", "gym_equipment", "gym_member",
++  assert.deepEqual(await tablesOf(db), ["deleted_row", "equipment_type", "exercise", "exercise_type", "garmin_activity", "gym", "gym_equipment", "gym_member",
+     "invite", "logged_set", "person", "personal_setup", "workout", "workout_exercise", "workout_type"]);
+@@ -118,3 +121,3 @@ test("privileges are the least that the app needs (signed-in) and none at all fo
+   const WANT = { person: all, gym: all, gym_member: all, gym_equipment: all, personal_setup: all, workout: all, workout_type: all,
+-    workout_exercise: all, logged_set: all, equipment_type: "select", exercise_type: "select", exercise: "select,insert", deleted_row: "select", invite: "" };
++    workout_exercise: all, logged_set: all, garmin_activity: all, equipment_type: "select", exercise_type: "select", exercise: "select,insert", deleted_row: "select", invite: "" };
+   for (const t of await tablesOf(db)) {
+@@ -187,3 +190,3 @@ test("one person cannot write into another's private data", async (t) => {
+   for (const [verb, t] of PRIVATE.flatMap((t) => [["update", t], ["delete", t]])) {
+-    const change = { logged_set: "weight = 1", personal_setup: "notes = 'x'", workout: "gym_id = 'famgym'", workout_type: "day_type = 'volume'", workout_exercise: "watts = 1" }[t];
++    const change = { logged_set: "weight = 1", personal_setup: "notes = 'x'", workout: "gym_id = 'famgym'", workout_type: "day_type = 'volume'", workout_exercise: "watts = 1", garmin_activity: "avg_hr = 1" }[t];
+     const r = await as(db, "fam", (verb === "update" ? `update ${t} set ${change}` : `delete from ${t}`) + ` where ${ofAwp(t).split(" where ")[1]}`);
+@@ -196,2 +199,26 @@ test("one person cannot write into another's private data", async (t) => {
+ 
++test("garmin_activity: only its owner reads or writes it, and it can only link to the owner's own workout rows", async (t) => {
++  const db = await freshDb(t);
++  const ins = (who, id, extra) => as(db, who, `insert into garmin_activity (id, person_id, garmin_id, activity_type, start${extra ? ", " + extra[0] : ""}) values ('${id}','${who === "me" ? "awp" : "fam"}','${id}','golf','2026-11-03T09:00:00Z'${extra ? ", " + extra[1] : ""})`);
++  await ins("me", "awp:garmin:3");                                                                                            // no link: fine
++  await ins("me", "awp:garmin:4", ["workout_id, workout_type_id, workout_exercise_id", "'awp:main:2026-11-02','awp:main:2026-11-02:legs','awp:main:2026-11-02:legs:leg-press'"]);
++  await assert.rejects(ins("fam", "fam:garmin:5", ["workout_id", "'awp:main:2026-11-02'"]), DENIED);                          // linked to awp's workout
++  await assert.rejects(ins("fam", "fam:garmin:6", ["workout_type_id", "'awp:main:2026-11-02:legs'"]), DENIED);
++  await assert.rejects(ins("fam", "fam:garmin:7", ["workout_exercise_id", "'awp:main:2026-11-02:legs:leg-press'"]), DENIED);
++  await assert.rejects(as(db, "fam", "insert into garmin_activity (id, person_id, garmin_id, activity_type, start) values ('x','awp','x','golf',now())"), DENIED);   // as someone else
++  await assert.rejects(as(db, "fam", "update garmin_activity set workout_id = 'awp:main:2026-11-02' where person_id = 'fam'"), DENIED);
++  assert.equal(await count(db, "fam", "garmin_activity"), 1);                    // fam sees only their own seeded row
++  assert.equal(await count(db, "stranger", "garmin_activity"), 0);
++  await assert.rejects(as(db, "anon", "select * from garmin_activity"), DENIED);
++});
++
++test("garmin_activity: removing a workout leaves the heart-rate row, unlinked; deleting the row is remembered for sync", async (t) => {
++  const db = await freshDb(t);
++  await as(db, "me", "delete from workout where id = 'awp:main:2026-11-02'");
++  assert.deepEqual(await su(db, "select workout_id from garmin_activity where id = 'awp:garmin:1'"), [{ workout_id: null }]);
++  await as(db, "me", "delete from garmin_activity where id = 'awp:garmin:1'");
++  assert.deepEqual(await rows(db, "me", "select key, person_id from deleted_row where table_name = 'garmin_activity'"), [{ key: 'garmin_activity|["awp:garmin:1"]', person_id: "awp" }]);
++  assert.equal(await count(db, "fam", "deleted_row where table_name = 'garmin_activity'"), 0);     // private: fam never learns of it
++});
++
+ test("one person cannot see, change, delete or join another person's gym", async (t) => {
+diff --git a/sync.js b/sync.js
+index a1c7d0a..4602769 100644
+--- a/sync.js
++++ b/sync.js
+@@ -15,3 +15,3 @@ const PK = {
+   personal_setup: ["personId", "gymId", "exerciseId", "dayType"], workout: ["id"], workout_type: ["id"],
+-  workout_exercise: ["id"], logged_set: ["id"],
++  workout_exercise: ["id"], logged_set: ["id"], garmin_activity: ["id"],
+ };
+

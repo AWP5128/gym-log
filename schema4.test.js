@@ -60,9 +60,9 @@ const sets = (gyms) => [
   makeSet({ exerciseId: "custom-x", minutes: 12, gymId: "main", now: new Date("2026-11-04T09:00:00Z") }),
 ];
 
-test("the version and the twelve tables", () => {
+test("the version and the thirteen tables", () => {
   assert.equal(SCHEMA_VERSION, 4);
-  assert.equal(TABLES.length, 12);
+  assert.equal(TABLES.length, 13);
   const r = migrateToV4({ store: emptyStore() });
   assert.equal(r.ok, true);
   assert.equal(r.v4.version, 4);
