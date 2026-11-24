@@ -100,7 +100,8 @@ export function matchActivities(acts, db, personId) {
 
   // two activities that both claim one part or one cardio entry cannot both be right: no link, the person decides
   const claims = new Map();
-  for (const p of out) for (const k of [p.workoutExerciseId, p.workoutTypeId]) if (k && ["match", "near"].includes(p.status)) claims.set(k, [...(claims.get(k) ?? []), p]);
+  // (a cardio entry is claimed by its machine, not by the cardio part, which holds several machines; anything else by its part)
+  for (const p of out) { const k = p.workoutExerciseId ?? p.workoutTypeId; if (k && ["match", "near"].includes(p.status)) claims.set(k, [...(claims.get(k) ?? []), p]); }
   for (const list of claims.values()) {
     if (list.length < 2) continue;
     for (const p of list) Object.assign(p, { status: "ambiguous", note: "another activity fits the same entry", candidates: [p.workoutId], workoutId: undefined, workoutTypeId: undefined, workoutExerciseId: undefined });
@@ -180,3 +181,39 @@ function outdoorRows(db0, personId, a, random) {
   });
   return { db, links: { workoutId: wid, workoutTypeId: wtid, workoutExerciseId: weid } };
 }
+
+// ---------- The confirm list (Backup > Import Garmin file) ----------
+// One row per activity: what it is, what it matched, and what will happen to it; a tap on the row steps through the choices.
+//   link = save it linked to the workout; alone = save it with no workout; create = make the golf or walk workout; skip = leave it out.
+const CHOICES = { match: ["link", "skip"], near: ["link", "alone", "skip"], ambiguous: ["alone", "skip"], create: ["create", "skip"], none: ["alone", "skip"], have: ["skip"] };
+export const CHOICE_LABEL = { link: "Link", alone: "On its own", create: "Make workout", skip: "Skip" };
+export const defaultChoice = (p) => CHOICES[p.status][0];
+export const nextChoice = (p, c) => { const l = CHOICES[p.status]; return l[(l.indexOf(c) + 1) % l.length]; };
+export const canChange = (p) => CHOICES[p.status].length > 1;
+
+const NAMES = { strength_training: "Strength", elliptical: "Elliptical", indoor_cycling: "Bike", golf: "Golf", walking: "Walk", indoor_rowing: "Rower" };
+export const typeName = (t) => NAMES[t] ?? t.charAt(0).toUpperCase() + t.slice(1).replace(/_/g, " ");
+const pretty = (id) => id.charAt(0).toUpperCase() + id.slice(1).replace(/-/g, " ");
+const parts = (iso, opts) => Object.fromEntries(new Intl.DateTimeFormat("en-GB", { timeZone: "Europe/London", hourCycle: "h23", ...opts }).formatToParts(new Date(iso)).map((x) => [x.type, x.value]));
+const dayText = (iso) => { const p = parts(iso, { day: "numeric", month: "short" }); return p.day + " " + p.month; };
+export const whenText = (iso) => { const p = parts(iso, { weekday: "short", day: "numeric", month: "short", hour: "2-digit", minute: "2-digit" }); return `${p.weekday} ${p.day} ${p.month} ${p.hour}:${p.minute}`; };
+const lengthText = (s) => (s >= 3600 ? Math.floor(s / 3600) + "h " + String(Math.round((s % 3600) / 60)).padStart(2, "0") + "m" : Math.round(s / 60) + "m");
+
+// { title, detail } for one proposal: the activity, and where it goes.
+export function describe(p, db) {
+  const a = p.act;
+  const title = [whenText(a.start), typeName(a.type), a.durationS ? lengthText(a.durationS) : "", a.distanceM > 0 ? (a.distanceM / 1000).toFixed(1) + " km" : ""].filter(Boolean).join(" · ");
+  const w = p.workoutId ? rowsOf(db, "workout").find((x) => x.id === p.workoutId) : null;
+  const what = p.workoutExerciseId ? pretty(rowsOf(db, "workout_exercise").find((x) => x.id === p.workoutExerciseId)?.exerciseId ?? "workout")
+    : p.workoutTypeId ? pretty(rowsOf(db, "workout_type").find((x) => x.id === p.workoutTypeId)?.exerciseTypeId ?? "workout") : "workout";
+  const target = what + (w ? " on " + dayText(w.date + "T12:00:00Z") : "");
+  const detail = {
+    have: "Already saved", match: "Matches " + target, near: "Close match: " + target + ". Check it", create: "A new " + typeName(a.type).toLowerCase() + " workout",
+    ambiguous: "Could fit more than one workout" + (p.note ? " (" + p.note + ")" : ""), none: p.note || "No workout found",
+  }[p.status];
+  return { title, detail: p.status === "match" && p.note ? detail + " (" + p.note + ")" : detail };
+}
+
+// The proposals the person accepted, ready for importActivities: "alone" drops the links, "skip" leaves the activity out.
+export const accepted = (rows) => rows.filter((r) => r.choice !== "skip" && r.p.status !== "have").map((r) =>
+  r.choice === "alone" ? { ...r.p, status: "none", workoutId: undefined, workoutTypeId: undefined, workoutExerciseId: undefined } : r.p);

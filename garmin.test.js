@@ -59,6 +59,11 @@ test("cardio matches its own machine: elliptical to the cross trainer, bike to t
   assert.equal(b.workoutExerciseId, "awp:main:2026-11-19:cardio:stationary-bike");
 });
 
+test("a cardio day with both machines links each activity to its own machine (they share one cardio part)", () => {
+  const rs = matchActivities([act({ id: 1, type: "elliptical", start: at("19", "10:42"), durationS: 1335 }), act({ id: 2, type: "indoor_cycling", start: at("19", "11:07"), durationS: 1329 })], D(), "awp");
+  assert.deepEqual(rs.map((r) => [r.status, r.workoutExerciseId]), [["match", "awp:main:2026-11-19:cardio:cross-trainer"], ["match", "awp:main:2026-11-19:cardio:stationary-bike"]]);
+});
+
 test("an activity of a kind the app has no workout for is kept on its own", () => {
   const r = one(act({ type: "yoga", start: at("14", "10:40") }));
   assert.equal(r.status, "none");
@@ -139,4 +144,31 @@ test("summarise counts by status and garminRow leaves blanks out", () => {
   assert.deepEqual(summarise([{ status: "match" }, { status: "match" }, { status: "none" }]), { match: 2, none: 1 });
   const row = garminRow("awp", { act: act({ id: 3, type: "walking", start: at("20", "10:00"), distanceM: NaN, calories: undefined }) });
   assert.ok(!("distanceM" in row) && !("calories" in row) && !("workoutId" in row));
+});
+
+test("the confirm list: every status has sensible choices and defaults, and a tap steps through them", async () => {
+  const { defaultChoice, nextChoice, canChange, accepted } = await import("./garmin.js");
+  const st = (status) => ({ status, act: act({ type: "golf", start: at("20", "09:00") }) });
+  assert.deepEqual(["match", "near", "ambiguous", "create", "none", "have"].map((s) => defaultChoice(st(s))), ["link", "link", "alone", "create", "alone", "skip"]);
+  assert.deepEqual(["link", "alone", "skip"].map((c) => nextChoice(st("near"), c)), ["alone", "skip", "link"]);
+  assert.deepEqual([canChange(st("match")), canChange(st("have"))], [true, false]);
+  const p = { status: "near", workoutId: "w", workoutTypeId: "t", act: act({ type: "golf", start: at("20", "09:00") }) };
+  const out = accepted([{ p, choice: "alone" }, { p: st("match"), choice: "skip" }, { p: st("have"), choice: "skip" }, { p: st("create"), choice: "create" }]);
+  assert.deepEqual(out.map((o) => [o.status, o.workoutId]), [["none", undefined], ["create", undefined]]);
+});
+
+test("the confirm list text: times are UK time, and the match is named", async () => {
+  const { describe, whenText, typeName } = await import("./garmin.js");
+  assert.equal(whenText("2026-07-10T23:30:00.000Z"), "Sat 11 Jul 00:30");              // summer time
+  assert.equal(whenText("2026-11-14T10:31:00.000Z"), "Sat 14 Nov 10:31");
+  assert.equal(typeName("indoor_cycling") + typeName("yoga") + typeName("trail_run"), "BikeYogaTrail run");
+  const d = D();
+  const r = matchActivities([act({ type: "strength_training", start: at("14", "10:31"), durationS: 2800 }), act({ id: 2, type: "elliptical", start: at("19", "10:42"), durationS: 1335, distanceM: 1915 }),
+    act({ id: 3, type: "golf", start: at("20", "09:43"), durationS: 14357, distanceM: 10775 }), act({ id: 4, type: "yoga", start: at("14", "20:00"), durationS: 600 })], d, "awp");
+  assert.deepEqual(r.map((x) => describe(x, d)), [
+    { title: "Sat 14 Nov 10:31 · Strength · 47m", detail: "Matches Legs on 14 Nov" },
+    { title: "Thu 19 Nov 10:42 · Elliptical · 22m · 1.9 km", detail: "Matches Cross trainer on 19 Nov" },
+    { title: "Fri 20 Nov 09:43 · Golf · 3h 59m · 10.8 km", detail: "A new golf workout" },
+    { title: "Sat 14 Nov 20:00 · Yoga · 10m", detail: "kept on its own (yoga)" },
+  ]);
 });

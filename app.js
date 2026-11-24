@@ -35,6 +35,8 @@ import { emptySync } from "./sync.js";
 import { runSync } from "./syncglue.js";
 import { makeRemote } from "./remote.js";
 import { makeAuth, loadClient } from "./auth.js";
+import { readFile } from "./garminfile.js";
+import { dedupe, matchActivities, importActivities, describe, accepted, defaultChoice, nextChoice, canChange, CHOICE_LABEL } from "./garmin.js";
 import {
   $, esc, optionsHtml, selectHtml, field, numField, cols, box, muted, ghostBtn, backBtn, wire, addItems, addChoices, sendFile, formHtml, bindForm, blocks,
 } from "./ui.js";
@@ -256,11 +258,11 @@ document.addEventListener("visibilitychange", tick);
 // Where each screen's Back button (and the phone's back gesture) goes.
 const BACK = {
   list: "start", setup: "start", edit: "setup", exercise: "list", pick: "exercise",
-  backup: "start", gyms: "start", gymEdit: "gyms", gymAdd: "gyms", gymItemAdd: "gymEdit", gymItemEdit: "gymEdit", gymSet: "gymEdit",
+  backup: "start", garmin: "backup", gyms: "start", gymEdit: "gyms", gymAdd: "gyms", gymItemAdd: "gymEdit", gymItemEdit: "gymEdit", gymSet: "gymEdit",
 };
 const SCREENS = {
   start: renderStart, list: renderList, exercise: renderExercise, pick: renderPick, setup: renderSetup,
-  edit: renderEdit, backup: renderBackup,
+  edit: renderEdit, backup: renderBackup, garmin: renderGarmin,
   gyms: renderGyms, gymEdit: renderGymEdit, gymAdd: renderGymAdd, gymItemAdd: renderGymItemAdd, gymItemEdit: renderGymItemEdit, gymSet: renderGymSet,
 };
 
@@ -1529,6 +1531,53 @@ async function importFile(ev) {
   render();
 }
 
+// ---------- Garmin import (step 80) ----------
+// The chosen file is matched to the logged workouts and shown as a list; nothing is saved until "Save". gar.rows: { p, choice }.
+let gar = { rows: [], dropped: 0 };
+async function chooseGarmin(ev) {
+  const file = ev.target.files?.[0];
+  ev.target.value = "";
+  if (!file) return;
+  let text;
+  try { text = await file.text(); }
+  catch { backupMsg = "That file could not be read."; return render(); }
+  const r = readFile(text);
+  if (r.error) { backupMsg = r.error; return render(); }
+  const { kept, dropped } = dedupe(r.activities);
+  if (!kept.length) { backupMsg = "That Garmin file has no activities."; return render(); }
+  const proposals = matchActivities(kept, db, curPerson()).sort((a, b) => (a.act.start < b.act.start ? 1 : -1));
+  gar = { rows: proposals.map((p) => ({ p, choice: defaultChoice(p) })), dropped: dropped.length + r.rejected };
+  go("garmin");
+}
+
+function renderGarmin() {
+  const L = blocks();
+  const todo = gar.rows.filter((r) => r.p.status !== "have");
+  const saving = accepted(gar.rows).length;
+  const look = (r) => {
+    const d = describe(r.p, db);
+    return "<b>" + esc(d.title) + "</b><small>" + esc(d.detail) + "</small><small>" +
+      (canChange(r.p) ? "Tap to change: " : "") + "<b>" + CHOICE_LABEL[r.choice] + "</b></small>";
+  };
+  app.innerHTML =
+    backBtn("Back without saving") + "<h2>Garmin activities</h2>" +
+    muted(gar.rows.length + " in the file. " + (gar.rows.length - todo.length) + " already saved." +
+      (gar.dropped ? " " + gar.dropped + " repeated or unreadable left out." : "") + " Nothing is saved until you tap Save.", "small") +
+    L.items("garRows", todo.map((r) => [look(r), () => { if (canChange(r.p)) { r.choice = nextChoice(r.p, r.choice); render(); } }])) +
+    '<button class="primary" id="garSave"' + (saving ? "" : " disabled") + ">Save " + saving + (saving === 1 ? " activity" : " activities") + "</button>";
+  L.bind();
+  wire({
+    back: goBack,
+    garSave: () => {
+      const n = saving;
+      saveDb(importActivities(db, curPerson(), accepted(gar.rows)));
+      gar = { rows: [], dropped: 0 };
+      backupMsg = "Saved " + n + (n === 1 ? " Garmin activity." : " Garmin activities.") + " Your own workout times, distances and watts were not changed.";
+      go("backup");
+    },
+  });
+}
+
 function renderBackup() {
   const age = backupAge(load(KEY.lastBackup, null));
   app.innerHTML =
@@ -1542,6 +1591,10 @@ function renderBackup() {
     box("Share machines",
       muted("Machine names and stacks only, with no weights or notes. Family can import this file and then set their own weights.", "small") +
       '<button class="secondary" id="shareMachines">Share machines file</button>') +
+    box("Import Garmin file",
+      muted("Heart-rate data from your watch: the file made on your laptop (gym-log-garmin-....json). You check every activity before anything is saved.", "small") +
+      '<button class="secondary" id="garminBtn">Choose a Garmin file</button>' +
+      '<input type="file" id="garminFile" accept=".json,application/json" style="display:none">') +
     box("Import a file",
       muted("A machines file adds machines and leaves your own settings alone. A full backup replaces what is on this phone.", "small") +
       '<button class="secondary" id="importBtn">Choose a file</button>' +
@@ -1555,8 +1608,10 @@ function renderBackup() {
       "Backup sent. Check that you saved it somewhere safe.", "Backup downloaded.", true),
     shareMachines: () => shareFile("machines", exportMachines(gymsView(), curGym()), "Machines file sent.", "Machines file downloaded."),
     importBtn: () => $("importFile").click(),
+    garminBtn: () => $("garminFile").click(),
   });
   $("importFile").onchange = importFile;
+  $("garminFile").onchange = chooseGarmin;
   wireAccount();
 }
 
