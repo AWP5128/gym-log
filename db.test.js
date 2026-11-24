@@ -735,3 +735,11 @@ test("putSets files a set under the group the gym's own item has, even when it i
   assert.deepEqual(next, openDb(toStoreV4(store0, sets)));
   assert.ok(rowsOf(next, "workout_type").some((w) => w.exerciseTypeId === "neck"));
 });
+
+test("an outdoors place is left out of the gym lists but its name is still found", () => {
+  const db0 = openDb(saved().v4);
+  const db = putRow(db0, "gym", { id: "g-outdoors", name: "Outdoors", outdoors: true });
+  assert.deepEqual(gymsOf(db), gymsOf(db0));
+  assert.equal(rowsOf(db, "gym").length, rowsOf(db0, "gym").length + 1);
+  assert.equal(gymNameOf(db, "g-outdoors"), "Outdoors");
+});

@@ -62,6 +62,16 @@ test("the rich data loads and reads back identical", async () => {
   assert.deepEqual(compareTables(v4, await readTables(db)), []);
 });
 
+test("an outdoors place (golf and walks) and its garmin row load and read back identical", async () => {
+  const v4 = richV4();
+  v4.tables.gym.push({ id: "g-outdoors", name: "Outdoors", units: {}, outdoors: true });
+  v4.tables.garmin_activity.push({ id: "awp:garmin:1", personId: "awp", garminId: "1", activityType: "golf", start: "2026-11-20T09:43:40.000Z",
+    end: "2026-11-20T13:42:57.000Z", durationS: 14357.125, distanceM: 10774.67, avgHr: 86, maxHr: 117, zone1S: 4421.986, zone2S: 115, zone3S: 0, zone4S: 0, zone5S: 0 });
+  const db = await freshDb();
+  await loadTables(db, v4);
+  assert.deepEqual(compareTables(v4, await readTables(db)), []);
+});
+
 test("an empty store loads and reads back identical", async () => {
   const v4 = toStoreV4(cleanStore(emptyStore()), []);
   const db = await freshDb();

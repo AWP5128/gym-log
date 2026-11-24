@@ -91,7 +91,8 @@ export const useDefault = (db) => useGym(db, db.defaultGym);
 
 // ---------- Gyms (the gym table; a gym's equipment rows come with the equipment, later) ----------
 // The gyms as the screens list them: [{ id, name }].
-export const gymsOf = (db) => rowsOf(db, "gym").map((g) => ({ id: g.id, name: g.name }));
+// An outdoors place (golf and walks from the watch) has no equipment and is left out.
+export const gymsOf = (db) => rowsOf(db, "gym").filter((g) => !g.outdoors).map((g) => ({ id: g.id, name: g.name }));
 
 // A gym's name (its id when there is no such gym).
 export const gymNameOf = (db, id) => rowOf(db, "gym", { id })?.name ?? id;

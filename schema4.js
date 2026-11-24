@@ -8,7 +8,8 @@
 //   Who and where
 //     person          { id, name, defaults, superset? }       defaults = { heavy|volume: { reps, sets, warmupReps } }
 //                                                              superset = { pairs: [[a, b]], suitable: [id] }
-//     gym             { id, name, units, listDefault?, starterFree?, starterAbs?, starterCardio?, pullUpsMoved? }
+//     gym             { id, name, units, listDefault?, starterFree?, starterAbs?, starterCardio?, pullUpsMoved?, outdoors? }
+//                     outdoors: true on the one shared place for golf rounds and walks; the Gym lists leave it out (no equipment)
 //     gym_member      { personId, gymId, role, status, offTypes }   offTypes: equipment types switched off
 //     gym_equipment   { gymId, id, exerciseId | null, equipmentTypeId, exerciseTypeId?, name, unit, step?,
 //                       common?, min?, pins?, stackSpec?, hidden?, muscle?, uses?, top?, watts? }

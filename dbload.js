@@ -10,7 +10,7 @@ const COLS = {
   exercise_type: { id: "t", label: "t", dayTypes: "a" },
   exercise: { id: "t", name: "t", exerciseTypeId: "t", alsoUnder: "a", custom: "j" },
   person: { id: "t", name: "t", defaults: "j", superset: "j" },
-  gym: { id: "t", name: "t", units: "j", listDefault: "t", starterFree: "b", starterAbs: "b", starterCardio: "b", pullUpsMoved: "b" },
+  gym: { id: "t", name: "t", units: "j", listDefault: "t", starterFree: "b", starterAbs: "b", starterCardio: "b", pullUpsMoved: "b", outdoors: "b" },
   gym_member: { personId: "t", gymId: "t", role: "t", status: "t", offTypes: "a" },
   gym_equipment: {
     gymId: "t", id: "t", exerciseId: "t", equipmentTypeId: "t", exerciseTypeId: "t", name: "t", unit: "t", step: "n", common: "b",
