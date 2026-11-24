@@ -47,6 +47,9 @@ import { exercises as BUILT_IN, sessionTypes } from "./exercises.js";
 import { TYPES, STARTER_FREE, STARTER_ABS, STARTER_CARDIO } from "./gym.js";
 
 export const SCHEMA_VERSION = 4;
+// The two session types for Garmin activities done outdoors. They are not on the start screen (sessionTypes); they only exist
+// as exercise_type rows and as one exercise each, so a golf round or a walk is a workout like any other.
+export const OUTDOOR_TYPES = [{ id: "golf", label: "Golf" }, { id: "walking", label: "Walking" }];
 export const TABLES = [
   "person", "gym", "gym_member", "gym_equipment", "equipment_type", "exercise_type", "exercise",
   "personal_setup", "workout", "workout_type", "workout_exercise", "logged_set", "garmin_activity",
@@ -71,6 +74,7 @@ const ymd = (iso) => {
 // What the built-in lists say about an exercise id: its name and session.
 const KNOWN = new Map();
 for (const e of [...BUILT_IN, ...STARTER_FREE, ...STARTER_ABS, ...STARTER_CARDIO]) KNOWN.set(e.id, { name: e.name, group: e.group });
+for (const o of OUTDOOR_TYPES) KNOWN.set(o.id, { name: o.label, group: o.id });
 
 // ---------- Version 3 (+ sets) to version 4 ----------
 // input: { store, settings, sets }. store is the saved gymlog.store (or null); settings is the old
@@ -228,6 +232,7 @@ export function migrateToV4({ store = null, settings = null, sets = [] } = {}) {
     typeIds.add(s.id);
     t.exercise_type.push({ id: s.id, label: s.label, dayTypes: s.weights ? [...DAY_TYPES] : [] });
   }
+  for (const o of OUTDOOR_TYPES) { typeIds.add(o.id); t.exercise_type.push({ id: o.id, label: o.label, dayTypes: [] }); }
   const addType = (id) => {
     if (typeof id !== "string" || typeIds.has(id)) return;
     typeIds.add(id);
@@ -330,6 +335,7 @@ export const equipmentRows = (gymId, g) => [
 // (An exercise first met only through a typed-in best can come in a different place in the list than a conversion puts it; no screen reads the order.)
 export function exerciseTables(t) {
   const types = sessionTypes.map((s) => ({ id: s.id, label: s.label, dayTypes: s.weights ? [...DAY_TYPES] : [] }));
+  for (const o of OUTDOOR_TYPES) types.push({ id: o.id, label: o.label, dayTypes: [] });
   const typeIds = new Set(types.map((x) => x.id));
   const addType = (id) => {
     if (typeof id !== "string" || typeIds.has(id)) return;
@@ -349,6 +355,7 @@ export function exerciseTables(t) {
   for (const r of t.logged_set) if (r.manual) note(r.exerciseId, null);
   for (const r of t.logged_set) if (!r.manual) note(r.exerciseId, null);
   for (const r of t.workout_type) addType(r.exerciseTypeId);
+  for (const r of t.workout_exercise) note(r.exerciseId, null);
   const exercise = [];
   for (const [id, firstItem] of used) {
     const known = KNOWN.get(id);

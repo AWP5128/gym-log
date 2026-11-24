@@ -3,6 +3,9 @@ import test from "node:test";
 import assert from "node:assert/strict";
 import { readFileSync, readdirSync } from "node:fs";
 import { PGlite } from "@electric-sql/pglite";
+import { migrateToV4 } from "./schema4.js";
+import { emptyStore } from "./store.js";
+import { TYPES } from "./gym.js";
 
 const U = { alice: "00000000-0000-0000-0000-00000000000a", bob: "00000000-0000-0000-0000-00000000000b",
   cara: "00000000-0000-0000-0000-00000000000c", dan: "00000000-0000-0000-0000-00000000000d" };
@@ -28,8 +31,8 @@ async function freshDb() {
   const db = await (await template).clone();
   opened.push(db);
   await db.exec(`
-    insert into equipment_type values ('stack','Stack machine'),('dumbbell','Dumbbells');
-    insert into exercise_type values ('legs','Legs','{heavy,volume}'),('arms','Arms','{heavy,volume}');
+    insert into equipment_type values ('stack','Stack machine'),('dumbbell','Dumbbells') on conflict do nothing;
+    insert into exercise_type values ('legs','Legs','{heavy,volume}'),('arms','Arms','{heavy,volume}') on conflict do nothing;
     insert into exercise (id,name,exercise_type_id,also_under) values ('leg-press','Leg Press','legs','{}'),('pull-up','Pull-ups','arms','{legs}');
     insert into person (id,name,auth_user_id) values ('alice','Alice','${U.alice}'),('bob','Bob','${U.bob}'),('cara','Cara','${U.cara}'),('dan','Dan','${U.dan}');
     insert into gym (id,name) values ('main','Main'),('other','Other');
@@ -56,10 +59,19 @@ test("equipment must use a known equipment type, exercise type and exercise", as
 
 test("everyone signed in reads the type lists and exercises; anon cannot", async () => {
   const db = await freshDb();
-  assert.equal((await rows(db, "dan", "select * from equipment_type")).length, 2);
-  assert.equal((await rows(db, "dan", "select * from exercise_type")).length, 2);
+  assert.equal((await rows(db, "dan", "select * from equipment_type")).length, 6);
+  assert.equal((await rows(db, "dan", "select * from exercise_type")).length, 6);
   assert.equal((await rows(db, "dan", "select * from exercise")).length, 2);
   await assert.rejects(as(db, "anon", "select * from exercise"), /permission denied/);
+});
+
+test("the lists the migration seeds are exactly the lists in the app (so a first sync never meets an unknown type)", async () => {
+  const db = await freshDb();
+  const got = (t, cols) => rows(db, "dan", `select ${cols} from ${t} order by id`);
+  assert.deepEqual(await got("equipment_type", "id, label"), [...TYPES].map((x) => ({ id: x.id, label: x.label })).sort((a, b) => (a.id < b.id ? -1 : 1)));
+  const want = migrateToV4({ store: emptyStore() }).v4.tables.exercise_type.map((x) => ({ id: x.id, label: x.label, day_types: x.dayTypes })).sort((a, b) => (a.id < b.id ? -1 : 1));
+  assert.deepEqual(await got("exercise_type", "id, label, day_types"), want);
+  assert.ok(want.some((x) => x.id === "golf") && want.some((x) => x.id === "walking"));
 });
 
 test("the type lists cannot be changed by users", async () => {

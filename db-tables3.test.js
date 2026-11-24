@@ -28,8 +28,8 @@ async function freshDb() {
   const db = await (await template).clone();
   opened.push(db);
   await db.exec(`
-    insert into equipment_type values ('stack','Stack machine');
-    insert into exercise_type values ('legs','Legs','{heavy,volume}'),('cardio','Cardio','{}');
+    insert into equipment_type values ('stack','Stack machine') on conflict do nothing;
+    insert into exercise_type values ('legs','Legs','{heavy,volume}'),('cardio','Cardio','{}') on conflict do nothing;
     insert into exercise (id,name,exercise_type_id) values ('leg-press','Leg Press','legs'),('run','Run','cardio');
     insert into person (id,name,auth_user_id) values ('alice','Alice','${U.alice}'),('bob','Bob','${U.bob}'),('cara','Cara','${U.cara}'),('dan','Dan','${U.dan}');
     insert into gym (id,name) values ('main','Main'),('other','Other');

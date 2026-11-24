@@ -1,6 +1,6 @@
 import test from "node:test";
 import assert from "node:assert/strict";
-import { SCHEMA_VERSION, TABLES, migrateToV4, fromV4 } from "./schema4.js";
+import { SCHEMA_VERSION, TABLES, migrateToV4, fromV4, exerciseTables, OUTDOOR_TYPES } from "./schema4.js";
 import { emptyStore, cleanStore, migrateLegacy, addGym, personalOf, defaultsOf } from "./store.js";
 import { updateItem, hideItem, hideWeightSet, addItem } from "./gym.js";
 import { makeSet, bestSet, personalBests } from "./log.js";
@@ -307,4 +307,15 @@ test("step26c: every person is the owner of every gym, also gyms with no saved s
   assert.deepEqual(rows, Object.keys(s.gyms).sort());
   assert.ok(r.v4.tables.gym_member.every((m) => m.role === "owner" && m.status === "active"));
   assert.equal(checkV4({ store: s, sets: [] }).ok, true);
+});
+
+test("golf and walking are session types with an exercise of the same name, even when only a workout uses them", () => {
+  assert.deepEqual(OUTDOOR_TYPES.map((x) => x.id), ["golf", "walking"]);
+  const r = migrateToV4({ store: emptyStore() }).v4.tables;
+  for (const id of ["golf", "walking"]) assert.equal(r.exercise_type.filter((x) => x.id === id).length, 1);
+  const t = { gym_equipment: [], exercise: [], personal_setup: [], logged_set: [], workout_type: [{ exerciseTypeId: "golf" }], workout_exercise: [{ exerciseId: "golf" }, { exerciseId: "walking" }] };
+  const out = exerciseTables(t);
+  assert.deepEqual(out.exercise.map((e) => [e.id, e.name, e.exerciseTypeId]), [["golf", "Golf", "golf"], ["walking", "Walking", "walking"]]);
+  assert.equal(out.exercise_type.filter((x) => x.id === "golf").length, 1);          // not added twice
+  assert.equal(out.exercise_type.find((x) => x.id === "walking").label, "Walking");
 });

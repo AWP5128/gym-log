@@ -122,8 +122,10 @@ export async function loadTables(client, v4, { replace = false } = {}) {
       if (rows[table].length === 0) continue;
       const cols = Object.keys(COLS[table]).map(snake).filter((c) => rows[table].some((r) => c in r));
       const list = cols.map(q).join(", ");
+      // the two lookup lists are seeded by a migration, so a row that is already there is left as it is
+      const again = table === "equipment_type" || table === "exercise_type" ? " on conflict (id) do nothing" : "";
       await client.query(
-        `insert into public.${q(table)} (${list}) select ${list} from jsonb_populate_recordset(null::public.${q(table)}, $1::jsonb)`,
+        `insert into public.${q(table)} (${list}) select ${list} from jsonb_populate_recordset(null::public.${q(table)}, $1::jsonb)${again}`,
         [JSON.stringify(rows[table])]
       );
     }

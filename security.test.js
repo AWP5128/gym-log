@@ -52,8 +52,8 @@ async function freshDb(t) {
     await as(db, "me", "select public.create_gym('main','Main gym')");
     await as(db, "fam", "select public.create_gym('famgym','Fam gym')");
     await db.exec(`
-      insert into equipment_type values ('stack','Stack');
-      insert into exercise_type values ('legs','Legs','{heavy,volume}'), ('arms','Arms','{heavy,volume}');
+      insert into equipment_type values ('stack','Stack') on conflict do nothing;
+      insert into exercise_type values ('legs','Legs','{heavy,volume}'), ('arms','Arms','{heavy,volume}') on conflict do nothing;
       insert into exercise (id, name, exercise_type_id) values ('leg-press','Leg press','legs'), ('curl','Curl','arms');
       insert into gym_equipment (gym_id, id, exercise_id, equipment_type_id, exercise_type_id, name) values
         ('main','leg-press','leg-press','stack','legs','Leg press'), ('famgym','curl','curl','stack','arms','Curl');
