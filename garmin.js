@@ -8,6 +8,7 @@
 // Only golf and walks, which have no logged workout, get workout rows, with the watch's times and distance.
 import { rowsOf, putRow, putRows } from "./db.js";
 import { exerciseTables, OUTDOOR_TYPES } from "./schema4.js";
+import { newGymId, cryptoRandom } from "./gym.js";
 
 export const NEAR_MS = 30 * 60 * 1000;          // typed in afterwards: the nearest window within half an hour is offered
 const SAME_MS = 60 * 60 * 1000;                 // two identical readings this close are one activity recorded twice
@@ -110,14 +111,6 @@ export function matchActivities(acts, db, personId) {
 }
 
 export const summarise = (proposals) => proposals.reduce((n, p) => ({ ...n, [p.status]: (n[p.status] ?? 0) + 1 }), {});
-
-const newGymId = (taken, random) => {
-  for (;;) {
-    const id = "g-" + Array.from({ length: 8 }, () => "0123456789abcdefghijklmnopqrstuvwxyz"[Math.floor(random() * 36)]).join("");
-    if (!taken.has(id)) return id;
-  }
-};
-const cryptoRandom = () => crypto.getRandomValues(new Uint32Array(1))[0] / 4294967296;
 
 // The garmin_activity row for an activity (the watch's own readings, as recorded) with the links it was given.
 export const garminRow = (personId, p) => {

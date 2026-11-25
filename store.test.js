@@ -230,23 +230,40 @@ test("gymList gives each gym's id and name", () => {
 test("addGym adds a blank gym with its own id and does not change the current gym", () => {
   const s = emptyStore();
   const r = addGym(s, "  Holiday Gym ");
-  assert.equal(r.id, "holiday-gym");
+  assert.match(r.id, /^g-[0-9a-z]{8}$/);
   assert.equal(r.copied, 0);
-  assert.equal(r.store.gyms["holiday-gym"].name, "Holiday Gym");
-  assert.deepEqual(r.store.gyms["holiday-gym"].equipment, {});
-  assert.equal(r.store.gyms["holiday-gym"].units.stack, "lb");
+  assert.equal(r.store.gyms[r.id].name, "Holiday Gym");
+  assert.deepEqual(r.store.gyms[r.id].equipment, {});
+  assert.equal(r.store.gyms[r.id].units.stack, "lb");
   assert.equal(r.store.currentGym, "main");
   assert.equal(Object.keys(s.gyms).length, 1);
-  assert.equal(addGym(r.store, "Holiday Gym").id, "holiday-gym-2");
+  const again = addGym(r.store, "Holiday Gym");   // the same name is fine: the id is what differs
+  assert.notEqual(again.id, r.id);
+  assert.equal(Object.keys(again.store.gyms).length, 3);
   const blank = addGym(s, "   ");
   assert.equal(blank.id, null);
   assert.equal(blank.store, s);
 });
 
+test("addGym gives a new gym a random id, keeps the ids already there, and takes the random source it is given", () => {
+  const s = emptyStore();
+  const seeded = (seed) => () => (seed = (seed * 16807) % 2147483647) / 2147483647;
+  const a = addGym(s, "Home", { random: seeded(3) });
+  const b = addGym(s, "Home", { random: seeded(3) });
+  assert.equal(a.id, b.id);                       // the same source gives the same id
+  assert.match(a.id, /^g-[0-9a-z]{8}$/);
+  assert.equal(a.id.includes("home"), false);     // the name is not in the id
+  assert.deepEqual(Object.keys(a.store.gyms), ["main", a.id]);   // "main" is kept as it was
+  assert.equal(a.store.gyms.main, s.gyms.main);
+  const clash = addGym(a.store, "Other", { random: seeded(3) }); // the source would give a.id again: a free id is made instead
+  assert.notEqual(clash.id, a.id);
+  assert.equal(Object.keys(clash.store.gyms).length, 3);
+});
+
 test("addGym can copy chosen equipment from another gym, with stacks, and nothing personal", () => {
   const s = migrateLegacy(legacy);
   const r = addGym(s, "Home", { from: "main", ids: ["leg-press", "deadlift", "not-there"] });
-  const home = r.store.gyms.home;
+  const home = r.store.gyms[r.id];
   assert.equal(r.copied, 2);
   assert.deepEqual(Object.keys(home.equipment).sort(), ["deadlift", "leg-press"]);
   assert.deepEqual(home.equipment["leg-press"].pins, [10, 20, 35]);
@@ -254,20 +271,21 @@ test("addGym can copy chosen equipment from another gym, with stacks, and nothin
   home.equipment["leg-press"].pins.push(99);
   assert.deepEqual(s.gyms.main.equipment["leg-press"].pins, [10, 20, 35]);
   assert.equal(r.store.people, s.people);
-  assert.equal(JSON.stringify(r.store.gyms.home).includes("Seat 4"), false);
+  assert.equal(JSON.stringify(r.store.gyms[r.id]).includes("Seat 4"), false);
   const none = addGym(s, "Elsewhere", { from: "missing", ids: ["leg-press"] });
-  assert.deepEqual(none.store.gyms.elsewhere.equipment, {});
+  assert.deepEqual(none.store.gyms[none.id].equipment, {});
   assert.equal(none.copied, 0);
 });
 
 test("a copied gym gives the screens the copied stacks but none of your settings", () => {
-  const s = addGym(migrateLegacy(legacy), "Home", { from: "main", ids: ["leg-press"] }).store;
-  assert.deepEqual(s.gyms.home.equipment["leg-press"].pins, [10, 20, 35]);
-  const mine = personalOf(s, "awp", "home", "leg-press");
+  const r = addGym(migrateLegacy(legacy), "Home", { from: "main", ids: ["leg-press"] });
+  const s = r.store, home = r.id;
+  assert.deepEqual(s.gyms[home].equipment["leg-press"].pins, [10, 20, 35]);
+  const mine = personalOf(s, "awp", home, "leg-press");
   assert.equal(mine.notes, "");
   assert.equal(mine.heavy.working.weight, null);
-  const saved = setPersonal(s, "awp", "home", "leg-press", { notes: "Seat 9" });
-  assert.equal(saved.people.awp.gyms.home.machines["leg-press"].notes, "Seat 9");
+  const saved = setPersonal(s, "awp", home, "leg-press", { notes: "Seat 9" });
+  assert.equal(saved.people.awp.gyms[home].machines["leg-press"].notes, "Seat 9");
   assert.equal(saved.people.awp.gyms.main.machines["leg-press"].notes, "Seat 4");
   assert.deepEqual(saved.gyms.main, s.gyms.main);
 });
@@ -283,13 +301,14 @@ test("renameGym changes the name only, and ignores a blank name or an unknown gy
 });
 
 test("setDefaultGym, setCurrentGym and useDefaultGym only accept gyms that exist", () => {
-  const s = addGym(emptyStore(), "Home").store;
-  assert.equal(setDefaultGym(s, "home").defaultGym, "home");
+  const r = addGym(emptyStore(), "Home");
+  const s = r.store, home = r.id;
+  assert.equal(setDefaultGym(s, home).defaultGym, home);
   assert.equal(setDefaultGym(s, "nope"), s);
-  assert.equal(setCurrentGym(s, "home").currentGym, "home");
+  assert.equal(setCurrentGym(s, home).currentGym, home);
   assert.equal(setCurrentGym(s, "nope"), s);
-  const away = { ...setDefaultGym(s, "home"), currentGym: "main" };
-  assert.equal(useDefaultGym(away).currentGym, "home");
+  const away = { ...setDefaultGym(s, home), currentGym: "main" };
+  assert.equal(useDefaultGym(away).currentGym, home);
   assert.equal(useDefaultGym(s).currentGym, "main");
 });
 

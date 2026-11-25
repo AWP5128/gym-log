@@ -124,6 +124,17 @@ export function uniqueId(name, taken, fallback = "item") {
   return id;
 }
 
+// A new gym's id: "g-" and 8 random letters/digits, never one of the taken ids. No person or name is in it (the name is separate).
+// `random` gives a number from 0 up to (not including) 1; tests pass a seeded one.
+export const cryptoRandom = () => crypto.getRandomValues(new Uint32Array(1))[0] / 4294967296;
+export function newGymId(taken, random = cryptoRandom) {
+  const used = new Set(taken);
+  for (;;) {
+    const id = "g-" + Array.from({ length: 8 }, () => "0123456789abcdefghijklmnopqrstuvwxyz"[Math.floor(random() * 36)]).join("");
+    if (!used.has(id)) return id;
+  }
+}
+
 // ---------- Gyms ----------
 export const newGym = (name, units = {}, equipment = {}) => ({
   name: String(name ?? "").trim() || "My gym",

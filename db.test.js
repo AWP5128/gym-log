@@ -13,6 +13,9 @@ import { setPairs } from "./superset.js";
 import { addItem, updateItem, hideItem, restoreItem, hideWeightSet, restoreWeightSet, updateWeightSet, setWeightSetUnit, setDefaultUnit, setListDefault, copyEquipment } from "./gym.js";
 import { makeCardioSet } from "./cardio.js";
 
+// A small seeded random source, so two calls can be given the same "random" gym id
+const seeded = () => { let x = 12345; return () => (x = (x * 16807) % 2147483647) / 2147483647; };
+
 // A saved version 4 object with two gyms, personal settings, never/rare marks, strength sets, a cardio entry and a typed-in best.
 function saved() {
   let s = emptyStore();
@@ -234,13 +237,13 @@ test("renaming a gym gives what the old rename gives once saved: trimmed, blank 
 });
 
 test("a new gym belongs to every person, each listed with that person's other gyms", () => {
-  const { v4 } = saved();
+  const { v4, hotel } = saved();
   const db = putGym(openDb(v4), "garage", blankGym("Garage"));
   const rows = rowsOf(db, "gym_member");
-  assert.deepEqual(rows.map((r) => r.personId + ":" + r.gymId), ["awp:main", "awp:hotel", "awp:garage", "sam:main", "sam:hotel", "sam:garage"]);
+  assert.deepEqual(rows.map((r) => r.personId + ":" + r.gymId), ["awp:main", "awp:" + hotel, "awp:garage", "sam:main", "sam:" + hotel, "sam:garage"]);
   assert.deepEqual(rowsOf(db, "gym_equipment", { gymId: "garage" }).map((r) => r.id), ["set:dumbbells", "set:barbell"]);
   assert.equal(readStore(db).gyms.garage.name, "Garage");
-  assert.deepEqual(Object.keys(readStore(db).people.sam.gyms).sort(), ["garage", "hotel", "main"]);
+  assert.deepEqual(Object.keys(readStore(db).people.sam.gyms).sort(), ["garage", hotel, "main"].sort());
 });
 
 // ---------- A gym's equipment: the same rows the old way saves ----------
@@ -353,14 +356,14 @@ test("customOfDb gives the added exercises in the order they were added, as the 
 });
 
 test("putGym adds a whole new gym with copied equipment as the old add does", () => {
-  const { store, sets, v4 } = saved();
+  const { store, sets, v4, hotel } = saved();
   const db0 = openDb(v4);
   const s0 = readStore(db0);
   const old = addGymOld(s0, "Garage", { from: "main", ids: Object.keys(s0.gyms.main.equipment).slice(0, 9) });
   const next = putGym(db0, old.id, old.store.gyms[old.id]);
   assert.deepEqual(next, openDb(toStoreV4(old.store, sets)));
   assert.equal(old.copied, 9);
-  assert.deepEqual(rowsOf(next, "gym_member").map((r) => r.gymId).filter((g, i, a) => a.indexOf(g) === i), ["main", "hotel", "garage"]);
+  assert.deepEqual(rowsOf(next, "gym_member").map((r) => r.gymId).filter((g, i, a) => a.indexOf(g) === i), ["main", hotel, old.id]);
   assert.ok(store);
 });
 
@@ -526,7 +529,7 @@ test("gymsViewOf lets the machines-file and add-gym functions give what they giv
   assert.equal(importMachines(view, "main", "not json").error, importMachines(st, "main", "not json").error);
   const ids = Object.keys(st.gyms.main.equipment).slice(0, 5);
   for (const arg of [{}, { from: "main", ids }, { from: hotel, ids }, { from: "nowhere", ids }]) {
-    const a = addGym(view, "Main", arg), b = addGym(st, "Main", arg);
+    const a = addGym(view, "Main", { ...arg, random: seeded() }), b = addGym(st, "Main", { ...arg, random: seeded() });
     assert.equal(a.id, b.id);
     assert.equal(a.copied, b.copied);
     assert.deepEqual(a.store.gyms[a.id], b.store.gyms[b.id]);

@@ -19,7 +19,7 @@
 import { exercises } from "./exercises.js";
 import { addCustomExercise, removeCustomExercise } from "./settings.js";
 import {
-  newGym, makeItem, starterEquipment, withMachineData, updateItem, copyEquipment, uniqueId, DEFAULT_UNITS,
+  newGym, makeItem, starterEquipment, withMachineData, updateItem, copyEquipment, newGymId, DEFAULT_UNITS,
   ensureWeightSets, seedStarterFree, STARTER_FREE, seedStarterAbs, STARTER_ABS, seedStarterCardio, STARTER_CARDIO, movePullUps,
 } from "./gym.js";
 
@@ -149,10 +149,10 @@ export const gymList = (store) => Object.entries(store.gyms || {}).map(([id, g])
 // Returns { store, id, copied }; id is null when the name is blank.
 export const blankGym = (name) => ({ ...newGym(name), starterFree: true, starterAbs: true, starterCardio: true, pullUpsMoved: true });   // a new gym never gets the starter exercises
 
-export function addGym(store, name, { from, ids = [] } = {}) {
+export function addGym(store, name, { from, ids = [], random } = {}) {
   const clean = String(name ?? "").trim();
   if (!clean) return { store, id: null, copied: 0 };
-  const id = uniqueId(clean, Object.keys(store.gyms || {}), "gym");
+  const id = newGymId(Object.keys(store.gyms || {}), random);
   let gym = blankGym(clean);
   let copied = 0;
   if (from && store.gyms?.[from]) ({ gym, copied } = copyEquipment(store.gyms[from], ids, gym));

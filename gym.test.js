@@ -1,7 +1,7 @@
 import test from "node:test";
 import assert from "node:assert/strict";
 import {
-  DEFAULT_UNITS, extraList, mainStep, stepChoices, makeItem, uniqueId, newGym, starterEquipment, withMachineData,
+  DEFAULT_UNITS, extraList, mainStep, stepChoices, makeItem, uniqueId, newGymId, newGym, starterEquipment, withMachineData,
   addItem, updateItem, setDefaultUnit, copyEquipment, toExercise, exerciseList, convert,
   checkName, isHidden, hideItem, restoreItem, visibleEntries, hiddenEntries, dumbbellBands,
 } from "./gym.js";
@@ -256,4 +256,24 @@ test("a hidden item stays hidden, with its stack, when a personal setting is sav
   assert.deepEqual(after.equipment["leg-press"].pins, [10, 20, 30]);
   assert.equal(exerciseList(after).some((e) => e.id === "leg-press"), false);
   assert.equal(exerciseList(after).some((e) => e.id === "deadlift"), true);
+});
+// ---------- Random gym ids (patch 81) ----------
+const seededRandom = (seed) => () => (seed = (seed * 16807) % 2147483647) / 2147483647;
+
+test("newGymId gives g- and 8 lower-case letters or digits, and no name or person is in it", () => {
+  for (let i = 0; i < 200; i++) assert.match(newGymId([]), /^g-[0-9a-z]{8}$/);
+  assert.notEqual(newGymId([]), newGymId([]));   // real randomness: two calls differ (a clash is 1 in 2.8 trillion)
+});
+
+test("newGymId is repeatable with a seeded source and never returns a taken id", () => {
+  assert.equal(newGymId([], seededRandom(7)), newGymId([], seededRandom(7)));
+  const first = newGymId([], seededRandom(7));
+  const next = newGymId([first], seededRandom(7));   // the same source would give `first` again: it is skipped
+  assert.notEqual(next, first);
+  assert.match(next, /^g-[0-9a-z]{8}$/);
+  assert.equal(newGymId(new Set([first]), seededRandom(7)), next);   // a Set works as well as a list
+  // a source that gives the same number (0 then 0.5) keeps trying until the id is free
+  const calls = [];
+  const rnd = () => { calls.push(1); return calls.length <= 8 ? 0 : 0.5; };
+  assert.equal(newGymId(["g-00000000"], rnd), "g-iiiiiiii");
 });
