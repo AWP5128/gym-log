@@ -1,9 +1,12 @@
-// Step 29d: the app's data and the sync engine together: two phones with real stores settle on the same data.
+// Step 29d, changed in step 82: the app's data and the sync engine together: two phones with real saved tables settle on the same data.
+// A phone is { db, sets, state }: db is the saved v4 object (every table), sets the list the screens keep.
 import test from "node:test";
 import assert from "node:assert/strict";
 import { runSync } from "./syncglue.js";
 import { emptySync, syncRow, rowKey, hashRow, SYNC_TABLES } from "./sync.js";
-import { toStoreV4 } from "./schema4.js";
+import { toStoreV4, readSets } from "./schema4.js";
+import { openDb, putSets, putPerson, personOf, rowsOf, rowOf } from "./db.js";
+import { matchActivities, importActivities } from "./garmin.js";
 import { emptyStore, migrateLegacy, cleanStore } from "./store.js";
 import { makeSet, removeLastSet } from "./log.js";
 import { SYNC } from "./config.js";
@@ -35,11 +38,13 @@ function fakeServer() {
 }
 const set = (id, iso) => makeSet({ exerciseId: id, weight: 100, reps: 5, mode: "heavy", gymId: "main", unit: "lb", now: new Date(iso) });
 const store0 = () => cleanStore(migrateLegacy({ exercises: { "leg-press": { name: "Leg Press", pins: [10, 20], notes: "Seat 4" } } }));
-const phone = (store, sets = []) => ({ store, sets, state: emptySync() });
+const phone = (store, sets = []) => { const db = openDb(toStoreV4(store, sets)); return { db, sets: readSets(db), state: emptySync() }; };
+const logSet = (p, ...more) => { p.sets = [...p.sets, ...more]; p.db = putSets(p.db, p.sets); };
 async function round(p, server) {
   server.remote.down = server.down;
-  const r = await runSync({ store: p.store, sets: p.sets, state: p.state, remote: server.remote });
-  p.store = r.store; p.sets = r.sets; p.state = r.state;
+  const r = await runSync({ db: p.db, state: p.state, remote: server.remote });
+  p.db = r.db; p.state = r.state;
+  if (r.sets) p.sets = r.sets;
   return r.report;
 }
 // keep going until a full pass over both phones sends and receives nothing
@@ -51,9 +56,8 @@ async function settle(a, b, server, max = 8) {
   return Infinity;
 }
 const fingerprint = (p) => {
-  const t = toStoreV4(p.store, p.sets).tables;
   const m = {};
-  for (const table of SYNC_TABLES) for (const r of t[table]) { const x = syncRow(table, r); m[rowKey(table, x)] = hashRow(x); }
+  for (const table of SYNC_TABLES) for (const r of p.db.tables[table]) { const x = syncRow(table, r); m[rowKey(table, x)] = hashRow(x); }
   return m;
 };
 
@@ -88,10 +92,11 @@ test("a set logged on one phone arrives on the other, and an undo follows it", a
   const a = phone(store0(), [set("leg-press", "2026-11-01T10:00:00Z")]);
   const b = phone(store0());
   await settle(a, b, server);
-  a.sets = [...a.sets, set("leg-press", "2026-11-05T10:00:00Z")];
+  logSet(a, set("leg-press", "2026-11-05T10:00:00Z"));
   await settle(a, b, server);
   assert.equal(b.sets.length, 2);
   a.sets = removeLastSet(a.sets, "leg-press", "main");
+  a.db = putSets(a.db, a.sets);
   await settle(a, b, server);
   assert.equal(a.sets.length, 1);
   assert.equal(b.sets.length, 1);
@@ -101,19 +106,21 @@ test("a setup change on one phone reaches the other", async () => {
   const server = fakeServer();
   const a = phone(store0()); const b = phone(store0());
   await settle(a, b, server);
-  a.store.people.awp.gyms.main.machines["leg-press"] = { ...a.store.people.awp.gyms.main.machines["leg-press"], notes: "Seat 9" };
+  const mine = personOf(a.db, "awp");
+  mine.gyms.main.machines["leg-press"] = { ...mine.gyms.main.machines["leg-press"], notes: "Seat 9" };
+  a.db = putPerson(a.db, "awp", mine);
   await settle(a, b, server);
-  assert.equal(b.store.people.awp.gyms.main.machines["leg-press"].notes, "Seat 9");
+  assert.equal(personOf(b.db, "awp").gyms.main.machines["leg-press"].notes, "Seat 9");
 });
 
 test("with no signal nothing changes and nothing is lost", async () => {
   const server = fakeServer();
   const a = phone(store0(), [set("leg-press", "2026-11-01T10:00:00Z")]);
   server.down = true;
-  const store = a.store; const sets = a.sets;
+  const db = a.db; const sets = a.sets;
   const r = await round(a, server);
   assert.equal(r.offline, true);
-  assert.equal(a.store, store);
+  assert.equal(a.db, db);
   assert.equal(a.sets, sets);
   assert.ok(Object.keys(a.state.queue).length > 50);
   server.down = false;
@@ -124,8 +131,48 @@ test("with no signal nothing changes and nothing is lost", async () => {
 
 test("data that cannot be converted is left alone and the old state is kept", async () => {
   const state = emptySync();
-  const r = await runSync({ store: "junk", sets: [], state, remote: fakeServer().remote });
+  const r = await runSync({ db: "junk", state, remote: fakeServer().remote });
   assert.equal(r.changed, false);
   assert.equal(r.state, state);
   assert.match(r.report.error, /could not be converted/);
+});
+
+// Step 82: the nested store cannot hold these, so the old way of syncing (rebuilding the tables from the store) would have lost them.
+test("garmin_activity rows, the Outdoors gym and the golf and walk workouts survive a sync round that pulls", async () => {
+  const server = fakeServer();
+  const a = phone(store0(), [set("leg-press", "2026-11-01T10:00:00Z")]);
+  const b = phone(store0());
+  const acts = [
+    { id: "g1", type: "golf", start: "2026-11-10T09:00:00Z", durationS: 14400, distanceM: 6000, avgHr: 100, zones: [100, 200, 300, 400, 500] },
+    { id: "w1", type: "walking", start: "2026-11-12T08:00:00Z", durationS: 3600, distanceM: 4000 },
+  ];
+  const pid = b.db.currentPerson;
+  b.db = importActivities(b.db, pid, matchActivities(acts, b.db, pid));
+  const mine = { garmin: rowsOf(b.db, "garmin_activity").length, outdoors: rowsOf(b.db, "gym").filter((g) => g.outdoors).length, workouts: rowsOf(b.db, "workout").length };
+  assert.deepEqual(mine, { garmin: 2, outdoors: 1, workouts: 2 });
+  await settle(a, b, server);                    // b sends them; a pulls them; b also pulls a's set
+  for (const p of [a, b]) {
+    assert.equal(rowsOf(p.db, "garmin_activity").length, 2);
+    assert.equal(rowsOf(p.db, "gym").filter((g) => g.outdoors).length, 1);
+    assert.equal(rowsOf(p.db, "workout").filter((w) => w.date === "2026-11-10" || w.date === "2026-11-12").length, 2);
+    assert.equal(rowOf(p.db, "garmin_activity", { id: pid + ":garmin:g1" }).zone3S, 300);
+  }
+  assert.equal(b.sets.length, 1);                // b really pulled something, so its db was merged
+  assert.deepEqual(fingerprint(a), fingerprint(b));
+});
+
+test("a round that pulls keeps every table of the db, and one that pulls nothing hands back the same db", async () => {
+  const server = fakeServer();
+  const a = phone(store0(), [set("leg-press", "2026-11-01T10:00:00Z")]);
+  const before = a.db;
+  const r = await runSync({ db: a.db, state: a.state, remote: server.remote });
+  assert.equal(r.changed, false);
+  assert.equal(r.db, before);
+  assert.equal(r.sets, null);
+  const b = phone(emptyStore());
+  const rb = await runSync({ db: b.db, state: b.state, remote: server.remote });
+  assert.equal(rb.changed, true);
+  assert.deepEqual(Object.keys(rb.db.tables), Object.keys(b.db.tables));
+  assert.equal(rb.db.setsInTables, true);
+  assert.equal(rb.sets.length, 1);
 });

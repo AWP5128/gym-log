@@ -1695,14 +1695,11 @@ async function syncNow() {
   syncing = true;
   const started = dataVersion;
   try {
-    const r = await runSync({ store: wholeStore(), sets, state: syncState, remote: makeRemote({ url: SYNC.url, key: SYNC.key, getToken }) });
+    const r = await runSync({ db, state: syncState, remote: makeRemote({ url: SYNC.url, key: SYNC.key, getToken }) });
     if (started !== dataVersion) { scheduleSync(1000); return; }   // something was saved meanwhile: try again
     syncState = r.state;
     save(KEY.sync, syncState);
-    if (r.changed) {
-      const v4 = toStoreV4(r.store, r.sets);
-      if (v4) { adopt(v4); render(); }   // what came from the other devices is saved as tables (no new sync is planned for it)
-    }
+    if (r.changed) { adopt(r.db); sets = r.sets; render(); }   // what came from the other devices is saved as tables (no new sync is planned for it)
     console.info("Sync:", r.report);
   } catch (e) {
     console.warn("Sync stopped:", e.message);
