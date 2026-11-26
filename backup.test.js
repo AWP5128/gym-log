@@ -93,3 +93,30 @@ test("dataSummary counts machines and stacks, and copes with no store", () => {
   assert.deepEqual(dataSummary(s, []), { sets: 0, days: 0, machines: 2, stacks: 1 });
   assert.deepEqual(dataSummary(null, []), { sets: 0, days: 0, machines: 0, stacks: 0 });
 });
+
+// Step 83: a backup holds the saved tables as they are. Garmin rows, the Outdoors place and the golf and walk workouts cannot be
+// written from the nested store and sets, so a backup made that way lost them (and a restore wiped them from the phone).
+test("a backup of the saved tables keeps Garmin rows and the golf and walk workouts, and a restore gives them back", async () => {
+  const { openDb, rowsOf } = await import("./db.js");
+  const { toStoreV4 } = await import("./schema4.js");
+  const { matchActivities, importActivities } = await import("./garmin.js");
+  let db = openDb(toStoreV4(emptyStore(), [{ ...setAt("leg-press", when(2026, 10, 20)), gymId: "main", unit: "lb", mode: "heavy" }]));
+  const acts = [
+    { id: "g1", type: "golf", start: "2026-11-10T09:00:00.000Z", durationS: 14400, distanceM: 6000, avgHr: 90, zones: [1, 2, 3, 4, 5] },
+    { id: "e1", type: "elliptical", start: "2026-11-11T09:00:00.000Z", durationS: 1200, distanceM: 2500 },
+  ];
+  db = importActivities(db, db.currentPerson, matchActivities(acts, db, db.currentPerson));
+  const counts = (d) => ({ garmin: rowsOf(d, "garmin_activity").length, workouts: rowsOf(d, "workout").length, outdoors: rowsOf(d, "gym").filter((g) => g.outdoors).length });
+  assert.deepEqual(counts(db), { garmin: 2, workouts: 2, outdoors: 1 });
+  const file = JSON.stringify(makeBackup({ db }, when(2026, 10, 26)));
+  const r = parseBackup(file);
+  assert.equal(r.error, "");
+  assert.deepEqual(r.backup.db, db);                      // restoring this gives back every table exactly
+  assert.deepEqual(counts(openDb(r.backup.db)), { garmin: 2, workouts: 2, outdoors: 1 });
+  assert.equal(r.backup.sets.length, 1);                  // the screens' list of sets is still read
+  assert.equal(r.backup.store.gyms.main.name, db.tables.gym.find((g) => g.id === "main").name);
+  // the old way (nested store and sets) cannot carry them: this is why the app now passes the tables
+  const old = parseBackup(JSON.stringify(makeBackup({ store: r.backup.store, sets: r.backup.sets })));
+  assert.deepEqual(counts(openDb(old.backup.db)), { garmin: 0, workouts: 1, outdoors: 0 });
+  assert.equal(parseBackup(JSON.stringify({ type: BACKUP_TYPE, version: BACKUP_VERSION, store: { junk: 1 } })).error !== "", true);
+});

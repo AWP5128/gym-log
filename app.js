@@ -1514,10 +1514,10 @@ async function importFile(ev) {
       "\n\nThis replaces what is on this phone."
     )) backupMsg = "Restore cancelled.";
     else {
-      const v4 = toStoreV4(r.backup.store, r.backup.sets);
+      const v4 = r.backup.db;   // the saved tables as they were, with Garmin rows and the golf and walk workouts
       if (!v4) backupMsg = "That backup could not be restored. Nothing was changed.";
       else {
-        save(KEY.beforeRestore, { at: new Date().toISOString(), store: wholeStore(), sets });   // a safety copy, in case of a mistake
+        save(KEY.beforeRestore, { at: new Date().toISOString(), store: db });   // a safety copy of everything, in case of a mistake
         saveDb(v4);
         save(KEY.sync, emptySync());   // a restored copy is sent as new data; it never deletes anything online
         alert("Backup restored. The app will now reload.");
@@ -1604,7 +1604,7 @@ function renderBackup() {
 
   wire({
     back: goBack,
-    backupNow: () => shareFile("backup", JSON.stringify(makeBackup({ store: wholeStore(), sets }), null, 2),
+    backupNow: () => shareFile("backup", JSON.stringify(makeBackup({ db }), null, 2),
       "Backup sent. Check that you saved it somewhere safe.", "Backup downloaded.", true),
     shareMachines: () => shareFile("machines", exportMachines(gymsView(), curGym()), "Machines file sent.", "Machines file downloaded."),
     importBtn: () => $("importFile").click(),

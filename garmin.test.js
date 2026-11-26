@@ -1,7 +1,8 @@
 import test from "node:test";
 import assert from "node:assert/strict";
-import { openDb, rowsOf, gymsOf } from "./db.js";
+import { openDb, rowsOf, gymsOf, putSets } from "./db.js";
 import { TABLES } from "./schema4.js";
+import { makeSet } from "./log.js";
 import { dedupe, matchActivities, importActivities, summarise, garminRow, NEAR_MS } from "./garmin.js";
 
 // A small saved db: one person, one gym, and workouts shaped like real ones (times only, no real data).
@@ -171,4 +172,28 @@ test("the confirm list text: times are UK time, and the match is named", async (
     { title: "Fri 20 Nov 09:43 · Golf · 3h 59m · 10.8 km", detail: "A new golf workout" },
     { title: "Sat 14 Nov 20:00 · Yoga · 10m", detail: "kept on its own (yoga)" },
   ]);
+});
+
+// Step 83: saving a logged set rebuilds the workout rows from the sets; the golf and walk workouts made by an import have no sets and must stay.
+test("saving logged sets keeps the golf and walk workouts an import made, and their links", () => {
+  const base = db();
+  const acts = [
+    { id: "g1", type: "golf", start: at("10", "09:00"), durationS: 14400, distanceM: 6000, avgHr: 90, zones: [1, 2, 3, 4, 5] },
+    { id: "w1", type: "walking", start: at("12", "08:00"), durationS: 3600, distanceM: 4000 },
+  ];
+  let d = importActivities(base, "awp", matchActivities(acts, base, "awp").filter((p) => p.status === "create"));
+  const outdoors = rowsOf(d, "gym").find((g) => g.outdoors);
+  const mine = (x) => rowsOf(x, "workout").filter((w) => w.gymId === outdoors.id);
+  assert.equal(mine(d).length, 2);
+  const before = JSON.stringify({ w: mine(d), t: rowsOf(d, "workout_type").filter((r) => r.workoutId.includes(outdoors.id)), e: rowsOf(d, "workout_exercise").filter((r) => r.workoutTypeId.includes(outdoors.id)) });
+  const sets = [makeSet({ exerciseId: "leg-press", weight: 100, reps: 5, mode: "heavy", gymId: "main", unit: "lb", now: new Date("2026-11-20T10:00:00Z") })];
+  const saved = putSets(d, sets);
+  const after = JSON.stringify({ w: mine(saved), t: rowsOf(saved, "workout_type").filter((r) => r.workoutId.includes(outdoors.id)), e: rowsOf(saved, "workout_exercise").filter((r) => r.workoutTypeId.includes(outdoors.id)) });
+  assert.equal(after, before);                                           // the three outdoor rows of each activity are as they were
+  assert.equal(rowsOf(saved, "workout").length, 3);                      // plus the new gym workout
+  for (const g of rowsOf(saved, "garmin_activity")) assert.ok(rowsOf(saved, "workout").some((w) => w.id === g.workoutId), "link " + g.id);
+  const again = putSets(saved, []);                                      // undoing the last set leaves them too
+  assert.equal(mine(again).length, 2);
+  assert.equal(rowsOf(again, "workout").length, 2);
+  assert.ok(rowsOf(again, "exercise_type").some((t) => t.id === "golf") || rowsOf(again, "exercise").some((x) => x.id === "golf"));
 });

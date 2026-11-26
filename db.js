@@ -172,14 +172,21 @@ export function putPerson(db, id, person) {
 // Saves the list of sets the screens keep (the old flat list): the workout, workout_type, workout_exercise and logged_set rows
 // are worked out from the whole list again (they depend on it: a workout's start and end, a day's first mode, seq), the typed-in
 // bests are kept as they are, and the exercise and exercise_type tables are brought up to date. Every other table is untouched.
+// The golf and walk workouts a Garmin import made at the Outdoors place have no sets: they are kept as they are (with their parts).
 export function putSets(db, sets) {
   const made = setTables(db.currentPerson, sets, groupLookup(db.tables));
   const bests = rowsOf(db, "logged_set").filter((r) => r.manual === true);
+  const outdoors = new Set(rowsOf(db, "gym").filter((g) => g.outdoors).map((g) => g.id));
+  const keepW = rowsOf(db, "workout").filter((w) => outdoors.has(w.gymId));
+  const wIds = new Set(keepW.map((w) => w.id));
+  const keepT = rowsOf(db, "workout_type").filter((t) => wIds.has(t.workoutId));
+  const tIds = new Set(keepT.map((t) => t.id));
+  const keepE = rowsOf(db, "workout_exercise").filter((e) => tIds.has(e.workoutTypeId));
   const next = {
     ...db,
     tables: {
       ...db.tables,
-      workout: made.workout, workout_type: made.workout_type, workout_exercise: made.workout_exercise,
+      workout: [...keepW, ...made.workout], workout_type: [...keepT, ...made.workout_type], workout_exercise: [...keepE, ...made.workout_exercise],
       logged_set: [...bests, ...made.logged_set],
     },
   };

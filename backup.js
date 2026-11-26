@@ -11,9 +11,10 @@ const validSet = (s) =>
   !!s && typeof s === "object" && typeof s.exerciseId === "string" &&
   typeof s.time === "string" && !Number.isNaN(new Date(s.time).getTime());
 
-// Everything that is worth keeping: the store (gyms, equipment, settings) and the logged sets.
-export function makeBackup({ store, sets }, now = new Date()) {
-  const v4 = toStoreV4(store, sets);
+// Everything that is worth keeping. The app gives its saved tables (`db`) as they are, so Garmin rows and the golf and walk workouts
+// are in the file too; a nested store with its sets (the old way, kept for the tests) cannot hold them.
+export function makeBackup({ db, store, sets }, now = new Date()) {
+  const v4 = db ?? toStoreV4(store, sets);
   if (!v4) throw new Error("The backup could not be made.");
   return { type: BACKUP_TYPE, version: BACKUP_VERSION, createdAt: now.toISOString(), store: v4 };
 }
@@ -24,7 +25,7 @@ export function backupFileName(kind, now = new Date()) {
   return "gym-log-" + kind + "-" + now.getFullYear() + "-" + p(now.getMonth() + 1) + "-" + p(now.getDate()) + ".json";
 }
 
-// Reads a backup file. Returns { backup, dropped, error }; error is "" when it worked.
+// Reads a backup file. Returns { backup: { store, sets, db, createdAt }, dropped, error }; error is "" when it worked.
 // Damaged sets are left out and counted in dropped.
 export function parseBackup(text) {
   const fail = (error) => ({ backup: null, dropped: 0, error });
@@ -38,7 +39,7 @@ export function parseBackup(text) {
   const raw = readSets(data.store) ?? [];
   const sets = raw.filter(validSet);
   return {
-    backup: { store, sets, createdAt: typeof data.createdAt === "string" ? data.createdAt : null },
+    backup: { store, sets, db: data.store, createdAt: typeof data.createdAt === "string" ? data.createdAt : null },   // db: the tables as saved, to restore as they are
     dropped: raw.length - sets.length,
     error: "",
   };
