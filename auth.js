@@ -64,6 +64,12 @@ export function makeAuth({ client }) {
 
   const signOut = async () => { await client.auth.signOut(); };
 
+  // The signed-in person's access token for the sync (the library renews it when it has run out); null when signed out.
+  async function token() {
+    const { data, error } = await client.auth.getSession();
+    return error ? null : data?.session?.access_token ?? null;
+  }
+
   // Passkeys (step 30b-2, Supabase beta). Sign in with no typing: the phone offers its saved passkey (Face ID or PIN).
   async function signInPasskey() {
     if (typeof client.auth.signInWithPasskey !== "function") return { ok: false, error: "Passkeys are not available in this browser." };
@@ -100,7 +106,7 @@ export function makeAuth({ client }) {
     return { ok: true };
   }
 
-  return { status, signInFirst, signOut, signInPasskey, addPasskey, passkeyCount, retirePassword };
+  return { status, token, signInFirst, signOut, signInPasskey, addPasskey, passkeyCount, retirePassword };
 }
 
 // Loads the saved copy of the Supabase library (vendor/supabase.js) on first use and makes a client.

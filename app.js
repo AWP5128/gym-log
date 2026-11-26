@@ -32,7 +32,7 @@ import { toStoreV4, readStore, readSets } from "./schema4.js";
 import { openDb, useGym, setDefault, useDefault, gymsOf, gymNameOf, renameGym as renameGymDb, putGym, putPerson, putSets, gymOf, gymsViewOf, customOfDb, personOf } from "./db.js";
 import { SYNC } from "./config.js";
 import { emptySync } from "./sync.js";
-import { runSync } from "./syncglue.js";
+import { runSync, describeSync } from "./syncglue.js";
 import { makeRemote } from "./remote.js";
 import { makeAuth, loadClient } from "./auth.js";
 import { readFile } from "./garminfile.js";
@@ -1643,7 +1643,7 @@ function accountBox() {
       '<input id="acctEmail" type="email" autocomplete="username" inputmode="email" placeholder="Email address" value="' + esc(acct.email) + '">' +
       '<input id="acctPass" type="password" autocomplete="current-password" placeholder="One-time password">' +
       '<button class="primary" id="acctIn"' + (acct.busy ? " disabled" : "") + ">Sign in</button>";
-  return box("Account (online)", note + inner);
+  return box("Account (online)", note + inner + describeSync({ enabled: SYNC.enabled, info: lastSync }).map((l) => muted(esc(l), "small")).join(""));
 }
 function wireAccount() {
   if (!haveAccount()) return;
@@ -1683,8 +1683,11 @@ function wireAccount() {
 }
 
 // ---------- Sync (step 29d) ----------
-// Does nothing while SYNC.enabled is false. Needs a signed-in person's token; sign-in comes in step 30, so for now there is none.
-const getToken = async () => null;
+// Does nothing while SYNC.enabled is false. Needs a signed-in person's token (step 84: from the sign-in library; null when signed out,
+// which the sync treats as offline). lastSync is what the Account box shows about the last try.
+const getToken = async () => (await getAuth()).token();
+let lastSync = null;
+const noteSync = (report, error) => { lastSync = { at: Date.now(), report, error, waiting: Object.keys(syncState.queue ?? {}).length }; if (screen === "backup") render(); };
 function scheduleSync(delay = 3000) {
   if (!SYNC.enabled || !SYNC.url || !SYNC.key) return;
   clearTimeout(syncTimer);
@@ -1701,8 +1704,10 @@ async function syncNow() {
     save(KEY.sync, syncState);
     if (r.changed) { adopt(r.db); sets = r.sets; render(); }   // what came from the other devices is saved as tables (no new sync is planned for it)
     console.info("Sync:", r.report);
+    noteSync(r.report);
   } catch (e) {
     console.warn("Sync stopped:", e.message);
+    noteSync(null, e.message);
   } finally {
     syncing = false;
   }

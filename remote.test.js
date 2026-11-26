@@ -30,14 +30,14 @@ const up = (table, row) => ({ key: rowKey(table, row), table, op: "upsert", row 
 test("push sends consecutive rows of one table together, as the signed-in person", async () => {
   const { remote, calls } = make(() => json(201));
   const changes = [
-    up("gym", { id: "main", name: "Main", units: {} }), up("gym", { id: "hotel", name: "Hotel" }),
+    up("workout", { id: "a", personId: "awp", gymId: "main", date: "2026-11-02" }), up("workout", { id: "b", personId: "awp", gymId: "main", date: "2026-11-03" }),
     up("gym_member", { personId: "awp", gymId: "main", role: "owner", status: "active", offTypes: [] }),
   ];
   const r = await remote.push(changes);
   assert.deepEqual(r.done, changes.map((c) => c.key));
   assert.equal(calls.length, 2);
   assert.equal(calls[0].method, "POST");
-  assert.match(calls[0].url, /^https:\/\/x\.supabase\.co\/rest\/v1\/gym\?on_conflict=id&columns=id,name,units,/);
+  assert.match(calls[0].url, /^https:\/\/x\.supabase\.co\/rest\/v1\/workout\?on_conflict=id&columns=id,person_id,gym_id,date,/);
   assert.equal(calls[0].body.length, 2);
   assert.equal(calls[0].headers.apikey, "pub-key");
   assert.equal(calls[0].headers.Authorization, "Bearer user-token");
@@ -58,7 +58,7 @@ test("push deletes one row at a time, with the key in the address", async () => 
 
 test("a refused group is retried row by row so only the refused row is reported, without its data", async () => {
   const { remote, calls } = make((c) => (c.body.some((r) => r.id === "bad") ? json(403, { code: "42501", message: "new row violates row-level security policy" }) : json(201)));
-  const rows = ["a", "bad", "c"].map((id) => up("gym", { id, name: "secret " + id }));
+  const rows = ["a", "bad", "c"].map((id) => up("gym_equipment", { gymId: "main", id, name: "secret " + id }));
   const r = await remote.push(rows);
   assert.deepEqual(r.done, [rows[0].key, rows[2].key]);
   assert.equal(r.failed.length, 1);
@@ -152,4 +152,65 @@ test("toDbRow leaves out blanks, fills what the database needs and uses snake_ca
   assert.deepEqual(fromDbRow("logged_set", { id: "s", seq: "3", person_id: "awp", exercise_id: "x", gym_id: "main", time: "2026-11-02T10:00:00+00:00", weight: 5, manual: false, mode: null, updated_at: "z" }),
     { id: "s", seq: 3, personId: "awp", exerciseId: "x", gymId: "main", time: "2026-11-02T10:00:00.000Z", weight: 5 });
   assert.ok(LOAD_ORDER.length === 13);
+});
+
+// ---------- Step 84: person and gym rows are a PATCH, with create_gym for a gym that is not online yet ----------
+const gymRow = { id: "g-abc12345", name: "Hotel", units: { stack: "lb" }, starterFree: true };
+test("a gym that is online is saved with one PATCH by its id, all other columns sent (blank ones as null)", async () => {
+  const { remote, calls } = make(() => json(200, [{ id: "g-abc12345" }]));
+  const r = await remote.push([up("gym", gymRow)]);
+  assert.deepEqual(r.done, [rowKey("gym", gymRow)]);
+  assert.equal(calls.length, 1);
+  assert.equal(calls[0].method, "PATCH");
+  assert.ok(calls[0].url.endsWith("/rest/v1/gym?id=eq.g-abc12345"));
+  assert.equal(calls[0].headers.Prefer, "return=representation");
+  assert.deepEqual(calls[0].body, { name: "Hotel", units: { stack: "lb" }, list_default: null, starter_free: true, starter_abs: null, starter_cardio: null, pull_ups_moved: null, outdoors: null });
+  assert.equal(calls[0].headers.Authorization, "Bearer user-token");
+});
+
+test("a gym that is not online yet is made with create_gym, then PATCHed so every column is set", async () => {
+  let made = false;
+  const { remote, calls } = make((c) => {
+    if (c.url.endsWith("rpc/create_gym")) { made = true; return json(204); }
+    return json(200, made ? [{ id: "g-abc12345" }] : []);
+  });
+  const r = await remote.push([up("gym", gymRow)]);
+  assert.deepEqual(r.done, [rowKey("gym", gymRow)]);
+  assert.deepEqual(calls.map((c) => c.method + " " + c.url.split("/rest/v1/")[1].split("?")[0]), ["PATCH gym", "POST rpc/create_gym", "PATCH gym"]);
+  assert.deepEqual(calls[1].body, { g: "g-abc12345", n: "Hotel" });
+  assert.equal(calls[2].body.units.stack, "lb");
+});
+
+test("create_gym refused (a gym id that is someone else's) is reported by code and message only, and nothing else is sent for it", async () => {
+  const { remote, calls } = make((c) => (c.url.endsWith("rpc/create_gym") ? json(400, { code: "P0001", message: "That gym id is taken" }) : json(200, [])));
+  const r = await remote.push([up("gym", { ...gymRow, name: "secret hotel" }), up("gym_member", { personId: "awp", gymId: "main", role: "owner", status: "active", offTypes: [] })]);
+  assert.equal(r.failed.length, 1);
+  assert.equal(r.failed[0].key, rowKey("gym", gymRow));
+  assert.match(r.failed[0].error, /400 P0001 That gym id is taken/);
+  assert.ok(!r.failed[0].error.includes("secret"));
+  assert.equal(calls.filter((c) => c.method === "PATCH").length, 1);
+  assert.equal(r.done.length, 1);                                    // the rows after it still go
+});
+
+test("a person is saved with a PATCH by id; if no row answers it is reported, never created", async () => {
+  const person = { id: "awp", name: "Awp", defaults: { heavy: { reps: 5 } } };
+  const ok = make(() => json(200, [{ id: "awp" }]));
+  assert.deepEqual((await ok.remote.push([up("person", person)])).done, [rowKey("person", person)]);
+  assert.ok(ok.calls[0].url.endsWith("/rest/v1/person?id=eq.awp"));
+  assert.deepEqual(ok.calls[0].body, { name: "Awp", defaults: { heavy: { reps: 5 } }, superset: null });
+  const none = make(() => json(200, []));
+  const r = await none.remote.push([up("person", person)]);
+  assert.equal(none.calls.length, 1);
+  assert.equal(r.done.length, 0);
+  assert.match(r.failed[0].error, /not online/);
+});
+
+test("gym and person rows are never batched, and a refused PATCH is reported without its data", async () => {
+  const { remote, calls } = make((c) => (c.url.includes("id=eq.bad") ? json(403, { code: "42501", message: "denied" }) : json(200, [{}])));
+  const rows = ["a", "bad", "c"].map((id) => up("gym", { id, name: "secret " + id }));
+  const r = await remote.push(rows);
+  assert.equal(calls.length, 3);
+  assert.deepEqual(r.done, [rows[0].key, rows[2].key]);
+  assert.match(r.failed[0].error, /403 42501 denied/);
+  assert.ok(!r.failed[0].error.includes("secret"));
 });

@@ -158,3 +158,10 @@ test("the library client is made with the passkey option switched on", async () 
   assert.equal(seen.o.auth.experimental.passkey, true);
   assert.equal(seen.o.auth.persistSession, true);
 });
+
+test("token: the signed-in person's access token, and null when signed out or unreadable", async () => {
+  assert.equal(await pretend({ session: { access_token: "abc.def", user: { email: "a@b.co" } } }).auth.token(), "abc.def");
+  assert.equal(await pretend().auth.token(), null);
+  const broken = makeAuth({ client: { auth: { getSession: async () => ({ data: { session: { access_token: "x" } }, error: new Error("boom") }) } } });
+  assert.equal(await broken.token(), null);
+});

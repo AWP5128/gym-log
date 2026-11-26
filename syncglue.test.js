@@ -2,7 +2,7 @@
 // A phone is { db, sets, state }: db is the saved v4 object (every table), sets the list the screens keep.
 import test from "node:test";
 import assert from "node:assert/strict";
-import { runSync } from "./syncglue.js";
+import { runSync, describeSync } from "./syncglue.js";
 import { emptySync, syncRow, rowKey, hashRow, SYNC_TABLES } from "./sync.js";
 import { toStoreV4, readSets } from "./schema4.js";
 import { openDb, putSets, putPerson, personOf, rowsOf, rowOf } from "./db.js";
@@ -175,4 +175,34 @@ test("a round that pulls keeps every table of the db, and one that pulls nothing
   assert.deepEqual(Object.keys(rb.db.tables), Object.keys(b.db.tables));
   assert.equal(rb.db.setsInTables, true);
   assert.equal(rb.sets.length, 1);
+});
+
+// Step 84: the status line text
+const fmt = (ms) => "T" + ms;
+test("sync status: off, not yet tried, a good sync with rows waiting", () => {
+  assert.deepEqual(describeSync({ enabled: false, info: null }), ["Sync is off."]);
+  assert.deepEqual(describeSync({ enabled: true, info: null }), ["No sync yet."]);
+  const info = { at: 5, waiting: 2, report: { pushed: 40, pulled: 3, failed: [], offline: false } };
+  assert.deepEqual(describeSync({ enabled: true, info }, fmt), ["Last sync T5: sent 40, received 3.", "2 waiting to be sent."]);
+  assert.match(describeSync({ enabled: true, info: { at: Date.parse("2026-11-26T09:05:00Z"), waiting: 0, report: { pushed: 1, pulled: 0 } } })[0], /^Last sync 26 Nov.* sent 1, received 0\.$/);
+});
+
+test("sync status: a try that did not finish says why, and refused rows show table, code and message only, counted", () => {
+  assert.deepEqual(describeSync({ enabled: true, info: { at: 1, waiting: 9, report: { offline: true, error: "Not signed in", failed: [] } } }, fmt),
+    ["Last try T1 did not finish: Not signed in.", "9 waiting to be sent."]);
+  assert.deepEqual(describeSync({ enabled: true, info: { at: 1, error: "The sign-in library could not be loaded", waiting: 0 } }, fmt),
+    ["Last try T1 did not finish: The sign-in library could not be loaded."]);
+  const secret = { id: "g-secret1", name: "my private gym" };
+  const failed = [
+    { key: rowKey("gym", secret), error: "400 P0001 That gym id is taken" },
+    { key: rowKey("gym", { id: "g-secret2" }), error: "400 P0001 That gym id is taken" },
+    { key: rowKey("garmin_activity", { id: "awp:garmin:1" }), error: "403 42501 new row violates row-level security policy" },
+  ];
+  const lines = describeSync({ enabled: true, info: { at: 1, waiting: 3, report: { pushed: 7, pulled: 0, failed } } }, fmt);
+  assert.deepEqual(lines.slice(2), ["Refused: gym 400 P0001 That gym id is taken (2)", "Refused: garmin_activity 403 42501 new row violates row-level security policy"]);
+  assert.ok(!lines.join("").includes("secret") && !lines.join("").includes("private") && !lines.join("").includes("awp:garmin"));
+  const many = Array.from({ length: 8 }, (_, i) => ({ key: rowKey("gym", { id: "x" + i }), error: "400 E" + i }));
+  const cut = describeSync({ enabled: true, info: { at: 1, waiting: 0, report: { pushed: 0, failed: many } } }, fmt);
+  assert.equal(cut.length, 1 + 5 + 1);
+  assert.equal(cut.at(-1), "and 3 more kinds refused.");
 });

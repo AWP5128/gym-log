@@ -4,6 +4,7 @@
 // meant to be public; the person's token is what grants access. Never put the secret (service) key in the app.
 //   const remote = makeRemote({ url, key, getToken });   // getToken: async () => the signed-in person's token, or null
 //   remote.push(changes) -> { done, failed }     remote.pull(cursor) -> { rows, deletes, cursor }
+// (person and gym rows are sent as a PATCH, with create_gym for a gym that is not online yet: step 84.)
 // A network problem, a sign-in that has run out (401) or a server error (5xx) throws, so the sync engine treats the
 // round as offline and keeps everything queued. A refusal for one row (4xx, such as a rule saying no) is reported
 // for that row only.
@@ -37,17 +38,42 @@ export function makeRemote({ url, key, getToken, fetchFn = (...a) => fetch(...a)
     return `${res.status} ${code} ${message}`.trim();
   }
 
-  // consecutive changes to one table with the same operation go together; deletes go one at a time
+  // consecutive changes to one table with the same operation go together; deletes go one at a time.
+  // person and gym rows go one at a time as well: the row rules refuse an upsert for them (see sendOwn).
+  const OWN = new Set(["person", "gym"]);
   function groups(changes) {
     const out = [];
     for (const c of changes) {
       const last = out[out.length - 1];
-      if (c.op === "upsert" && last && last.op === "upsert" && last.table === c.table && last.items.length < BATCH) last.items.push(c);
+      if (c.op === "upsert" && !OWN.has(c.table) && last && last.op === "upsert" && last.table === c.table && last.items.length < BATCH) last.items.push(c);
       else out.push({ op: c.op, table: c.table, items: [c] });
     }
     return out;
   }
+  const refused = (message) => ({ ok: false, status: 400, json: async () => ({ message }) });
+  // Step 84: a person or gym row is a plain PATCH by primary key (an upsert is refused by the row rules: it needs the insert rule, which
+  // people and gyms no longer have). Every other column is sent too, blank ones as null, so a cleared value is cleared online as well.
+  // PATCH answers with the rows it changed. None means this gym is not online yet (or is not yours): create_gym makes it with you as its
+  // owner (a gym id that is someone else's is refused there), then the PATCH sets the other columns. A person always exists online.
+  async function sendOwn(table, row) {
+    const pk = pkCols(table)[0];
+    const db = toDbRow(table, row);
+    const body = Object.fromEntries(dbColumns(table).filter((c) => c !== pk).map((c) => [c, db[c] ?? null]));
+    const path = `${table}?${pk}=eq.${enc(db[pk])}`;
+    const patch = async () => {
+      const res = await call("PATCH", path, { body, headers: { Prefer: "return=representation" } });
+      return res.ok ? { res, found: (await res.json()).length > 0 } : { res };
+    };
+    let r = await patch();
+    if (!r.res.ok || r.found) return r.res;
+    if (table !== "gym") return refused("That person is not online");
+    const made = await call("POST", "rpc/create_gym", { body: { g: db.id, n: db.name } });
+    if (!made.ok) return made;
+    r = await patch();
+    return r.res.ok && !r.found ? refused("That gym could not be saved online") : r.res;
+  }
   async function send(g) {
+    if (g.op === "upsert" && OWN.has(g.table)) return sendOwn(g.table, g.items[0].row);
     if (g.op === "upsert") {
       const path = `${g.table}?on_conflict=${pkCols(g.table).join(",")}&columns=${dbColumns(g.table).join(",")}`;
       return call("POST", path, { body: g.items.map((c) => toDbRow(g.table, c.row)), headers: { Prefer: "resolution=merge-duplicates,return=minimal" } });
