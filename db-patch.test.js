@@ -79,3 +79,30 @@ test("why the PATCH is needed: the upsert the app used before is refused for a p
   await assert.rejects(as(db, "me", `insert into public.gym (id, name) values ('g-new11111', 'X') on conflict (id) do update set name = excluded.name`), /row-level security/);
   await assert.rejects(as(db, "me", `insert into public.person (id, name) values ('awp', 'Awp') on conflict (id) do update set name = excluded.name`), /row-level security|permission|violates/);
 });
+
+// Step 86: the first real sync was refused for exercises (403 42501) because remote.js sent them as an upsert that may overwrite
+// (ON CONFLICT DO UPDATE), which needs the update right the database deliberately withholds. Checked here against the real grants.
+const ownerWithGym = async (db) => { await claim(db, "me"); await as(db, "me", "select public.create_gym('g-test0001','Test')"); };
+
+test("exercises: add-if-new works for an editor, overwrite is refused (so remote.js sends them add-only)", async () => {
+  const db = await freshDb();
+  await ownerWithGym(db);
+  const add = (extra) => `insert into public.exercise (id, name, exercise_type_id) values ('x1','X','legs') on conflict (id) ${extra}`;
+  await as(db, "me", add("do nothing"));
+  await as(db, "me", add("do nothing"));                                            // the same row again: quietly left alone
+  assert.equal((await db.query("select count(*)::int n from exercise where id = 'x1'")).rows[0].n, 1);
+  await assert.rejects(as(db, "me", add("do update set name = excluded.name")), /permission denied for table exercise/);
+});
+
+test("every table remote.js upserts has the rights that way of sending needs", async () => {
+  const { SYNC_TABLES } = await import("./sync.js");
+  const db = await freshDb();
+  const addOnly = new Set(["exercise"]), own = new Set(["person", "gym"]);
+  for (const t of SYNC_TABLES.filter((x) => !own.has(x))) {
+    const need = addOnly.has(t) ? ["insert"] : ["insert", "update"];
+    for (const right of need) {
+      const r = await db.query(`select has_table_privilege('authenticated', 'public.${t}', '${right}') ok`);
+      assert.equal(r.rows[0].ok, true, `${t} needs ${right}`);
+    }
+  }
+});

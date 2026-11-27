@@ -41,6 +41,9 @@ export function makeRemote({ url, key, getToken, fetchFn = (...a) => fetch(...a)
   // consecutive changes to one table with the same operation go together; deletes go one at a time.
   // person and gym rows go one at a time as well: the row rules refuse an upsert for them (see sendOwn).
   const OWN = new Set(["person", "gym"]);
+  // The database lets the app ADD exercises but not change them (select + insert only, so every phone shares one list). An upsert
+  // that may overwrite needs the update right and was refused (403 42501); these tables are sent as "add if new, else leave".
+  const ADD_ONLY = new Set(["exercise"]);
   function groups(changes) {
     const out = [];
     for (const c of changes) {
@@ -76,7 +79,8 @@ export function makeRemote({ url, key, getToken, fetchFn = (...a) => fetch(...a)
     if (g.op === "upsert" && OWN.has(g.table)) return sendOwn(g.table, g.items[0].row);
     if (g.op === "upsert") {
       const path = `${g.table}?on_conflict=${pkCols(g.table).join(",")}&columns=${dbColumns(g.table).join(",")}`;
-      return call("POST", path, { body: g.items.map((c) => toDbRow(g.table, c.row)), headers: { Prefer: "resolution=merge-duplicates,return=minimal" } });
+      const how = ADD_ONLY.has(g.table) ? "ignore-duplicates" : "merge-duplicates";   // see ADD_ONLY
+      return call("POST", path, { body: g.items.map((c) => toDbRow(g.table, c.row)), headers: { Prefer: `resolution=${how},return=minimal` } });
     }
     const vals = pkOfKey(g.items[0].key);
     return call("DELETE", `${g.table}?` + pkCols(g.table).map((c, i) => `${c}=eq.${enc(vals[i])}`).join("&"), { headers: { Prefer: "return=minimal" } });

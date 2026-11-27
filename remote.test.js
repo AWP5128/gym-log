@@ -27,6 +27,15 @@ const make = (handler, extra = {}) => {
 };
 const up = (table, row) => ({ key: rowKey(table, row), table, op: "upsert", row });
 
+test("exercises are sent add-only (the database has no update right on them), other tables may overwrite", async () => {
+  const { remote, calls } = make(() => json(201));
+  await remote.push([up("exercise", { id: "x1", name: "X", exerciseTypeId: "legs" }), up("workout", { id: "a", personId: "awp", gymId: "main", date: "2026-11-02" })]);
+  assert.match(calls[0].url, /\/exercise\?on_conflict=id&/);
+  assert.match(calls[0].headers.Prefer, /ignore-duplicates/);
+  assert.doesNotMatch(calls[0].headers.Prefer, /merge-duplicates/);
+  assert.match(calls[1].headers.Prefer, /merge-duplicates/);
+});
+
 test("push sends consecutive rows of one table together, as the signed-in person", async () => {
   const { remote, calls } = make(() => json(201));
   const changes = [
