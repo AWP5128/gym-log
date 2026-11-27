@@ -72,6 +72,22 @@ test("an outdoors place (golf and walks) and its garmin row load and read back i
   assert.deepEqual(compareTables(v4, await readTables(db)), []);
 });
 
+test("single-leg reps load and read back identical, and the database refuses half a pair or a negative", async () => {
+  const v4 = richV4();
+  const row = v4.tables.logged_set.find((r) => r.exerciseId === "leg-press" && !r.manual);
+  Object.assign(row, { reps: 22, repsLeft: 12, repsRight: 10 });
+  const db = await freshDb();
+  await loadTables(db, v4);
+  assert.deepEqual(compareTables(v4, await readTables(db)), []);
+  const back = (await readTables(db)).tables.logged_set.find((r) => r.id === row.id);
+  assert.deepEqual([back.reps, back.repsLeft, back.repsRight], [22, 12, 10]);
+  assert.equal((await db.query("select count(*)::int as n from logged_set where reps_left is not null")).rows[0].n, 1);
+  await assert.rejects(db.query(`update logged_set set reps_right = null where id = '${row.id}'`), /logged_set_both_legs/);
+  await assert.rejects(db.query(`update logged_set set reps_left = null where id = '${row.id}'`), /logged_set_both_legs/);
+  await assert.rejects(db.query(`update logged_set set reps_left = -1 where id = '${row.id}'`), /check constraint/);
+  await db.query(`update logged_set set reps_left = null, reps_right = null where id = '${row.id}'`);   // both blank is fine
+});
+
 test("an empty store loads and reads back identical", async () => {
   const v4 = toStoreV4(cleanStore(emptyStore()), []);
   const db = await freshDb();

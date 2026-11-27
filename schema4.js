@@ -32,7 +32,8 @@
 //                     the cardio fields are blank (null) until there is data. A cardio entry is one logged_set (minutes) per
 //                     machine per day, and its distance (METRES, whatever unit the machine shows), average watts and its
 //                     start and end times (end = start + the duration, which is the logged_set's minutes) sit here
-//     logged_set      { id (person:time:exercise), seq, personId, workoutExerciseId, exerciseId, gymId, time, weight, reps, minutes, unit, mode }
+//     logged_set      { id (person:time:exercise), seq, personId, workoutExerciseId, exerciseId, gymId, time, weight, reps, repsLeft, repsRight, minutes, unit, mode }
+//                     (reps is the total; repsLeft and repsRight, both or neither, are the reps on each leg of a single-leg set: step 85)
 //                     seq is the place in the old flat list. A typed-in best from before the app is a manual
 //                     logged_set: { id, personId, gymId, exerciseId, manual: true, weight, reps, time: null }.
 //   Garmin (private heart-rate data from the watch, added step 74)
@@ -194,7 +195,7 @@ export function setTables(personId, sets, groupOf) {
     setIds.set(base, dup + 1);
     loggedSets.push(clean({
       id: dup ? base + "#" + dup : base, seq, personId, workoutExerciseId: weid, exerciseId: s.exerciseId, gymId, time: s.time,
-      weight: s.weight, reps: s.reps, minutes: s.minutes, unit: s.unit, mode: s.mode,
+      weight: s.weight, reps: s.reps, repsLeft: s.repsLeft, repsRight: s.repsRight, minutes: s.minutes, unit: s.unit, mode: s.mode,
     }));
   }
   return {
@@ -447,7 +448,7 @@ export function fromV4(v4) {
   const finite = (v) => (Number.isFinite(v) ? v : undefined);
   const sets = t.logged_set.filter((r) => !r.manual).sort((a, b) => a.seq - b.seq)
     .map((r) => clean({
-      exerciseId: r.exerciseId, time: r.time, weight: r.weight, reps: r.reps, minutes: r.minutes,
+      exerciseId: r.exerciseId, time: r.time, weight: r.weight, reps: r.reps, repsLeft: r.repsLeft, repsRight: r.repsRight, minutes: r.minutes,
       distance: finite(cardio.get(r.workoutExerciseId)?.distance), watts: finite(cardio.get(r.workoutExerciseId)?.watts),
       start: cardio.get(r.workoutExerciseId)?.start ?? undefined, end: cardio.get(r.workoutExerciseId)?.end ?? undefined, unit: r.unit,
       mode: r.mode, gymId: r.gymId,

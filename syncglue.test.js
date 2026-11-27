@@ -206,3 +206,14 @@ test("sync status: a try that did not finish says why, and refused rows show tab
   assert.equal(cut.length, 1 + 5 + 1);
   assert.equal(cut.at(-1), "and 3 more kinds refused.");
 });
+
+// Step 85: single-leg reps travel with the set
+test("a single-leg set reaches the other phone with its reps for each leg", async () => {
+  const server = fakeServer();
+  const a = phone(store0()), b = phone(store0());
+  logSet(a, { ...set("leg-press", "2026-11-25T11:59:00.000Z"), weight: 85, reps: 22, repsLeft: 12, repsRight: 10 });
+  await settle(a, b, server);
+  const got = b.sets.find((x) => x.time === "2026-11-25T11:59:00.000Z");
+  assert.deepEqual([got.reps, got.repsLeft, got.repsRight], [22, 12, 10]);
+  assert.deepEqual(fingerprint(a), fingerprint(b));
+});

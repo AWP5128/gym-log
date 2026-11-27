@@ -22,7 +22,7 @@ const COLS = {
   workout_exercise: { id: "t", workoutTypeId: "t", exerciseId: "t", distance: "n", avgHeartRate: "n", zoneMinutes: "j", watts: "n", level: "n", start: "s", end: "s" },
   logged_set: {
     id: "t", seq: "i", personId: "t", workoutExerciseId: "t", exerciseId: "t", gymId: "t", time: "s", weight: "n", reps: "n",
-    minutes: "n", unit: "t", mode: "t", manual: "b",
+    repsLeft: "n", repsRight: "n", minutes: "n", unit: "t", mode: "t", manual: "b",
   },
   garmin_activity: {
     id: "t", personId: "t", garminId: "t", activityType: "t", name: "t", start: "s", end: "s", durationS: "n", distanceM: "n",

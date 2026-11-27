@@ -214,3 +214,14 @@ test("gym and person rows are never batched, and a refused PATCH is reported wit
   assert.match(r.failed[0].error, /403 42501 denied/);
   assert.ok(!r.failed[0].error.includes("secret"));
 });
+
+// Step 85: single-leg reps go to the database and come back
+test("a logged set sends its single-leg reps, and an ordinary set sends none", async () => {
+  const { remote, calls } = make(() => json(201));
+  const leg = { id: "awp:t:leg-press", personId: "awp", exerciseId: "leg-press", gymId: "main", time: "2026-11-25T11:59:00.000Z", weight: 85, reps: 22, repsLeft: 12, repsRight: 10, unit: "lb" };
+  const two = { ...leg, id: "awp:u:leg-press", repsLeft: undefined, repsRight: undefined };
+  await remote.push([up("logged_set", leg), up("logged_set", two)]);
+  assert.match(calls[0].url, /columns=[^&]*reps,reps_left,reps_right,/);
+  assert.deepEqual([calls[0].body[0].reps, calls[0].body[0].reps_left, calls[0].body[0].reps_right], [22, 12, 10]);
+  assert.equal("reps_left" in calls[0].body[1], false);
+});
