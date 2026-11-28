@@ -4,7 +4,7 @@ import { sessionTypes, exercisesForGroup } from "./exercises.js";
 import { toNumber, manualPb } from "./settings.js";
 import { configOf, globalDefaultsOf, effectiveConfigOf, warmupRepsOf, ownWarmupRepsOf, savedExtraOf } from "./defaults.js";
 import {
-  makeSet, todaysSets, defaultsFor, removeLastSet, weightOptions, setsForGym, setsForExercise,
+  makeSet, isLimbSet, setText, todaysSets, defaultsFor, removeLastSet, weightOptions, setsForGym, setsForExercise,
   isDoneToday, markDone, unmarkDone, personalBests, hasGymBest, describeBest, weightCaption, newBestLevel, idsWithHistory,
 } from "./log.js";
 import {
@@ -23,7 +23,7 @@ import {
 } from "./gym.js";
 import {
   migrateLegacy, supportsWarmup,
-  exportMachines, importMachines, addGym, neverIds, setNever, useIds, useOf, setUse, setDefaults, setPersonal,
+  exportMachines, importMachines, addGym, neverIds, setNever, useIds, useOf, setUse, isSingle, setSingle, setDefaults, setPersonal,
 } from "./store.js";
 import { makeBackup, backupFileName, parseBackup, fileKind, dataSummary, describeData, backupAge } from "./backup.js";
 import { MUSCLES, muscleOf, muscleLabel, partnerGroups, pairedPartners, getPairs, setPairs, addPair, removePair, pairedWith, isSuitable, setSuitable, hasPair, pairCandidates } from "./superset.js";
@@ -390,8 +390,14 @@ function cfgFor(e) {
 function resetPanel(p) {
   const cfg = cfgFor(p.ex);
   const key = modeKey();
-  const d = defaultsFor(p.ex, gymSets(), cfg, dayMode() ?? "volume");
+  // Single limb: the weight and left/right reps follow the last single limb set; two limb sets follow the two limb ones.
+  const mine = gymSets().filter((s) => s.exerciseId === p.ex.id);
+  const lastLimb = [...mine].reverse().find(isLimbSet);
+  const pool = p.single && lastLimb ? gymSets().filter((s) => s.exerciseId !== p.ex.id || isLimbSet(s)) : p.single ? gymSets() : gymSets().filter((s) => !isLimbSet(s));
+  const d = defaultsFor(p.ex, pool, cfg, dayMode() ?? "volume");
   p.reps = d.reps;
+  p.left = p.single && lastLimb ? lastLimb.repsLeft : d.reps;
+  p.right = p.single && lastLimb ? lastLimb.repsRight : d.reps;
   p.weight = d.weight;
   // The warm-up set (the first set of the day, when a warm-up weight is set) uses the warm-up reps.
   if (cfg["start" + key] !== null && todaysSets(gymSets(), p.ex.id).length === 0) {
@@ -405,6 +411,9 @@ function resetPanel(p) {
   p.pin = s.pin;
   p.extra = s.extra;
 }
+
+// Single limb logging is on for this exercise in this person's setup; the panel's own switch (default both limbs) then offers left and right reps.
+const canSingle = (e) => !isCardio(e) && e.kind !== "time" && isSingle(peopleView(), curPerson(), curGym(), e.id);
 
 function newPanel(e) {
   if (isCardio(e)) return newCardioPanel(e);
@@ -424,7 +433,7 @@ const extraSelectHtml = (id, e, chosen) =>
 
 // The personal bests for an exercise at the current gym: a machine shows the best here and the best ever
 // (one line when they are the same), free weights show the best ever only. All logged sets count, from every gym.
-const bestsFor = (e) => personalBests(sets, e, curGym(), manualPb(myConfig(e.id)));
+const bestsFor = (e) => personalBests(sets.filter((s) => !isLimbSet(s)), e, curGym(), manualPb(myConfig(e.id)));
 
 function bestsHtml(e) {
   if (e.kind === "time") return "";
@@ -467,9 +476,13 @@ function panelHtml(p, i) {
       : "";
   const setsText = today.length === 0
     ? "No sets yet"
-    : today.map((s) => s.weight + " " + e.unit + " x " + s.reps).join(" &middot; ");
-  const repsHtml = '<button id="rMinus' + i + '">-</button><span class="val">' + p.reps + " <small>reps</small></span>" +
-    '<button id="rPlus' + i + '">+</button>';
+    : today.map((s) => setText(s, e.unit)).join(" &middot; ");
+  const stepper = (id, label, n) => '<button id="' + id + 'Minus' + i + '">-</button><span class="val">' + n + " <small>" + label + "</small></span>" + '<button id="' + id + 'Plus' + i + '">+</button>';
+  const limbOn = canSingle(e) && p.single;
+  const repsHtml = limbOn ? stepper("lft", "left", p.left) : stepper("r", "reps", p.reps);
+  const limbRow = canSingle(e)
+    ? '<div class="choices" id="limbSw' + i + '"></div>' : "";
+  const rightRow = limbOn ? '<div class="wr"><span class="total">Total <b>' + (p.left + p.right) + " reps</b></span>" + stepper("rgt", "right", p.right) + "</div>" : "";
   // Machines with extras: a stack list and an extra list, then the total beside the reps.
   // Other exercises: one weight list and an "Other weight" box.
   const weightHtml = withExtras
@@ -483,7 +496,7 @@ function panelHtml(p, i) {
   return '<div class="card"><div class="cardhead"><strong>' + esc(e.name) + "</strong>" +
     '<span class="tm cardtime" data-t="m:' + esc(e.id) + '">' + formatTime(machineElapsed(workout, e.id, Date.now())) + "</span>" +
     (panels.length > 1 ? '<button class="link" id="remove' + i + '">Remove</button>' : "") + "</div>" +
-    notes + bestsHtml(e) + weightHtml +
+    notes + bestsHtml(e) + limbRow + weightHtml + rightRow +
     '<div class="logrow"><span class="progress">' + progress + '</span><button class="' + (complete ? "outline" : "primary") + '" id="logBtn' + i + '">Log set</button></div>' +
     newBestHtml(p) +
     '<div class="muted small">' + setsText + (today.length > 0 ? ' <button class="link" id="undo' + i + '">Undo last set</button>' : "") + "</div>" +
@@ -521,7 +534,14 @@ function bindPanel(p, i) {
       render();
     };
   }
+  if ($("limbSw" + i)) {
+    addChoices("limbSw" + i, [["Both limbs", !p.single, () => { p.single = false; p.pb = null; resetPanel(p); render(); }], ["Single limb", p.single === true, () => { p.single = true; p.pb = null; resetPanel(p); render(); }]]);
+  }
   wire({
+    lftMinus: () => { p.left = Math.max(0, p.left - 1); render(); },
+    lftPlus: () => { p.left += 1; render(); },
+    rgtMinus: () => { p.right = Math.max(0, p.right - 1); render(); },
+    rgtPlus: () => { p.right += 1; render(); },
     otherBtn: () => {
       const v = parseFloat($("otherW" + i).value);
       if (Number.isFinite(v) && v >= 0) { p.weight = v; p.pb = null; render(); }
@@ -529,8 +549,9 @@ function bindPanel(p, i) {
     rMinus: () => { p.reps = Math.max(0, p.reps - 1); p.pb = null; render(); },
     rPlus: () => { p.reps += 1; p.pb = null; render(); },
     logBtn: () => {
-      p.pb = e.kind === "time" ? null : newBestLevel(bestsFor(e), { weight: p.weight, reps: p.reps });   // judged before the set is saved
-      setsChanged([...sets, makeSet({ exerciseId: e.id, weight: p.weight, reps: p.reps, mode: dayMode() || undefined, gymId: curGym(), unit: e.unit })]);
+      const limb = canSingle(e) && p.single;
+      p.pb = e.kind === "time" || limb ? null : newBestLevel(bestsFor(e), { weight: p.weight, reps: p.reps });   // judged before the set is saved; single limb sets have no best
+      setsChanged([...sets, makeSet({ exerciseId: e.id, weight: p.weight, reps: limb ? p.left + p.right : p.reps, ...(limb ? { repsLeft: p.left, repsRight: p.right } : {}), mode: dayMode() || undefined, gymId: curGym(), unit: e.unit })]);
     },
     undo: () => { p.pb = null; setsChanged(removeLastSet(sets, e.id, curGym())); },
     // Sets are saved as you log them. Finish marks only this exercise as done for today and takes it
@@ -706,6 +727,18 @@ function bindNever(e) {
   };
   draw();
 }
+// "Single limb" on an exercise's Set up screen (weight exercises only): On adds Both limbs / Single limb to the log card, with left and right reps. Saved with Save.
+let limbDraft = null;
+const limbBoxHtml = () => box("Single limb", '<div class="choices" id="limbOpt"></div>' + muted("On: when logging you can choose Single limb and enter left and right reps (the weight is for one limb). Both limbs stays the default."));
+function bindLimb(e) {
+  if (!limbDraft || limbDraft.id !== e.id) limbDraft = { id: e.id, on: isSingle(peopleView(), curPerson(), curGym(), e.id) };
+  const draw = () => {
+    $("limbOpt").innerHTML = "";
+    addChoices("limbOpt", [["Off", !limbDraft.on, () => { limbDraft.on = false; draw(); }], ["On", limbDraft.on, () => { limbDraft.on = true; draw(); }]]);
+  };
+  draw();
+}
+const saveLimb = (e) => { if (limbDraft?.id === e.id) savePerson(setSingle(peopleView(), curPerson(), curGym(), e.id, limbDraft.on)); };
 const saveNever = (e) => { if (neverDraft?.id === e.id) savePerson(setUse(peopleView(), curPerson(), curGym(), e, neverDraft.state)); };
 
 // Your saved superset pairs (kept per person; each pair works both ways).
@@ -804,7 +837,7 @@ function summary(e, cfg, key) {
 
 function renderSetup() {
   ssDraft = null;
-  neverDraft = null;
+  neverDraft = null; limbDraft = null;
   cardioDraft = null;
   weightDraft = null;
   const list = sessionPool();   // this session's exercises, plus pull-ups on a legs or arms day
@@ -950,10 +983,11 @@ function renderEdit() {
   app.innerHTML =
     backBtn("Back without saving") + timeBar() + "<h2>" + esc(e.name) + "</h2>" + formHtml(fields, d, "f_") +
     box("Supersets", '<div id="ssBody"></div>') +
-    neverBoxHtml() +
+    neverBoxHtml() + limbBoxHtml() +
     '<button class="primary" id="save">Save</button>';
   bindForm(fields, d, render, "f_");
   bindNever(e);
+  bindLimb(e);
 
   // Superset choices are kept in a draft and saved with Save (Back without saving drops them).
   if (!ssDraft || ssDraft.id !== e.id) ssDraft = { id: e.id, prefs: pairPrefs() };
@@ -1007,6 +1041,7 @@ function renderEdit() {
       savePerson(setPersonal(peopleView(), curPerson(), curGym(), e.id, patch));
       savePairs(ssDraft.prefs);
       saveNever(e);
+      saveLimb(e);
       go("setup");
     },
   });

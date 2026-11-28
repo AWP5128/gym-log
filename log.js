@@ -9,15 +9,20 @@ const day = (date) => new Date(date).toDateString();
 // the gym it was done at and the unit of its weight, so that bests can be told apart by gym and
 // compared between kg and lb. Sets saved before gyms existed have neither: they count as the first
 // gym's, in the unit of the exercise.
-export function makeSet({ exerciseId, weight = 0, reps = 0, minutes, mode, gymId, unit, now = new Date() }) {
+// A single limb set (one leg or one arm at a time) also has repsLeft and repsRight: reps stays the total and weight is for ONE limb.
+export function makeSet({ exerciseId, weight = 0, reps = 0, repsLeft, repsRight, minutes, mode, gymId, unit, now = new Date() }) {
   return {
     exerciseId,
     time: now.toISOString(),
-    ...(minutes !== undefined ? { minutes } : { weight, reps, ...(unit ? { unit } : {}) }),
+    ...(minutes !== undefined ? { minutes } : { weight, reps, ...(repsLeft !== undefined && repsRight !== undefined ? { repsLeft, repsRight } : {}), ...(unit ? { unit } : {}) }),
     ...(mode ? { mode } : {}),
     ...(gymId ? { gymId } : {}),
   };
 }
+
+export const isLimbSet = (s) => s.repsLeft !== undefined && s.repsLeft !== null;
+// "85 lb x 22 (12 L / 10 R)" for a single limb set, "85 lb x 22" for the usual kind.
+export const setText = (s, unit) => s.weight + " " + unit + " x " + s.reps + (isLimbSet(s) ? " (" + s.repsLeft + " L / " + s.repsRight + " R)" : "");
 
 export const setsForExercise = (allSets, exerciseId) => allSets.filter((s) => s.exerciseId === exerciseId);
 

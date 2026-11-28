@@ -187,3 +187,17 @@ test("unmarkDone puts the exercise back on the list", () => {
   assert.equal(isDoneToday(done, "leg-press", NOW), false);
   assert.equal(isDoneToday(done, "chest-press", NOW), true);
 });
+// Single limb sets (step 89): reps stays the total, repsLeft and repsRight go beside it, the weight is for one limb.
+test("makeSet keeps left and right reps only as a pair, and setText shows them", async () => {
+  const { makeSet, isLimbSet, setText } = await import("./log.js");
+  const now = new Date("2026-11-28T10:00:00Z");
+  const s = makeSet({ exerciseId: "leg-press", weight: 85, reps: 22, repsLeft: 12, repsRight: 10, unit: "lb", now });
+  assert.deepEqual([s.reps, s.repsLeft, s.repsRight, isLimbSet(s)], [22, 12, 10, true]);
+  assert.equal(setText(s, "lb"), "85 lb x 22 (12 L / 10 R)");
+  const half = makeSet({ exerciseId: "leg-press", weight: 85, reps: 22, repsLeft: 12, unit: "lb", now });
+  assert.equal("repsLeft" in half, false);
+  const plain = makeSet({ exerciseId: "leg-press", weight: 85, reps: 8, unit: "lb", now });
+  assert.equal(isLimbSet(plain), false);
+  assert.equal(setText(plain, "lb"), "85 lb x 8");
+  assert.equal(isLimbSet({ ...plain, repsLeft: 0, repsRight: 0 }), true);   // zero is a real left count
+});
