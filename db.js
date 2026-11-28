@@ -146,7 +146,7 @@ const replaceBlock = (db, table, pred, rows) => {
   return { ...db, tables: { ...db.tables, [table]: [...kept.slice(0, place), ...rows, ...kept.slice(place)] } };
 };
 
-// Saves a person as the store functions give them ({ name, defaults, gyms: { gymId: { machines, never, use } }, superset }):
+// Saves a person as the store functions give them ({ name, defaults, gyms: { gymId: { machines, never, use, single } }, superset }):
 // the person row, the personal_setup rows and typed-in bests (in the order a conversion lists them), the owner rows of a new
 // person, and the exercise and exercise_type tables. Setups for a gym that does not exist are not saved, as in a conversion.
 export function putPerson(db, id, person) {

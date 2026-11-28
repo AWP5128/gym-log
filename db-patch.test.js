@@ -106,3 +106,17 @@ test("every table remote.js upserts has the rights that way of sending needs", a
     }
   }
 });
+
+// Step 88: the single limb switch is sent as an ordinary upsert of the person's own personal_setup row (insert + update rights, own rows only).
+test("a person can switch single limb on and off for their own setup row, not another person's", async () => {
+  const db = await freshDb();
+  await ownerWithGym(db); await claim(db, "fam");
+  const put = (who, pid) => as(db, who, `insert into public.personal_setup (person_id, gym_id, exercise_id, day_type, single_limb)
+    values ('${pid}', 'g-test0001', 'leg-press', 'none', true) on conflict (person_id, gym_id, exercise_id, day_type) do update set single_limb = excluded.single_limb`);
+  await as(db, "me", "insert into public.exercise (id, name, exercise_type_id) values ('leg-press','Leg Press','legs') on conflict (id) do nothing");
+  await put("me", "awp");
+  assert.equal((await db.query("select single_limb from personal_setup where person_id = 'awp'")).rows[0].single_limb, true);
+  await as(db, "me", "update public.personal_setup set single_limb = null where person_id = 'awp'");
+  assert.equal((await db.query("select single_limb from personal_setup where person_id = 'awp'")).rows[0].single_limb, null);
+  await assert.rejects(put("me", "fam"));
+});

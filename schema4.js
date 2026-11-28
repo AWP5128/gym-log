@@ -22,6 +22,7 @@
 //   Personal
 //     personal_setup  { personId, gymId, exerciseId, dayType, warmup, working, notes?, never? }
 //                     never: true on the dayType-null row = this person never uses the exercise at this gym (hidden from their lists)
+//                     singleLimb: true on that row = this person logs left and right reps for the exercise at this gym (default is both limbs)
 //                     use: "normal" | "rare" on that row = a choice that differs from the exercise's own default (rare = under Show less common)
 //                     a row per person, machine and day type; notes are written on each day-type row;
 //                     a machine with notes only has one row with dayType null
@@ -108,7 +109,9 @@ export function setupRows(personId, p, gymIds) {
     // "never used here" marks go on the person's no-day-type row for the exercise (made if there is none yet)
     const neverMap = isObj(pg?.never) ? pg.never : {};
     const useMap = isObj(pg?.use) ? pg.use : {};
-    const neverRows = [...new Set([...Object.keys(neverMap).filter((id) => neverMap[id] === true), ...Object.keys(useMap).filter((id) => useMap[id] === "normal" || useMap[id] === "rare")])];
+    const singleMap = isObj(pg?.single) ? pg.single : {};
+    const neverRows = [...new Set([...Object.keys(neverMap).filter((id) => neverMap[id] === true), ...Object.keys(useMap).filter((id) => useMap[id] === "normal" || useMap[id] === "rare"),
+      ...Object.keys(singleMap).filter((id) => singleMap[id] === true)])];
     for (const [exerciseId, m] of Object.entries(isObj(pg?.machines) ? pg.machines : {})) {
       ids.push(exerciseId);
       const dayRows = DAY_TYPES.filter((d) => isObj(m[d]));
@@ -130,7 +133,8 @@ export function setupRows(personId, p, gymIds) {
     for (const exerciseId of neverRows) {
       ids.push(exerciseId);
       const row = rows.find((r) => r.gymId === gymId && r.exerciseId === exerciseId && r.dayType === null);
-      const marks = { ...(neverMap[exerciseId] === true ? { never: true } : {}), ...(useMap[exerciseId] === "normal" || useMap[exerciseId] === "rare" ? { use: useMap[exerciseId] } : {}) };
+      const marks = { ...(neverMap[exerciseId] === true ? { never: true } : {}), ...(useMap[exerciseId] === "normal" || useMap[exerciseId] === "rare" ? { use: useMap[exerciseId] } : {}),
+        ...(singleMap[exerciseId] === true ? { singleLimb: true } : {}) };
       if (row) Object.assign(row, marks);
       else rows.push({ personId, gymId, exerciseId, dayType: null, ...marks });
     }
@@ -406,6 +410,7 @@ export function personFromRows(t, p) {
     if (r.personId !== p.id) continue;
     if (r.never) { const pg = person.gyms[r.gymId]; if (pg) (pg.never ??= {})[r.exerciseId] = true; }
     if (r.use) { const pg = person.gyms[r.gymId]; if (pg) (pg.use ??= {})[r.exerciseId] = r.use; }
+    if (r.singleLimb) { const pg = person.gyms[r.gymId]; if (pg) (pg.single ??= {})[r.exerciseId] = true; }
     if (!r.notes && !r.dayType) continue;   // a row that only carries the never mark has no machine settings
     const m = machine(r);
     if (!m) continue;

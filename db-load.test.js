@@ -88,6 +88,16 @@ test("single-leg reps load and read back identical, and the database refuses hal
   await db.query(`update logged_set set reps_left = null, reps_right = null where id = '${row.id}'`);   // both blank is fine
 });
 
+test("the single limb switch loads and reads back identical", async () => {
+  const v4 = richV4();
+  const row = v4.tables.personal_setup.find((r) => r.dayType === null) ?? v4.tables.personal_setup[0];
+  row.singleLimb = true;
+  const db = await freshDb();
+  await loadTables(db, v4);
+  assert.deepEqual(compareTables(v4, await readTables(db)), []);
+  assert.equal((await db.query("select count(*)::int as n from personal_setup where single_limb")).rows[0].n, 1);
+});
+
 test("an empty store loads and reads back identical", async () => {
   const v4 = toStoreV4(cleanStore(emptyStore()), []);
   const db = await freshDb();

@@ -349,6 +349,21 @@ export function setUse(store, personId, gymId, exercise, state) {
   };
 }
 
+// Single limb logging (personal, per gym): an exercise logged as left and right reps. Both limbs is the default; only "on" is saved, in
+// people[person].gyms[gym].single = { exerciseId: true }.
+export const singleIds = (store, personId, gymId) => store.people?.[personId]?.gyms?.[gymId]?.single || {};
+export const isSingle = (store, personId, gymId, exerciseId) => singleIds(store, personId, gymId)[exerciseId] === true;
+export function setSingle(store, personId, gymId, exerciseId, on) {
+  const person = store.people?.[personId] || { name: personId, gyms: {} };
+  const { single: old, ...rest } = person.gyms?.[gymId] || {};
+  const single = { ...(old || {}) };
+  if (on) single[exerciseId] = true; else delete single[exerciseId];
+  return {
+    ...store,
+    people: { ...store.people, [personId]: { ...person, gyms: { ...person.gyms, [gymId]: { ...rest, machines: rest.machines || {}, ...(Object.keys(single).length > 0 ? { single } : {}) } } } },
+  };
+}
+
 // ---------- Sharing the machine list ----------
 // Only the shared fields (name, step, stack): no weights, reps or notes. Machines that are
 // exactly as built in are left out.
