@@ -36,6 +36,7 @@ import { runSync, describeSync } from "./syncglue.js";
 import { makeRemote } from "./remote.js";
 import { makeAuth, loadClient } from "./auth.js";
 import { readFile } from "./garminfile.js";
+import { buildReport, availablePeriods, PERIOD_LABEL, weightText, lengthText, zoneText } from "./reports.js";
 import { dedupe, matchActivities, importActivities, describe, accepted, defaultChoice, nextChoice, canChange, CHOICE_LABEL } from "./garmin.js";
 import {
   $, esc, optionsHtml, selectHtml, field, numField, cols, box, muted, ghostBtn, backBtn, wire, addItems, addChoices, sendFile, formHtml, bindForm, blocks,
@@ -258,11 +259,11 @@ document.addEventListener("visibilitychange", tick);
 // Where each screen's Back button (and the phone's back gesture) goes.
 const BACK = {
   list: "start", setup: "start", edit: "setup", exercise: "list", pick: "exercise",
-  backup: "start", garmin: "backup", gyms: "start", gymEdit: "gyms", gymAdd: "gyms", gymItemAdd: "gymEdit", gymItemEdit: "gymEdit", gymSet: "gymEdit",
+  backup: "start", garmin: "backup", reports: "start", gyms: "start", gymEdit: "gyms", gymAdd: "gyms", gymItemAdd: "gymEdit", gymItemEdit: "gymEdit", gymSet: "gymEdit",
 };
 const SCREENS = {
   start: renderStart, list: renderList, exercise: renderExercise, pick: renderPick, setup: renderSetup,
-  edit: renderEdit, backup: renderBackup, garmin: renderGarmin,
+  edit: renderEdit, backup: renderBackup, garmin: renderGarmin, reports: renderReports,
   gyms: renderGyms, gymEdit: renderGymEdit, gymAdd: renderGymAdd, gymItemAdd: renderGymItemAdd, gymItemEdit: renderGymItemEdit, gymSet: renderGymSet,
 };
 
@@ -314,6 +315,7 @@ function renderStart() {
     L.chips("types", sessionTypes.map((st) => [st.label, st.id === session.type, () => choose({ type: st.id })])) +
     (t.weights ? "<label>Day type</label>" + L.chips("modes", [["heavy", "Heavy"], ["volume", "Volume"]].map(([mode, label]) => [label, session.mode === mode, () => choose({ mode })])) : "") +
     '<button class="secondary" id="setupBtn">Set up ' + esc(sessionLabel(session)) + "</button>" +
+    '<button class="secondary" id="reportsBtn">Reports</button>' +
     '<button class="link" id="gymsBtn" style="display:block;margin:12px auto 0;opacity:0.6">Gyms</button>' +
     '<button class="faintlink" id="backupBtn">Backup &amp; restore' + (age.stale ? " (last backup: " + age.text + ")" : "") + "</button>";
 
@@ -321,6 +323,7 @@ function renderStart() {
   wire({
     quick: () => { showMore = false; listKind = null; go("list"); },
     setupBtn: () => go("setup"),
+    reportsBtn: () => go("reports"),
     gymsBtn: () => go("gyms"),
     backupBtn: () => go("backup"),
   });
@@ -1569,6 +1572,39 @@ async function importFile(ev) {
 // ---------- Garmin import (step 80) ----------
 // The chosen file is matched to the logged workouts and shown as a list; nothing is saved until "Save". gar.rows: { p, choice }.
 let gar = { rows: [], dropped: 0 };
+
+// ---------- Reports ----------
+// Figures per day, week, month (and quarter and year once there is enough data), newest first, worked out by reports.js.
+let repPeriod = "week";
+let repShown = 14;   // how many periods are listed; "Show more" adds the same again
+const lines = (list) => list.map(esc).join("<br>");
+function reportCard(r) {
+  const z = r.zones;
+  return box(esc(r.label),
+    (r.activities.length ? "<div>" + lines([r.activities.map(([, label, n]) => label + " " + n).join(" · ")]) + "</div>" : "") +
+    (r.weightKg > 0
+      ? "<div>Total weight: <b>" + esc(weightText(r.weightKg)) + "</b> in " + r.sets + (r.sets === 1 ? " set" : " sets") + "</div>" +
+        muted("<b>By session</b><br>" + lines(r.bySession.map(([, label, kg]) => label + ": " + weightText(kg))), "small") +
+        muted("<b>By muscle</b><br>" + lines(r.byMuscle.map(([label, kg]) => label + ": " + weightText(kg))), "small")
+      : "") +
+    (z
+      ? muted("<b>Heart rate, " + esc(lengthText(z.durationS)) + " watched (minutes in each zone)</b><br>" + lines([zoneText(z.secs) + " · Below Z1 " + Math.round(z.below / 60)]) +
+          "<br>" + lines(z.byType.map((x) => x.name + " " + lengthText(x.durationS) + ": " + zoneText(x.secs))), "small")
+      : ""));
+}
+function renderReports() {
+  const L = blocks();
+  const periods = availablePeriods(db);
+  if (!periods.includes(repPeriod)) repPeriod = "week";
+  const rows = buildReport(db, repPeriod);
+  app.innerHTML =
+    backBtn() + "<h2>Reports</h2>" +
+    L.chips("repPeriods", periods.map((p) => [PERIOD_LABEL[p], p === repPeriod, () => { repPeriod = p; repShown = 14; render(); }])) +
+    (rows.length ? rows.slice(0, repShown).map(reportCard).join("") : muted("Nothing logged yet.")) +
+    (rows.length > repShown ? ghostBtn("repMore", "Show more") : "");
+  L.bind();
+  wire({ back: goBack, repMore: () => { repShown += 14; render(); } });
+}
 async function chooseGarmin(ev) {
   const file = ev.target.files?.[0];
   ev.target.value = "";
